@@ -1,0 +1,18 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+edas/.venv/
+.env
+edas/.env
+
+# Data (keep local only)
+data/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# OS / IDE
+.DS_Store
+Thumbs.db

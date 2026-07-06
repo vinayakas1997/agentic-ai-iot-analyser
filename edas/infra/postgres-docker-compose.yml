@@ -1,0 +1,21 @@
+services:
+  postgres:
+    image: postgres:16
+    container_name: edas-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: edas
+      POSTGRES_PASSWORD: edas
+      POSTGRES_DB: edas
+    ports:
+      - "9001:5432"
+    volumes:
+      - edas_pg_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U edas -d edas"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  edas_pg_data:

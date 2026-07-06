@@ -1,0 +1,31 @@
+services:
+  atlas-35b:
+    image: avarok/atlas-gb10:latest
+    container_name: atlas-35b
+    restart: unless-stopped
+    network_mode: host
+    ipc: host
+    volumes:
+      - ~/.cache/huggingface:/root/.cache/huggingface
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    command: >
+      serve Sehyo/Qwen3.5-35B-A3B-NVFP4
+        --bind 0.0.0.0
+        --port 8009
+        --model-name atlas-35b
+        --max-seq-len 32768
+        --kv-cache-dtype nvfp4
+        --kv-high-precision-layers auto
+        --gpu-memory-utilization 0.70
+        --scheduling-policy slai
+        --speculative
+        --num-drafts 2
+        --max-batch-size 8
+        --max-num-seqs 8
+        --stupify
