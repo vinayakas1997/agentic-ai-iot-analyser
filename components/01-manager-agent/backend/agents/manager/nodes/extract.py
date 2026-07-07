@@ -453,6 +453,8 @@ async def extract_slots(state: ManagerState) -> ManagerState:
         result["registry_sync_target"] = None
     if explore_action in ("propose", "refine", "save", "combine_saved", "activate", "list_saved"):
         result["registry_sync_target"] = None
+    if merged.get("time", {}).get("mentioned"):
+        result["registry_sync_target"] = None
     result = set_scope_pending_for_propose(result)
 
     debug_state("extract_slots", result)

@@ -288,3 +288,109 @@ async def load_chat_messages(user_id: str, session_id: str) -> list[dict]:
         }
         for row in rows
     ]
+
+
+async def reopen_session(user_id: str, session_id: str) -> dict:
+    """Reopen a done session for editing. Raises ValueError if planner already picked it up."""
+    async with AsyncSessionLocal() as db:
+        result = await db.execute(
+            select(ManagerSession).where(
+                ManagerSession.session_id == session_id,
+                ManagerSession.user_id == user_id,
+            )
+        )
+        row = result.scalar_one_or_none()
+        if not row:
+            raise ValueError("session_not_found")
+
+        state = state_from_json(row.state_json)
+        if state.get("planner_payload"):
+            raise ValueError("planner_active")
+
+        state["phase"] = "plan"
+        state.pop("error", None)
+        state.pop("agent_message", None)
+        state_json = state_to_json(state)
+        now = datetime.now(timezone.utc)
+
+        updated = await db.execute(
+            update(ManagerSession)
+            .where(
+                ManagerSession.session_id == session_id,
+                ManagerSession.user_id == user_id,
+                ManagerSession.version == row.version,
+            )
+            .values(
+                phase="plan",
+                status="active",
+                state_json=state_json,
+                version=row.version + 1,
+                updated_at=now,
+            )
+        )
+        if updated.rowcount == 0:
+            raise RuntimeError(f"Concurrent modification detected for session {session_id}.")
+        await db.commit()
+        return {"session_id": session_id, "phase": "plan", "status": "active"}
+
+
+async def fork_session(user_id: str, session_id: str) -> str:
+    """Fork an existing session into a new session with copied state and chat history."""
+    async with AsyncSessionLocal() as db:
+        # Load existing session
+        result = await db.execute(
+            select(ManagerSession).where(
+                ManagerSession.session_id == session_id,
+                ManagerSession.user_id == user_id,
+            )
+        )
+        existing_row = result.scalar_one_or_none()
+        if not existing_row:
+            raise ValueError("session_not_found")
+
+        existing_state = state_from_json(existing_row.state_json)
+        existing_state.pop("planner_payload", None)
+        existing_state.pop("error", None)
+        existing_state.pop("agent_message", None)
+        existing_state["phase"] = "plan"
+
+        new_id = str(uuid.uuid4())
+        now = datetime.now(timezone.utc)
+        new_state_json = state_to_json(existing_state)
+        new_state_json["version"] = 1
+
+        new_session = ManagerSession(
+            session_id=new_id,
+            user_id=user_id,
+            phase="plan",
+            status="active",
+            line_name=existing_row.line_name,
+            state_json=new_state_json,
+            version=1,
+            created_at=now,
+            updated_at=now,
+        )
+        db.add(new_session)
+
+        # Copy chat history
+        chat_result = await db.execute(
+            select(ChatHistory).where(
+                ChatHistory.user_id == user_id,
+                ChatHistory.session_id == session_id,
+            ).order_by(ChatHistory.created_at.asc())
+        )
+        for chat_row in chat_result.scalars().all():
+            db.add(ChatHistory(
+                user_id=user_id,
+                session_id=new_id,
+                line_name=chat_row.line_name,
+                role=chat_row.role,
+                content=chat_row.content,
+                node=chat_row.node,
+                turn_index=chat_row.turn_index,
+                ui_snapshot=chat_row.ui_snapshot,
+                schema_snapshot=chat_row.schema_snapshot,
+            ))
+
+        await db.commit()
+    return new_id

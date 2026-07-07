@@ -4,17 +4,12 @@ from __future__ import annotations
 
 import re
 
+from agents.manager.constants import SOURCE_LABELS
 from agents.manager.prompt_hints import format_suggested_aims_block
 from agents.manager.schema_format import (
     format_join_catalog_user_block,
     format_multi_dataset_columns_user_block,
 )
-
-_SOURCE_LABELS = {
-    "line_name": "exact line name",
-    "synonym": "synonym",
-    "task_alias": "previous analysis alias",
-}
 
 
 def _normalize_line_token(value: str | None) -> str:
@@ -30,7 +25,7 @@ def format_line_match_note(slots: dict) -> str:
         return ""
     if _normalize_line_token(mention) == _normalize_line_token(canonical):
         return ""
-    label = _SOURCE_LABELS.get(source, source)
+    label = SOURCE_LABELS.get(source, source)
     return f'You said **"{mention}"** — matched via **{label}** to line **{canonical}**.'
 
 

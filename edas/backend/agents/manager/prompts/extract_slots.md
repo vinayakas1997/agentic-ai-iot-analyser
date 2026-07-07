@@ -44,6 +44,7 @@ Return ONLY valid JSON in this exact shape:
 
 Rules:
 - Extract EVERY distinct machine/line name into line_mentions. Never drop one.
+- Strip leading articles (a, an, the) from line_mentions. For example, "the vinayaka" becomes "Vinayaka".
 - On follow-up turns: include ALL machines from session state line_slots in line_mentions, especially lookup_locked ones.
 - Never remove or re-resolve a slot with lookup_locked=true unless the user explicitly gives a new name for that slot.
 - line_mention is the first entry in line_mentions (backward compatibility), or null if none.
@@ -117,6 +118,24 @@ Output:
   "time_start_raw": null,
   "time_end_raw": null,
   "aim_raw": "average cost by fruit"
+}}
+
+User: "tell me about the vinayaka"
+Output (first turn, article stripped):
+{{
+  "clarification": {{
+    "skip_mentions": [], "active_mention": null, "intent_mode": null, "wants_suggested_aims": false,
+    "aim_exploration": {{ "action": null, "selected_plan_ids": [], "keep_plan_ids": [], "change_plan_ids": [], "change_notes": null, "reject_current_plan": false }},
+    "session_intent": "advisory"
+  }},
+  "line_mentions": ["Vinayaka"],
+  "scope": {{ "intent_mode": "single", "joint_aim_raw": null, "joint_time_raw": null }},
+  "line_slots_detail": [],
+  "line_mention": "Vinayaka",
+  "time_raw": null,
+  "time_start_raw": null,
+  "time_end_raw": null,
+  "aim_raw": null
 }}
 
 User: "what aims can we do"

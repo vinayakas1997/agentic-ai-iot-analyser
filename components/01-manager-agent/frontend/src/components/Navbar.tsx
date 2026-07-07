@@ -1,6 +1,5 @@
 import { btnSecondary } from "../lib/styles";
 import { useSessionStore } from "../stores/sessionStore";
-import { useUiStore } from "../stores/uiStore";
 
 export default function Navbar() {
   const sessions = useSessionStore((s) => s.sessions);
@@ -8,32 +7,10 @@ export default function Navbar() {
   const loading = useSessionStore((s) => s.loading);
   const switchSession = useSessionStore((s) => s.switchSession);
   const newSession = useSessionStore((s) => s.newSession);
-  const view = useUiStore((s) => s.view);
-  const setView = useUiStore((s) => s.setView);
 
   return (
     <header className="flex items-center justify-between px-5 py-3 border-b border-border bg-panel shrink-0">
-      <button
-        type="button"
-        className="text-lg font-semibold hover:text-accent transition-colors"
-        onClick={() => setView("workspace")}
-      >
-        EDAS
-      </button>
-
-      <div className="absolute left-1/2 -translate-x-1/2">
-        <button
-          type="button"
-          className={`px-4 py-1.5 rounded-lg text-sm font-medium transition-colors ${
-            view === "dashboard"
-              ? "bg-accent text-white"
-              : "bg-[#2f3336] text-text hover:bg-[#3f4346]"
-          }`}
-          onClick={() => setView("dashboard")}
-        >
-          Dashboard
-        </button>
-      </div>
+      <span className="text-lg font-semibold">EDAS</span>
 
       <div className="flex items-center gap-3">
         <select

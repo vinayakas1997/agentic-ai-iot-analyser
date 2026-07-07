@@ -1,0 +1,44 @@
+name: "Full vinayaka flow with time filter"
+description: >
+  User asks about vinayaka (advisory), picks an aim, then adds a time filter.
+  Tests that time clarification is triggered when "last month" is ambiguous.
+steps:
+  - user: "tell me about the vinayaka"
+    expect:
+      interrupt_node: "answer_advisory"
+      phase: "ask"
+      trace_contains:
+        - event_type: "node_state"
+          node: "extract_slots"
+          data: { line_mention: "vinayaka" }
+      routing_path:
+        - "route_after_inject -> extract_slots"
+        - "route_after_resolve_all_lines -> sync_session_context"
+        - "route_after_sync_session_context -> answer_advisory"
+
+  - user: "average cost by fruit"
+    expect:
+      interrupt_node: "build_plan_message"
+      phase: "plan"
+      slots: { aim: { raw: "average cost by fruit" } }
+      routing_path:
+        - "route_after_inject -> extract_slots"
+        - "route_after_resolve_all_lines -> sync_session_context"
+        - "route_after_sync_session_context -> reorganize_aim"
+        - "reorganize_aim -> build_plan_message"
+
+  - user: "the last month"
+    expect:
+      interrupt_node: "ask_time_ambiguous"
+      phase: "ask"
+      trace_contains:
+        - event_type: "llm_output"
+          node: "normalize_time"
+      routing_path:
+        - "route_after_inject -> extract_slots"
+        - "route_after_resolve_all_lines -> sync_session_context"
+        - "_route_after_sync_common -> resolve_time_filters"
+        - "route_after_time -> ask_time_ambiguous"
+      conditions:
+        - key: "time_needs_clarification"
+          value: true

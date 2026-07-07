@@ -4,12 +4,14 @@ from agents.manager.runner import run_manager_agent
 from agents.manager.session_db import (
     append_chat_turn,
     create_session,
+    fork_session,
     get_session_row,
     load_chat_messages,
     load_chat_turns,
     load_session,
     list_sessions,
     next_turn_index,
+    reopen_session,
     save_session,
 )
 from agents.manager.session_store import (
@@ -83,9 +85,25 @@ async def get_session_detail(user_id: str, session_id: str) -> dict | None:
     }
 
 
+async def reopen_session_turn(user_id: str, session_id: str) -> dict:
+    """Reopen a done session. Raises ValueError if planner already picked it up."""
+    await reopen_session(user_id, session_id)
+    detail = await get_session_detail(user_id, session_id)
+    if not detail:
+        raise ValueError("session_not_found")
+    return detail
+
+
+async def fork_session_turn(user_id: str, session_id: str) -> str:
+    """Fork an existing session into a new session."""
+    return await fork_session(user_id, session_id)
+
+
 __all__ = [
     "create_session",
+    "fork_session_turn",
     "get_session_detail",
     "list_sessions",
+    "reopen_session_turn",
     "run_session_turn",
 ]

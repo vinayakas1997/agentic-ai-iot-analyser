@@ -1,22 +1,22 @@
 import { useEffect } from "react";
 import Navbar from "./components/Navbar";
-import DashboardPage from "./pages/DashboardPage";
 import WorkspacePage from "./pages/WorkspacePage";
 import { useSessionStore } from "./stores/sessionStore";
-import { useUiStore } from "./stores/uiStore";
+import { useWorkspaceSocket } from "./hooks/useWorkspaceSocket";
 
 export default function App() {
-  const view = useUiStore((s) => s.view);
   const bootstrap = useSessionStore((s) => s.bootstrap);
+
+  useWorkspaceSocket();
 
   useEffect(() => {
     bootstrap();
   }, [bootstrap]);
 
   return (
-    <div className="flex flex-col h-screen bg-app text-text">
+    <div className="flex flex-col h-screen bg-bg-deep text-text">
       <Navbar />
-      {view === "dashboard" ? <DashboardPage /> : <WorkspacePage />}
+      <WorkspacePage />
     </div>
   );
 }

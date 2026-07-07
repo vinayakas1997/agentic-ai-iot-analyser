@@ -1,5 +1,6 @@
+import axios from "axios";
 import { create } from "zustand";
-import { createSession, getSession, listSessions, sendMessage } from "../api/manager";
+import { createSession, forkSession as forkSessionApi, getSession, listSessions, reopenSession as reopenSessionApi, sendMessage } from "../api/manager";
 import type { MessageResponse, SessionListItem, SessionMeta, Turn } from "../types/manager";
 import { useUiStore } from "./uiStore";
 
@@ -27,6 +28,12 @@ function axiosIsError(e: unknown): e is { response?: { data?: { detail?: string 
   return typeof e === "object" && e !== null && "response" in e;
 }
 
+interface ExecutionEvent {
+  topic: string;
+  payload: Record<string, unknown>;
+  timestamp: number;
+}
+
 interface SessionState {
   sessionId: string | null;
   sessions: SessionListItem[];
@@ -34,12 +41,17 @@ interface SessionState {
   sessionMeta: SessionMeta | null;
   loading: boolean;
   error: string | null;
+  executionEvents: ExecutionEvent[];
   bootstrap: () => Promise<void>;
   refreshSessions: () => Promise<SessionListItem[]>;
   switchSession: (id: string) => Promise<void>;
   newSession: () => Promise<void>;
   sendUserMessage: (text: string, lineName?: string) => Promise<MessageResponse | undefined>;
+  reopenSession: () => Promise<void>;
+  forkSession: () => Promise<void>;
   setError: (error: string | null) => void;
+  pushExecutionEvent: (event: ExecutionEvent) => void;
+  clearExecutionEvents: () => void;
 }
 
 export const useSessionStore = create<SessionState>((set, get) => ({
@@ -49,6 +61,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   sessionMeta: null,
   loading: false,
   error: null,
+  executionEvents: [],
 
   refreshSessions: async () => {
     const list = await listSessions();
@@ -97,7 +110,6 @@ export const useSessionStore = create<SessionState>((set, get) => ({
         sessionId: detail.session.session_id,
       });
       useUiStore.getState().selectTurn(detail.turns.length ? detail.turns.length - 1 : -1);
-      useUiStore.getState().setView("workspace");
     } catch (e) {
       set({ error: getErrorMessage(e) });
     } finally {
@@ -115,7 +127,6 @@ export const useSessionStore = create<SessionState>((set, get) => ({
         turns: [],
       });
       useUiStore.getState().selectTurn(-1);
-      useUiStore.getState().setView("workspace");
       await get().refreshSessions();
     } catch (e) {
       set({ error: getErrorMessage(e) });
@@ -132,7 +143,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
 
     if (!sessionId || !text.trim() || isDone || !isLive) return;
 
-    set({ error: null, loading: true });
+    set({ error: null, loading: true, executionEvents: [] });
     const userText = text.trim();
     try {
       const res = await sendMessage(sessionId, userText, lineName);
@@ -156,7 +167,51 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     }
   },
 
+  reopenSession: async () => {
+    const { sessionId } = get();
+    if (!sessionId) return;
+    set({ error: null, loading: true });
+    try {
+      const detail = await reopenSessionApi(sessionId);
+      set({
+        sessionMeta: detail.session,
+        turns: detail.turns,
+        executionEvents: [],
+      });
+      useUiStore.getState().selectTurn(detail.turns.length - 1);
+    } catch (e: unknown) {
+      if (axios.isAxiosError(e) && e.response?.status === 400) {
+        set({ error: e.response.data?.detail || "Cannot edit — planner already started." });
+      } else {
+        set({ error: getErrorMessage(e) });
+      }
+    } finally {
+      set({ loading: false });
+    }
+  },
+
+  forkSession: async () => {
+    const { sessionId } = get();
+    if (!sessionId) return;
+    set({ error: null, loading: true });
+    try {
+      const { session_id } = await forkSessionApi(sessionId);
+      await get().switchSession(session_id);
+    } catch (e) {
+      set({ error: getErrorMessage(e) });
+    } finally {
+      set({ loading: false });
+    }
+  },
+
   setError: (error) => set({ error }),
+
+  pushExecutionEvent: (event) =>
+    set((state) => ({
+      executionEvents: [...state.executionEvents.slice(-49), event],
+    })),
+
+  clearExecutionEvents: () => set({ executionEvents: [] }),
 }));
 
 export function useSelectedTurn(): Turn | null {

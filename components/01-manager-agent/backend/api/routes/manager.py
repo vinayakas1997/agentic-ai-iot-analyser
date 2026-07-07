@@ -3,11 +3,14 @@ from pydantic import BaseModel, Field
 
 from agents.manager.session_service import (
     create_session,
+    fork_session_turn,
     get_session_detail,
     list_sessions,
+    reopen_session_turn,
     run_session_turn,
 )
 from api.auth import get_default_user_id
+from harness.tracer import get_trace, clear_trace
 
 router = APIRouter(prefix="/manager", tags=["manager"])
 
@@ -54,6 +57,45 @@ async def post_manager_message(session_id: str, body: MessageIn) -> dict:
             user_message=body.message,
             line_name=body.line_name,
         )
+    except ValueError as exc:
+        if str(exc) == "session_not_found":
+            raise HTTPException(status_code=404, detail="Session not found") from exc
+        raise
+
+
+@router.get("/sessions/{session_id}/trace")
+async def get_manager_trace(session_id: str) -> list[dict]:
+    return get_trace(session_id)
+
+
+@router.delete("/sessions/{session_id}/trace")
+async def clear_manager_trace(session_id: str) -> dict:
+    clear_trace(session_id)
+    return {"status": "cleared"}
+
+
+@router.post("/sessions/{session_id}/reopen")
+async def reopen_manager_session(session_id: str) -> dict:
+    user_id = get_default_user_id()
+    try:
+        return await reopen_session_turn(user_id, session_id)
+    except ValueError as exc:
+        if str(exc) == "session_not_found":
+            raise HTTPException(status_code=404, detail="Session not found") from exc
+        if str(exc) == "planner_active":
+            raise HTTPException(
+                status_code=400,
+                detail="Planner has already started processing this session.",
+            ) from exc
+        raise
+
+
+@router.post("/sessions/{session_id}/fork")
+async def fork_manager_session(session_id: str) -> dict:
+    user_id = get_default_user_id()
+    try:
+        new_id = await fork_session_turn(user_id, session_id)
+        return {"session_id": new_id}
     except ValueError as exc:
         if str(exc) == "session_not_found":
             raise HTTPException(status_code=404, detail="Session not found") from exc

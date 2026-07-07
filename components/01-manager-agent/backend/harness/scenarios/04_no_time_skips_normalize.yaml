@@ -1,0 +1,12 @@
+name: "No time mentioned skips normalize entirely"
+description: >
+  Without any time mention, the normalize_time LLM should never be invoked.
+  The plan is built directly after aim extraction.
+steps:
+  - user: "tell me about the vinayaka"
+  - user: "average cost by fruit"
+    expect:
+      interrupt_node: "build_plan_message"
+      trace_does_not_contain:
+        - event_type: "llm_output"
+          node: "normalize_time"

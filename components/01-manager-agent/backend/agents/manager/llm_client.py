@@ -12,6 +12,7 @@ from langchain_openai import ChatOpenAI
 
 from agents.manager.config import get_llm_config
 from agents.manager.debug_log import log_llm_call
+from harness.tracer import record as _trace_record
 
 logger = logging.getLogger(__name__)
 
@@ -120,6 +121,8 @@ class LLMClient:
         max_attempts = (retry_count if retry_count is not None else self.max_retries) + 1
         last_error: Exception | None = None
 
+        _trace_record("llm_input", caller, prompt=str(messages))
+
         for attempt in range(1, max_attempts + 1):
             async with self._lock:
                 await self._check_circuit_breaker()
@@ -134,7 +137,9 @@ class LLMClient:
                     _stats.total_calls += 1
                     _stats.latencies.append(latency)
 
-                content_len = len(str(getattr(response, "content", "")))
+                content = getattr(response, "content", "")
+                content_len = len(str(content))
+                _trace_record("llm_output", caller, response=str(content)[:2000], latency_ms=round(latency * 1000))
                 log_llm_call(caller, latency * 1000, tokens=content_len // 4, success=True)
                 logger.debug(
                     "LLM call %s attempt %d/%d OK (%.1fs, ~%d chars)",
@@ -157,6 +162,7 @@ class LLMClient:
                     caller, attempt, max_attempts, latency,
                     type(e).__name__, str(e)[:200],
                 )
+                _trace_record("llm_output", caller, error=str(e)[:500])
 
                 if attempt < max_attempts:
                     delay = min(self.base_delay * (2 ** (attempt - 1)), self.max_delay)

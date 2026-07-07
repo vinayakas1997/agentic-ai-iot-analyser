@@ -150,6 +150,10 @@ def build_schema_summary(state: dict) -> dict:
     if not time_slot.get("no_filter") and time_slot.get("resolved"):
         time_range = {"start": time_slot.get("start"), "end": time_slot.get("end")}
 
+    time_pending = None
+    if time_slot.get("mentioned") and not time_slot.get("resolved") and not time_slot.get("no_filter"):
+        time_pending = time_slot.get("raw") or "pending"
+
     line_match = None
     if line.get("resolved") and line.get("canonical"):
         line_match = {
@@ -168,6 +172,7 @@ def build_schema_summary(state: dict) -> dict:
         "columns": columns,
         "joins": schema_payload.get("join_catalog") or [],
         "time": time_range,
+        "time_pending": time_pending,
         "no_time_filter": bool(time_slot.get("no_filter")),
     }
 

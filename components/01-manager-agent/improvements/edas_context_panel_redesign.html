@@ -1,0 +1,457 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>EDAS · Context Panel Redesign</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg: #08080c;
+    --bg-grad: radial-gradient(circle at 20% 0%, #0f0f18 0%, #08080c 55%);
+    --surface-1: #111116;
+    --surface-1-grad: linear-gradient(160deg, #14141b 0%, #0d0d12 100%);
+    --surface-2-grad: linear-gradient(160deg, #17161f 0%, #0e0e14 100%);
+    --border-1: rgba(255,255,255,0.06);
+    --border-2: rgba(255,255,255,0.09);
+    --text-primary: #eeeef2;
+    --text-secondary: #8d8d9c;
+    --text-tertiary: #64646f;
+    --accent: #7c6fef;
+    --accent-soft: rgba(124,111,239,0.14);
+    --accent-line: rgba(124,111,239,0.35);
+    --active: #3ddc97;
+    --active-soft: rgba(61,220,151,0.14);
+    --mono: 'JetBrains Mono', monospace;
+    --display: 'Space Grotesk', sans-serif;
+    --body: 'Inter', sans-serif;
+
+    /* pipeline stage ownership colors — same hue = same agent, everywhere */
+    --stage-manager: #ff8a4c;
+    --stage-manager-soft: rgba(255,138,76,0.15);
+    --stage-manager-line: rgba(255,138,76,0.4);
+    --stage-planner: #f0c419;
+    --stage-planner-soft: rgba(240,196,25,0.14);
+    --stage-execution: #3ddc97;
+    --stage-execution-soft: rgba(61,220,151,0.14);
+
+    /* icon accent family — one hue per category of field-level data, distinct from stage colors above */
+    --ic-blue: #5ea8ff;
+    --ic-blue-soft: rgba(94,168,255,0.14);
+    --ic-violet: #9d8cff;
+    --ic-violet-soft: rgba(157,140,255,0.16);
+    --ic-amber: #ffcf5c;
+    --ic-amber-soft: rgba(255,207,92,0.14);
+    --ic-teal: #4fd8c4;
+    --ic-teal-soft: rgba(79,216,196,0.14);
+    --ic-coral: #ff8a80;
+    --ic-coral-soft: rgba(255,138,128,0.14);
+  }
+
+  *{ box-sizing:border-box; }
+
+  body{
+    margin:0;
+    background: var(--bg-grad);
+    background-color: var(--bg);
+    font-family: var(--body);
+    color: var(--text-primary);
+    padding: 28px 20px 60px;
+    min-height:100vh;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .frame{
+    max-width: 400px;
+    margin: 0 auto;
+  }
+
+  /* ---------- Stepper ---------- */
+  .stepper{
+    display:flex;
+    align-items:center;
+    gap:8px;
+    padding:12px 14px;
+    background: var(--surface-1-grad);
+    border:1px solid var(--border-1);
+    border-radius:12px;
+    margin-bottom:22px;
+  }
+  .step{
+    display:flex;
+    align-items:center;
+    gap:6px;
+    padding:6px 10px;
+    border-radius:8px;
+    font-family:var(--body);
+    font-size:12.5px;
+    font-weight:600;
+    transition: all .2s ease;
+  }
+  .step.stage-manager{ color: rgba(255,138,76,0.55); }
+  .step.stage-planner{ color: rgba(240,196,25,0.5); }
+  .step.stage-execution{ color: rgba(61,220,151,0.5); }
+
+  .step.active.stage-manager{
+    color:#2a1607;
+    background: var(--stage-manager);
+    box-shadow: 0 0 0 1px rgba(255,138,76,0.5), 0 0 18px 2px rgba(255,138,76,0.4);
+  }
+  .step.active.stage-planner{
+    color:#2a2205;
+    background: var(--stage-planner);
+    box-shadow: 0 0 0 1px rgba(240,196,25,0.5), 0 0 18px 2px rgba(240,196,25,0.4);
+  }
+  .step.active.stage-execution{
+    color:#0a1a12;
+    background: var(--stage-execution);
+    box-shadow: 0 0 0 1px rgba(61,220,151,0.5), 0 0 18px 2px rgba(61,220,151,0.35);
+  }
+  .step .dot{
+    width:6px; height:6px; border-radius:50%;
+    background: currentColor;
+    flex-shrink:0;
+  }
+  .step-arrow{ color: var(--text-tertiary); font-size:12px; opacity:.6; }
+
+  /* ---------- Section label ---------- */
+  .section-label{
+    display:flex;
+    align-items:center;
+    gap:7px;
+    font-family: var(--display);
+    font-size: 13px;
+    font-weight:600;
+    letter-spacing:0.02em;
+    color: var(--text-primary);
+    margin: 26px 0 10px;
+  }
+  .section-label:first-of-type{ margin-top:0; }
+  .icon-badge{
+    display:inline-flex;
+    align-items:center;
+    justify-content:center;
+    width:22px; height:22px;
+    border-radius:7px;
+    flex-shrink:0;
+  }
+  .icon-badge svg{ width:13px; height:13px; }
+  .icon-badge.sm{ width:18px; height:18px; border-radius:6px; }
+  .icon-badge.sm svg{ width:10.5px; height:10.5px; }
+
+  .badge-blue{ background:var(--ic-blue-soft); color:var(--ic-blue); }
+  .badge-violet{ background:var(--ic-violet-soft); color:var(--ic-violet); }
+  .badge-amber{ background:var(--ic-amber-soft); color:var(--ic-amber); }
+  .badge-teal{ background:var(--ic-teal-soft); color:var(--ic-teal); }
+  .badge-coral{ background:var(--ic-coral-soft); color:var(--ic-coral); }
+  .badge-manager{ background:var(--stage-manager-soft); color:var(--stage-manager); }
+  .badge-planner{ background:var(--stage-planner-soft); color:var(--stage-planner); }
+  .badge-execution{ background:var(--stage-execution-soft); color:var(--stage-execution); }
+
+
+
+  /* ---------- Cards ---------- */
+  .card{
+    background: var(--surface-1-grad);
+    border:1px solid var(--border-1);
+    border-radius:14px;
+    padding:16px 18px;
+    margin-bottom:16px;
+    position:relative;
+    box-shadow: 0 1px 0 rgba(255,255,255,0.02) inset, 0 8px 24px -12px rgba(0,0,0,0.5);
+    transition: border-color .18s ease, transform .18s ease;
+  }
+  .card:hover{
+    border-color: var(--border-2);
+  }
+
+  .card-title{
+    font-family: var(--body);
+    font-size:14px;
+    font-weight:600;
+    color:var(--text-primary);
+    margin:0 0 12px;
+    display:flex;
+    align-items:center;
+    gap:7px;
+  }
+  .card-title svg{ width:14px; height:14px; color:var(--text-secondary); }
+  .card-title .icon-badge{ margin-right:1px; }
+
+  .row{ font-size:13px; color:var(--text-secondary); margin-bottom:4px; }
+  .row b{ color:var(--text-primary); font-weight:500; }
+  .mono{ font-family:var(--mono); }
+
+  /* ---------- Manager Decision (elevated, signature card) ---------- */
+  .decision-card{
+    background: var(--surface-2-grad);
+    border:1px solid var(--stage-manager-line);
+    border-radius:16px;
+    padding:20px 20px 18px;
+    margin-bottom:18px;
+    position:relative;
+    box-shadow:
+      0 0 0 1px rgba(255,138,76,0.08),
+      0 0 32px -6px rgba(255,138,76,0.24),
+      0 14px 30px -16px rgba(0,0,0,0.6);
+  }
+  .decision-header{
+    display:flex;
+    align-items:center;
+    justify-content:space-between;
+    margin-bottom:16px;
+  }
+  .decision-eyebrow{
+    font-family:var(--display);
+    font-size:11.5px;
+    font-weight:600;
+    letter-spacing:0.09em;
+    text-transform:uppercase;
+    color:var(--stage-manager);
+    display:flex;
+    align-items:center;
+    gap:6px;
+  }
+  .decision-eyebrow svg{ width:13px; height:13px; }
+
+  .field{ margin-bottom:16px; }
+  .field:last-of-type{ margin-bottom:0; }
+  .field-label{
+    display:flex;
+    align-items:center;
+    gap:6px;
+    font-size:10.5px;
+    font-weight:600;
+    letter-spacing:0.08em;
+    text-transform:uppercase;
+    color:var(--text-tertiary);
+    margin-bottom:6px;
+  }
+  .field-label svg{ width:12px; height:12px; color:var(--text-tertiary); }
+
+  .line-value{
+    font-family:var(--mono);
+    font-size:14.5px;
+    font-weight:500;
+    color:var(--text-primary);
+    display:flex;
+    align-items:center;
+    gap:8px;
+    flex-wrap:wrap;
+  }
+  .synonym-badge{
+    display:inline-flex;
+    align-items:center;
+    gap:4px;
+    font-family:var(--body);
+    font-size:10.5px;
+    font-weight:600;
+    color:var(--stage-manager);
+    background: var(--stage-manager-soft);
+    border:1px solid var(--stage-manager-line);
+    padding:2px 8px 2px 6px;
+    border-radius:20px;
+  }
+  .synonym-badge svg{ width:10px; height:10px; }
+
+  .arrow{ color:var(--text-tertiary); font-weight:400; }
+
+  .chip{
+    display:inline-block;
+    font-family:var(--mono);
+    font-size:12px;
+    color:var(--text-primary);
+    background: rgba(255,255,255,0.05);
+    border:1px solid var(--border-2);
+    padding:3px 10px;
+    border-radius:7px;
+  }
+
+  .aim-text{
+    font-size:13.5px;
+    line-height:1.55;
+    color:var(--text-primary);
+    display:flex;
+    gap:8px;
+  }
+  .aim-text::before{
+    content:'';
+    width:5px; height:5px;
+    border-radius:50%;
+    background:var(--stage-manager);
+    margin-top:7px;
+    flex-shrink:0;
+    box-shadow: 0 0 8px 1px var(--stage-manager-soft);
+  }
+
+  .rationale{
+    margin-top:14px;
+    padding:10px 14px;
+    border-left:2px solid var(--stage-manager-line);
+    background: rgba(255,138,76,0.05);
+    border-radius: 0 8px 8px 0;
+    font-size:12px;
+    line-height:1.6;
+    color:var(--text-secondary);
+    font-style:italic;
+  }
+
+  /* ---------- Columns table ---------- */
+  .table-wrap{ overflow:hidden; border-radius:10px; border:1px solid var(--border-1); }
+  table{ width:100%; border-collapse:collapse; font-size:12.5px; }
+  th{
+    text-align:left;
+    font-family:var(--display);
+    font-size:10.5px;
+    font-weight:600;
+    letter-spacing:0.06em;
+    text-transform:uppercase;
+    color:var(--text-tertiary);
+    padding:9px 10px;
+    background: rgba(255,255,255,0.03);
+    border-bottom:1px solid var(--border-1);
+  }
+  td{
+    padding:8px 10px;
+    color:var(--text-secondary);
+    border-bottom:1px solid rgba(255,255,255,0.03);
+  }
+  tr:last-child td{ border-bottom:none; }
+  td.name{ color:var(--text-primary); font-family:var(--mono); font-weight:500; }
+  td.type{ color:var(--accent); font-family:var(--mono); font-size:11.5px; }
+
+  .fade-note{
+    text-align:center;
+    font-size:11px;
+    color:var(--text-tertiary);
+    margin-top:8px;
+  }
+</style>
+</head>
+<body>
+<div class="frame">
+
+  <!-- Stepper -->
+  <div class="stepper">
+    <div class="step active stage-manager">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M20 6L9 17l-5-5"/></svg>
+      Manager
+    </div>
+    <span class="step-arrow">&#8594;</span>
+    <div class="step stage-planner">
+      <span class="dot"></span>
+      Planner
+    </div>
+    <span class="step-arrow">&#8594;</span>
+    <div class="step stage-execution">
+      <span class="dot"></span>
+      Execution
+    </div>
+  </div>
+
+  <!-- Context section label -->
+  <div class="section-label">
+    <span class="icon-badge badge-violet"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M3 12h18M3 6h18M3 18h18"/></svg></span>
+    Context
+  </div>
+
+  <!-- Session card -->
+  <div class="card">
+    <div class="card-title">
+      <span class="icon-badge badge-blue"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 3"/></svg></span>
+      Session
+    </div>
+    <div class="row mono">c79967bc&hellip;</div>
+    <div class="row">Turns: <b>4</b></div>
+    <div class="row">Phase: <b>done</b></div>
+  </div>
+
+  <!-- Manager Decision — signature elevated card -->
+  <div class="decision-card">
+    <div class="decision-header">
+      <div class="decision-eyebrow">
+        <span class="icon-badge badge-manager"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11"/></svg></span>
+        Manager Decision
+      </div>
+    </div>
+
+    <div class="field">
+      <div class="field-label">
+        <span class="icon-badge sm badge-violet"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M20.5 10.5c0 6-8.5 11-8.5 11s-8.5-5-8.5-11a8.5 8.5 0 0117 0z"/><circle cx="12" cy="10.5" r="2.5"/></svg></span>
+        Line
+      </div>
+      <div class="line-value">
+        Vinayaka <span class="arrow">&#8594;</span> FRUITS_TEST
+        <span class="synonym-badge">
+          <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2l1.5 5.5L19 9l-5.5 1.5L12 16l-1.5-5.5L5 9l5.5-1.5z"/></svg>
+          synonym
+        </span>
+      </div>
+    </div>
+
+    <div class="field">
+      <div class="field-label">
+        <span class="icon-badge sm badge-amber"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M3 5v14c0 1.1 3.6 2 8 2s8-.9 8-2V5"/><path d="M3 5c0 1.1 3.6 2 8 2s8-.9 8-2-3.6-2-8-2-8 .9-8 2z"/><path d="M3 12c0 1.1 3.6 2 8 2s8-.9 8-2"/></svg></span>
+        Datasets
+      </div>
+      <span class="chip">fruits</span>
+    </div>
+
+    <div class="field">
+      <div class="field-label">
+        <span class="icon-badge sm badge-blue"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 3"/></svg></span>
+        Time
+      </div>
+      <span class="chip">no time filter</span>
+    </div>
+
+    <div class="field">
+      <div class="field-label">
+        <span class="icon-badge sm badge-coral"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="4"/><circle cx="12" cy="12" r="0.5" fill="currentColor"/></svg></span>
+        Aims
+      </div>
+      <div class="aim-text">Compute the average cost per fruit and the total revenue generated (quantity &times; (cost &minus; discount + tax)) for each fruit to assess profitability.</div>
+
+      <div class="rationale">
+        Identifies high-margin fruits against net revenue, quantifies per-fruit revenue to guide stocking, and reveals how discounts and tax affect final margins.
+      </div>
+    </div>
+  </div>
+
+  <!-- Datasets card -->
+  <div class="card">
+    <div class="card-title">
+      <span class="icon-badge badge-amber"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M3 5v14c0 1.1 3.6 2 8 2s8-.9 8-2V5"/><path d="M3 5c0 1.1 3.6 2 8 2s8-.9 8-2-3.6-2-8-2-8 .9-8 2z"/></svg></span>
+      Datasets
+    </div>
+    <div class="row"><b>fruits</b> <span class="arrow">&#8594;</span> <span class="mono">test_fruits</span> <span style="color:var(--text-tertiary)">(primary)</span></div>
+    <div class="row" style="color:var(--text-tertiary); font-size:12px;">Test fruits sales dataset</div>
+  </div>
+
+  <!-- Columns card -->
+  <div class="card">
+    <div class="card-title">
+      <span class="icon-badge badge-teal"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M3 15h18M9 3v18"/></svg></span>
+      Columns
+    </div>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr><th>Name</th><th>Type</th><th>Meaning</th></tr>
+        </thead>
+        <tbody>
+          <tr><td class="name">sale_date</td><td class="type">date</td><td>date of sale</td></tr>
+          <tr><td class="name">sale_time</td><td class="type">time</td><td>time of sale</td></tr>
+          <tr><td class="name">fruits_id</td><td class="type">int</td><td>fruit product id</td></tr>
+          <tr><td class="name">fruits_name</td><td class="type">text</td><td>fruit name</td></tr>
+          <tr><td class="name">cost</td><td class="type">numeric</td><td>unit cost</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="fade-note">7 more columns</div>
+  </div>
+
+</div>
+</body>
+</html>

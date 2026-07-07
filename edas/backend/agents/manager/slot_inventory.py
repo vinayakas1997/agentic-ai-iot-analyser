@@ -755,11 +755,20 @@ def build_line_slots_from_extraction(slots: dict, extracted: dict) -> dict:
     for mention in mentions:
         idx = match_mention_to_existing(mention, line_slots)
         if idx is not None:
+            if idx in processed_indices:
+                # Duplicate match — update existing entry's mention to the correction
+                for existing in merged_slots:
+                    if existing.get("_match_idx") == idx:
+                        existing["mention"] = mention
+                        break
+                continue
             slot = dict(line_slots[idx])
             slot["mention"] = mention
+            slot["_match_idx"] = idx
             processed_indices.add(idx)
         else:
             slot = empty_line_slot(mention)
+            slot["_match_idx"] = -1
 
         detail = detail_by_mention.get(normalize_mention(mention), {})
         if detail.get("aim_raw"):
@@ -783,6 +792,9 @@ def build_line_slots_from_extraction(slots: dict, extracted: dict) -> dict:
             slot["candidates"] = []
 
         merged_slots.append(slot)
+
+    for slot in merged_slots:
+        slot.pop("_match_idx", None)
 
     for i, slot in enumerate(line_slots):
         if i in processed_indices:

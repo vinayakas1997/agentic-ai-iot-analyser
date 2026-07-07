@@ -9,7 +9,24 @@ export interface TurnUi {
   done?: boolean;
   next_step?: string | null;
   suggested_aims?: string[];
-  planner_payload?: { task_definition?: { aims?: string[] } };
+  planner_payload?: {
+    line_name?: string;
+    datasets?: { name: string; table?: string; role?: string; description?: string }[];
+    task_definition?: {
+      aims?: string[];
+      alias_name?: string;
+      notes?: string;
+      time_range?: { start?: string; end?: string };
+      datasets_in_scope?: string[];
+      datasets_excluded?: string[];
+    };
+    time_range?: { start?: string; end?: string };
+    datasets_in_scope?: string[];
+    datasets_excluded?: string[];
+    join_catalog?: { from_dataset?: string; to_dataset?: string; on?: string[] }[];
+  };
+  selectedProposalIndex?: number;
+  proposalProvenance?: { suggestedAim: string; fulfilledByProposalIds: number[] }[];
 }
 
 export interface SchemaSnapshot {
@@ -28,6 +45,7 @@ export interface SchemaSnapshot {
     on?: string[];
   }[];
   time?: { start: string; end: string };
+  time_pending?: string | null;
   no_time_filter?: boolean;
 }
 

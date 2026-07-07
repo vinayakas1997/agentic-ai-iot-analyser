@@ -8,6 +8,7 @@ from agents.manager.session_service import (
     run_session_turn,
 )
 from api.auth import get_default_user_id
+from harness.tracer import get_trace, clear_trace
 
 router = APIRouter(prefix="/manager", tags=["manager"])
 
@@ -42,6 +43,17 @@ async def get_manager_session(session_id: str) -> dict:
     if not detail:
         raise HTTPException(status_code=404, detail="Session not found")
     return detail
+
+
+@router.get("/sessions/{session_id}/trace")
+async def get_manager_trace(session_id: str) -> list[dict]:
+    return get_trace(session_id)
+
+
+@router.delete("/sessions/{session_id}/trace")
+async def clear_manager_trace(session_id: str) -> dict:
+    clear_trace(session_id)
+    return {"status": "cleared"}
 
 
 @router.post("/sessions/{session_id}/messages")

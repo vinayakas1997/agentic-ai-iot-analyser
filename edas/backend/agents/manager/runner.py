@@ -3,6 +3,7 @@ from agents.manager.graph import manager_graph
 from agents.manager.registry_context import empty_dataset_context
 from agents.manager.slots import empty_slots
 from config import apply_runtime_env
+from harness.tracer import set_session as _trace_set_session, clear_session as _trace_clear_session, bump_turn as _trace_bump_turn
 
 
 def _default_state(existing: dict | None) -> dict:
@@ -71,7 +72,11 @@ async def run_manager_agent(
         slots["line"] = line
         state["slots"] = slots
 
-    result = await manager_graph.ainvoke(state, config)
+    _trace_set_session(session_id)
+    try:
+        result = await manager_graph.ainvoke(state, config)
+    finally:
+        _trace_bump_turn(session_id)
     result = dict(result)
     result["chat_history"] = append_turn_to_history(
         result.get("chat_history") or state.get("chat_history"),

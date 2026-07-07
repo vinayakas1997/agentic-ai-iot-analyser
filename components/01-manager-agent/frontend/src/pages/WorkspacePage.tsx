@@ -21,7 +21,7 @@ export default function WorkspacePage() {
           </button>
         </div>
       )}
-      <main className="grid flex-1 min-h-0 grid-cols-1 lg:grid-cols-[minmax(240px,25fr)_minmax(320px,40fr)_minmax(280px,35fr)]">
+      <main className="grid flex-1 min-h-0 grid-cols-1 lg:grid-cols-[minmax(220px,20fr)_minmax(360px,50fr)_minmax(240px,30fr)]">
         <ContextSection />
         <ChatSection />
         <OutputSection />

@@ -172,14 +172,15 @@ async def _distinct_line_names_by_line_name(raw: str) -> list[str]:
 
 async def _distinct_line_names_by_synonym(raw: str) -> list[str]:
     async with AsyncSessionLocal() as db:
-        result = await db.execute(
-            select(GlobalRegistry.line_name)
-            .where(
-                GlobalRegistry.status == "active",
-                GlobalRegistry.synonyms.contains([raw]),
-            )
-            .distinct()
-        )
+        from sqlalchemy import text
+
+        stmt = text("""
+            SELECT DISTINCT line_name FROM global_registry,
+            jsonb_array_elements_text(synonyms) AS syn
+            WHERE status = 'active'
+            AND LOWER(syn) = LOWER(:raw)
+        """)
+        result = await db.execute(stmt, {"raw": raw})
         return sorted({row[0] for row in result.all()})
 
 
@@ -225,6 +226,9 @@ async def resolve_line_lookup(mention: str, user_id: str = "") -> LineMatch | No
     raw = mention.strip()
     if not raw:
         return None
+    # Safety net: strip leading articles
+    import re
+    raw = re.sub(r"^(a|an|the)\s+", "", raw, flags=re.IGNORECASE).strip()
 
     from agents.manager.debug_log import debug
 

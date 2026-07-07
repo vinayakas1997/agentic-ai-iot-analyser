@@ -58,14 +58,26 @@ async def sync_registry_context(state: ManagerState) -> ManagerState:
 
 
 async def line_not_found(state: ManagerState) -> ManagerState:
-    mention = (state.get("slots") or {}).get("line", {}).get("mention") or "that line"
+    slots = state.get("slots") or {}
+    line_slots = slots.get("line_slots") or []
+    not_found = [
+        s.get("mention") or "that line"
+        for s in line_slots
+        if s.get("status") == "not_found" and not s.get("skipped")
+    ]
+    mention = not_found[0] if not_found else "that line"
+    hint = ""
+    lower = mention.lower()
+    for article in ("the ", "a ", "an "):
+        if lower.startswith(article):
+            hint = f" Try removing the word '{article.strip()}' from the name."
+            break
     debug("line_not_found", "reply", mention=mention)
     return {
         **state,
         "agent_message": (
-            f"I couldn't find **{mention}** in the IoT catalog.\n\n"
-            "This line may have been removed or is not registered yet. "
-            "Please contact the IoT team or try another name."
+            f"I couldn't find **{mention}** in the IoT catalog.{hint}\n\n"
+            "Please try another name or check the spelling."
         ),
         "phase": "ask",
     }

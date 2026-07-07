@@ -81,6 +81,8 @@ async def resolve_time_filters(state: ManagerState) -> ManagerState:
 
         result = await resolve_time_phrase(phrase, state["reference_now"])
 
+        debug("resolve_time_filters", "resolve_time_phrase result", result=result)
+
         time_slot = apply_result_to_time_slot(time_slot, result)
 
 

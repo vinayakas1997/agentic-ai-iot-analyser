@@ -31,3 +31,13 @@ export async function sendMessage(
   });
   return data;
 }
+
+export async function reopenSession(sessionId: string): Promise<SessionDetail> {
+  const { data } = await managerClient.post(`/manager/sessions/${sessionId}/reopen`);
+  return data;
+}
+
+export async function forkSession(sessionId: string): Promise<{ session_id: string }> {
+  const { data } = await managerClient.post(`/manager/sessions/${sessionId}/fork`);
+  return data;
+}

@@ -1,0 +1,280 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>EDAS · Outputs Panel Redesign</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg:#08080c;
+    --surface-1-grad: linear-gradient(160deg,#14141b 0%,#0d0d12 100%);
+    --surface-2-grad: linear-gradient(160deg,#17161f 0%,#0e0e14 100%);
+    --border-1: rgba(255,255,255,0.06);
+    --border-2: rgba(255,255,255,0.09);
+    --text-primary:#eeeef2;
+    --text-secondary:#8d8d9c;
+    --text-tertiary:#64646f;
+    --mono:'JetBrains Mono',monospace;
+    --display:'Space Grotesk',sans-serif;
+    --body:'Inter',sans-serif;
+
+    --stage-manager:#ff8a4c; --stage-manager-soft:rgba(255,138,76,0.14); --stage-manager-line:rgba(255,138,76,0.35);
+    --stage-planner:#f0c419; --stage-planner-soft:rgba(240,196,25,0.14); --stage-planner-line:rgba(240,196,25,0.35);
+    --stage-execution:#3ddc97; --stage-execution-soft:rgba(61,220,151,0.14); --stage-execution-line:rgba(61,220,151,0.35);
+  }
+  *{ box-sizing:border-box; }
+  body{
+    margin:0;
+    background: radial-gradient(circle at 70% 0%, #0f0f18 0%, #08080c 55%);
+    font-family: var(--body);
+    color: var(--text-primary);
+    padding:24px 18px 60px;
+    -webkit-font-smoothing:antialiased;
+  }
+  .frame{ max-width:420px; margin:0 auto; }
+
+  .panel-header{
+    display:flex; align-items:center; justify-content:space-between;
+    margin-bottom:18px;
+  }
+  .panel-title{ font-family:var(--display); font-size:16px; font-weight:600; }
+  .step-tag{
+    font-size:11px; color:var(--text-tertiary); font-weight:500;
+  }
+
+  .divider-label{
+    font-family:var(--display);
+    font-size:11px; font-weight:600;
+    letter-spacing:0.08em; text-transform:uppercase;
+    color:var(--text-tertiary);
+    display:flex; align-items:center; gap:10px;
+    margin: 36px 0 14px;
+  }
+  .divider-label::after{
+    content:''; flex:1; height:1px; background:var(--border-1);
+  }
+  .divider-label:first-of-type{ margin-top:0; }
+
+  /* ---------- CURRENT STATE: waiting on Planner ---------- */
+  .wait-card{
+    background: var(--surface-2-grad);
+    border:1px solid var(--stage-planner-line);
+    border-radius:16px;
+    padding:28px 22px;
+    text-align:center;
+    box-shadow: 0 0 28px -10px rgba(240,196,25,0.18);
+  }
+  .wait-icon{
+    width:44px; height:44px;
+    border-radius:12px;
+    background: var(--stage-planner-soft);
+    color: var(--stage-planner);
+    display:flex; align-items:center; justify-content:center;
+    margin: 0 auto 14px;
+  }
+  .wait-icon svg{ width:22px; height:22px; }
+  .wait-title{
+    font-family:var(--display);
+    font-size:14.5px; font-weight:600;
+    color: var(--text-primary);
+    margin-bottom:6px;
+  }
+  .wait-body{
+    font-size:12.5px; line-height:1.6;
+    color: var(--text-secondary);
+    max-width:280px;
+    margin:0 auto 16px;
+  }
+  .wait-meta{
+    display:inline-flex; align-items:center; gap:6px;
+    font-size:11px; font-weight:600;
+    color: var(--stage-planner);
+    background: var(--stage-planner-soft);
+    border:1px solid var(--stage-planner-line);
+    padding:5px 12px;
+    border-radius:20px;
+  }
+  .wait-meta svg{ width:11px; height:11px; }
+  .pulse-dot{
+    width:6px; height:6px; border-radius:50%;
+    background: var(--stage-planner);
+    animation: pulse 1.6s ease-in-out infinite;
+  }
+  @keyframes pulse{
+    0%,100%{ opacity:1; box-shadow:0 0 0 0 rgba(240,196,25,0.5); }
+    50%{ opacity:0.6; box-shadow:0 0 0 5px rgba(240,196,25,0); }
+  }
+
+  .locked-row{
+    display:flex; align-items:center; gap:10px;
+    margin-top:18px;
+    padding:11px 14px;
+    background: rgba(255,255,255,0.02);
+    border:1px solid var(--border-1);
+    border-radius:10px;
+  }
+  .locked-row svg{ width:14px; height:14px; color:var(--text-tertiary); flex-shrink:0; }
+  .locked-row span{ font-size:12px; color:var(--text-tertiary); }
+
+  /* ---------- FUTURE PREVIEW: completed Execution ---------- */
+  .preview-flag{
+    display:inline-flex; align-items:center; gap:6px;
+    font-size:11px; color:var(--text-tertiary); font-style:italic;
+    margin-bottom:14px;
+  }
+
+  .result-card{
+    background: var(--surface-1-grad);
+    border:1px solid var(--stage-execution-line);
+    border-left:3px solid var(--stage-execution);
+    border-radius:12px;
+    padding:16px 18px;
+    margin-bottom:14px;
+    box-shadow: 0 0 22px -12px rgba(61,220,151,0.2);
+  }
+  .result-tag{
+    display:flex; align-items:center; gap:7px;
+    margin-bottom:12px;
+  }
+  .result-badge{
+    width:20px; height:20px; border-radius:6px;
+    background: var(--stage-execution-soft);
+    color: var(--stage-execution);
+    display:flex; align-items:center; justify-content:center;
+  }
+  .result-badge svg{ width:12px; height:12px; }
+  .result-label{
+    font-size:11px; font-weight:600; text-transform:uppercase;
+    letter-spacing:0.05em; color: var(--stage-execution);
+  }
+
+  .kpi-row{ display:flex; gap:10px; margin-bottom:4px; }
+  .kpi{
+    flex:1;
+    background: rgba(255,255,255,0.02);
+    border:1px solid var(--border-1);
+    border-radius:8px;
+    padding:10px 12px;
+  }
+  .kpi-value{
+    font-family:var(--mono); font-size:17px; font-weight:600;
+    color: var(--text-primary);
+  }
+  .kpi-label{ font-size:10.5px; color:var(--text-tertiary); margin-top:2px; }
+
+  .mini-table{ width:100%; border-collapse:collapse; font-size:12px; margin-top:6px;}
+  .mini-table th{
+    text-align:left; font-size:10px; font-weight:600;
+    text-transform:uppercase; letter-spacing:0.05em;
+    color:var(--text-tertiary);
+    padding:7px 8px; border-bottom:1px solid var(--border-1);
+  }
+  .mini-table td{ padding:7px 8px; color:var(--text-secondary); border-bottom:1px solid rgba(255,255,255,0.03); }
+  .mini-table tr:last-child td{ border-bottom:none; }
+  .mini-table td.name{ color:var(--text-primary); font-family:var(--mono); }
+  .mini-table td.num{ font-family:var(--mono); color:var(--stage-execution); text-align:right; }
+
+  .bar-chip{
+    display:flex; align-items:center; gap:8px; margin-bottom:6px;
+  }
+  .bar-name{ width:70px; font-size:11px; color:var(--text-secondary); font-family:var(--mono); flex-shrink:0; }
+  .bar-track{ flex:1; height:6px; background:rgba(255,255,255,0.05); border-radius:4px; overflow:hidden; }
+  .bar-fill{ height:100%; background: linear-gradient(90deg, var(--stage-execution), rgba(61,220,151,0.5)); border-radius:4px; }
+  .bar-val{ width:38px; text-align:right; font-size:11px; font-family:var(--mono); color:var(--text-tertiary); }
+
+  .insight-note{
+    margin-top:12px; padding:9px 12px;
+    background: rgba(61,220,151,0.05);
+    border-left:2px solid var(--stage-execution-line);
+    border-radius:0 8px 8px 0;
+    font-size:11.5px; color:var(--text-secondary); font-style:italic; line-height:1.55;
+  }
+</style>
+</head>
+<body>
+<div class="frame">
+
+  <div class="panel-header">
+    <div class="panel-title">Outputs</div>
+    <div class="step-tag">Step 1 of 4</div>
+  </div>
+
+  <div class="divider-label">Current state</div>
+
+  <!-- Waiting on Planner -->
+  <div class="wait-card">
+    <div class="wait-icon">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11"/></svg>
+    </div>
+    <div class="wait-title">Waiting on Planner</div>
+    <div class="wait-body">Manager has scoped the aim. Once Planner builds a query plan, it'll appear here — followed by Execution's results.</div>
+    <div class="wait-meta"><span class="pulse-dot"></span>Planner not yet started</div>
+
+    <div class="locked-row">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="4" y="10" width="16" height="10" rx="2"/><path d="M8 10V7a4 4 0 018 0v3"/></svg>
+      <span>Execution results will appear once Planner completes</span>
+    </div>
+  </div>
+
+  <div class="divider-label">Future preview &mdash; once Execution completes</div>
+  <div class="preview-flag">
+    <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 8v4M12 16h.01"/></svg>
+    Illustrative only &mdash; not live data
+  </div>
+
+  <!-- Result: KPI summary -->
+  <div class="result-card">
+    <div class="result-tag">
+      <span class="result-badge"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M3 3v18h18"/><path d="M7 15l4-5 3 3 5-6"/></svg></span>
+      <span class="result-label">Execution &middot; Summary</span>
+    </div>
+    <div class="kpi-row">
+      <div class="kpi">
+        <div class="kpi-value">&yen;284</div>
+        <div class="kpi-label">avg cost / fruit</div>
+      </div>
+      <div class="kpi">
+        <div class="kpi-value">&yen;41.2K</div>
+        <div class="kpi-label">total revenue</div>
+      </div>
+      <div class="kpi">
+        <div class="kpi-value">18.4%</div>
+        <div class="kpi-label">avg margin</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Result: chart -->
+  <div class="result-card">
+    <div class="result-tag">
+      <span class="result-badge"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><rect x="3" y="12" width="4" height="9"/><rect x="10" y="7" width="4" height="14"/><rect x="17" y="3" width="4" height="18"/></svg></span>
+      <span class="result-label">Execution &middot; Revenue by fruit</span>
+    </div>
+    <div class="bar-chip"><span class="bar-name">apple</span><div class="bar-track"><div class="bar-fill" style="width:88%"></div></div><span class="bar-val">&yen;12.1K</span></div>
+    <div class="bar-chip"><span class="bar-name">mango</span><div class="bar-track"><div class="bar-fill" style="width:71%"></div></div><span class="bar-val">&yen;9.8K</span></div>
+    <div class="bar-chip"><span class="bar-name">grape</span><div class="bar-track"><div class="bar-fill" style="width:54%"></div></div><span class="bar-val">&yen;7.4K</span></div>
+    <div class="bar-chip"><span class="bar-name">peach</span><div class="bar-track"><div class="bar-fill" style="width:38%"></div></div><span class="bar-val">&yen;5.2K</span></div>
+    <div class="insight-note">Apple and mango together account for ~53% of total revenue despite mid-range unit cost.</div>
+  </div>
+
+  <!-- Result: table -->
+  <div class="result-card">
+    <div class="result-tag">
+      <span class="result-badge"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M3 15h18M9 3v18"/></svg></span>
+      <span class="result-label">Execution &middot; Detail table</span>
+    </div>
+    <table class="mini-table">
+      <thead><tr><th>Fruit</th><th style="text-align:right">Avg cost</th><th style="text-align:right">Revenue</th></tr></thead>
+      <tbody>
+        <tr><td class="name">apple</td><td class="num">&yen;312</td><td class="num">&yen;12.1K</td></tr>
+        <tr><td class="name">mango</td><td class="num">&yen;298</td><td class="num">&yen;9.8K</td></tr>
+        <tr><td class="name">grape</td><td class="num">&yen;265</td><td class="num">&yen;7.4K</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+</div>
+</body>
+</html>

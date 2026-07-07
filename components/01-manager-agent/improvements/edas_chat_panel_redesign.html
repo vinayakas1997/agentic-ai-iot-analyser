@@ -1,0 +1,470 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>EDAS · Chat Panel Redesign</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg: #08080c;
+    --surface-1-grad: linear-gradient(160deg, #14141b 0%, #0d0d12 100%);
+    --surface-2-grad: linear-gradient(160deg, #17161f 0%, #0e0e14 100%);
+    --border-1: rgba(255,255,255,0.06);
+    --border-2: rgba(255,255,255,0.09);
+    --text-primary: #eeeef2;
+    --text-secondary: #8d8d9c;
+    --text-tertiary: #64646f;
+    --mono: 'JetBrains Mono', monospace;
+    --display: 'Space Grotesk', sans-serif;
+    --body: 'Inter', sans-serif;
+
+    --stage-manager: #ff8a4c;
+    --stage-manager-soft: rgba(255,138,76,0.14);
+    --stage-manager-line: rgba(255,138,76,0.38);
+
+    --user-blue: #6e8ff2;
+    --user-blue-soft: rgba(110,143,242,0.12);
+    --user-blue-line: rgba(110,143,242,0.3);
+
+    --ic-blue:#5ea8ff; --ic-blue-soft:rgba(94,168,255,0.14);
+    --ic-amber:#ffcf5c; --ic-amber-soft:rgba(255,207,92,0.14);
+    --ic-coral:#ff8a80; --ic-coral-soft:rgba(255,138,128,0.14);
+    --ic-teal:#4fd8c4; --ic-teal-soft:rgba(79,216,196,0.14);
+  }
+  *{ box-sizing:border-box; }
+  body{
+    margin:0;
+    background: radial-gradient(circle at 30% 0%, #0f0f18 0%, #08080c 55%);
+    font-family: var(--body);
+    color: var(--text-primary);
+    padding: 24px 18px 60px;
+    -webkit-font-smoothing: antialiased;
+  }
+  .frame{ max-width: 620px; margin: 0 auto; }
+
+  .chat-header{
+    display:flex;
+    align-items:center;
+    justify-content:space-between;
+    margin-bottom:18px;
+  }
+  .chat-title{
+    font-family:var(--display);
+    font-size:16px;
+    font-weight:600;
+  }
+  .status-pill{
+    font-size:11px;
+    font-weight:600;
+    letter-spacing:0.04em;
+    text-transform:uppercase;
+    padding:4px 10px;
+    border-radius:20px;
+    background: rgba(61,220,151,0.14);
+    color:#3ddc97;
+    border:1px solid rgba(61,220,151,0.3);
+  }
+
+  /* ---- turn wrapper ---- */
+  .turn{ margin-bottom:22px; }
+
+  /* ---- user bubble ---- */
+  .user-msg{
+    background: var(--surface-1-grad);
+    border:1px solid var(--user-blue-line);
+    border-left:3px solid var(--user-blue);
+    border-radius:12px;
+    padding:14px 16px;
+    margin-bottom:10px;
+  }
+  .sender-row{
+    display:flex; align-items:center; gap:7px;
+    font-size:11.5px; font-weight:600;
+    color:var(--user-blue);
+    margin-bottom:6px;
+    text-transform:uppercase;
+    letter-spacing:0.05em;
+  }
+  .sender-row svg{ width:13px; height:13px; }
+  .msg-text{ font-size:14px; line-height:1.5; color:var(--text-primary); }
+
+  .resolved-strip{
+    margin-top:12px;
+    padding-top:10px;
+    border-top:1px solid rgba(255,255,255,0.06);
+  }
+  .resolved-label{
+    font-size:10.5px;
+    color:var(--text-tertiary);
+    text-transform:uppercase;
+    letter-spacing:0.06em;
+    margin-bottom:7px;
+    font-weight:600;
+  }
+  .resolved-chips{ display:flex; flex-wrap:wrap; gap:6px; }
+  .rchip{
+    display:inline-flex; align-items:center; gap:5px;
+    font-family:var(--mono);
+    font-size:11.5px;
+    padding:4px 9px;
+    border-radius:7px;
+    border:1px solid var(--border-2);
+    background: rgba(255,255,255,0.04);
+    color: var(--text-primary);
+  }
+  .rchip svg{ width:11px; height:11px; flex-shrink:0; }
+  .rchip.c-blue{ color:var(--ic-blue); background:var(--ic-blue-soft); border-color:rgba(94,168,255,0.3);}
+  .rchip.c-amber{ color:var(--ic-amber); background:var(--ic-amber-soft); border-color:rgba(255,207,92,0.3);}
+  .rchip.c-coral{ color:var(--ic-coral); background:var(--ic-coral-soft); border-color:rgba(255,138,128,0.3);}
+  .rchip.unchanged{ opacity:0.45; }
+  .diff-note{
+    font-size:10.5px;
+    color:var(--text-tertiary);
+    margin-top:6px;
+    font-style:italic;
+  }
+
+  /* ---- manager card ---- */
+  .mgr-card{
+    background: var(--surface-2-grad);
+    border:1px solid var(--stage-manager-line);
+    border-left:3px solid var(--stage-manager);
+    border-radius:12px;
+    padding:16px 18px;
+    box-shadow: 0 0 24px -10px rgba(255,138,76,0.25);
+  }
+  .mgr-sender{
+    display:flex; align-items:center; gap:7px;
+    margin-bottom:12px;
+  }
+  .mgr-badge{
+    width:20px; height:20px;
+    border-radius:6px;
+    background: var(--stage-manager-soft);
+    color: var(--stage-manager);
+    display:flex; align-items:center; justify-content:center;
+  }
+  .mgr-badge svg{ width:12px; height:12px; }
+  .mgr-name{
+    font-size:11.5px; font-weight:600;
+    color: var(--stage-manager);
+    text-transform:uppercase;
+    letter-spacing:0.05em;
+  }
+
+  .plan-block{ margin-bottom:14px; }
+  .plan-row{ font-size:13.5px; color:var(--text-secondary); margin-bottom:5px; line-height:1.5; }
+  .plan-row b{ color:var(--text-primary); font-weight:500; }
+  .plan-row .mono{ font-family:var(--mono); color:var(--text-primary); }
+
+  .subhead{
+    font-size:11px; font-weight:600;
+    text-transform:uppercase; letter-spacing:0.06em;
+    color:var(--text-tertiary);
+    margin: 14px 0 8px;
+  }
+  .benefit-list{ margin:0; padding:0; list-style:none; }
+  .benefit-list li{
+    font-size:13px; color:var(--text-secondary); line-height:1.55;
+    padding-left:14px; position:relative; margin-bottom:5px;
+  }
+  .benefit-list li::before{
+    content:''; position:absolute; left:0; top:7px;
+    width:4px; height:4px; border-radius:50%;
+    background: var(--stage-manager);
+  }
+
+  /* ---- quick reply chips (replaces "Reply go / more options" sentence) ---- */
+  .quick-replies{
+    display:flex; flex-wrap:wrap; gap:8px;
+    margin-top:16px;
+    padding-top:14px;
+    border-top:1px solid rgba(255,255,255,0.06);
+  }
+  .qr-btn{
+    font-family:var(--body);
+    font-size:12.5px; font-weight:600;
+    padding:7px 14px;
+    border-radius:20px;
+    cursor:pointer;
+    transition: all .15s ease;
+    display:inline-flex; align-items:center; gap:6px;
+  }
+  .qr-btn svg{ width:12px; height:12px; }
+  .qr-primary{
+    background: var(--stage-manager);
+    color:#2a1607;
+    border:1px solid var(--stage-manager);
+  }
+  .qr-primary:hover{ filter:brightness(1.08); }
+  .qr-secondary{
+    background: transparent;
+    color:var(--text-secondary);
+    border:1px solid var(--border-2);
+  }
+  .qr-secondary:hover{ border-color:var(--text-secondary); color:var(--text-primary); }
+
+  /* ---- selectable proposal options ---- */
+  .options-intro{ font-size:13.5px; color:var(--text-secondary); margin-bottom:12px; }
+  .options-intro b{ color:var(--text-primary); }
+
+  .option-card{
+    background: rgba(255,255,255,0.02);
+    border:1px solid var(--border-2);
+    border-radius:10px;
+    padding:13px 14px;
+    margin-bottom:10px;
+    cursor:pointer;
+    transition: all .15s ease;
+    position:relative;
+  }
+  .option-card:hover{
+    border-color: var(--stage-manager-line);
+    background: rgba(255,138,76,0.04);
+    transform: translateY(-1px);
+  }
+  .option-card:last-child{ margin-bottom:0; }
+  .option-num{
+    display:inline-flex; align-items:center; justify-content:center;
+    width:20px; height:20px;
+    border-radius:6px;
+    background: var(--stage-manager-soft);
+    color: var(--stage-manager);
+    font-family:var(--mono);
+    font-size:11px; font-weight:600;
+    margin-right:8px;
+    flex-shrink:0;
+  }
+  .option-title{
+    font-size:13.5px; font-weight:600; color:var(--text-primary);
+    display:flex; align-items:center; margin-bottom:8px;
+  }
+  .option-meta{ font-size:12px; color:var(--text-secondary); line-height:1.55; padding-left:28px; }
+  .option-meta .tag{
+    display:inline-block;
+    font-family:var(--mono);
+    font-size:11px;
+    color:var(--text-tertiary);
+    margin-right:10px;
+  }
+  .option-meta .tag b{ color:var(--text-secondary); font-family:var(--body); font-weight:600; }
+  .you-might-see{
+    margin-top:6px;
+    font-size:11.5px;
+    color:var(--text-tertiary);
+    font-style:italic;
+    line-height:1.5;
+  }
+  .select-hint{
+    position:absolute;
+    top:13px; right:14px;
+    font-size:10.5px;
+    color:var(--stage-manager);
+    opacity:0;
+    transition:opacity .15s ease;
+    font-weight:600;
+  }
+  .option-card:hover .select-hint{ opacity:1; }
+
+  /* ---- footer / composer ---- */
+  .composer{
+    margin-top:22px;
+    border-radius:12px;
+    overflow:hidden;
+  }
+  .composer-banner{
+    display:flex; align-items:center; gap:8px;
+    background: rgba(61,220,151,0.08);
+    border:1px solid rgba(61,220,151,0.25);
+    border-bottom:none;
+    border-radius:12px 12px 0 0;
+    padding:10px 14px;
+    font-size:12px;
+    color:#3ddc97;
+    font-weight:500;
+  }
+  .composer-banner svg{ width:14px; height:14px; flex-shrink:0; }
+  .composer-input-row{
+    display:flex; gap:10px;
+    background: var(--surface-1-grad);
+    border:1px solid var(--border-1);
+    border-top:none;
+    border-radius:0 0 12px 12px;
+    padding:12px;
+  }
+  .composer-input{
+    flex:1;
+    background: rgba(255,255,255,0.03);
+    border:1px solid var(--border-1);
+    border-radius:8px;
+    padding:10px 12px;
+    font-size:13px;
+    color:var(--text-tertiary);
+    font-style:italic;
+  }
+  .composer-send{
+    background: rgba(255,255,255,0.06);
+    color:var(--text-tertiary);
+    border:1px solid var(--border-2);
+    border-radius:8px;
+    padding:10px 18px;
+    font-size:13px;
+    font-weight:600;
+    cursor:not-allowed;
+  }
+  .view-note{
+    text-align:center;
+    font-size:11px;
+    color:var(--text-tertiary);
+    margin-top:8px;
+  }
+</style>
+</head>
+<body>
+<div class="frame">
+
+  <div class="chat-header">
+    <div class="chat-title">Chat</div>
+    <span class="status-pill">Completed</span>
+  </div>
+
+  <!-- Turn 1 -->
+  <div class="turn">
+    <div class="user-msg">
+      <div class="sender-row">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><circle cx="12" cy="8" r="4"/><path d="M4 21c0-4 4-6 8-6s8 2 8 6"/></svg>
+        You
+      </div>
+      <div class="msg-text">Show me the average cost by fruit for Vinayaka</div>
+
+      <div class="resolved-strip">
+        <div class="resolved-label">Resolved</div>
+        <div class="resolved-chips">
+          <span class="rchip c-blue"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M20.5 10.5c0 6-8.5 11-8.5 11s-8.5-5-8.5-11a8.5 8.5 0 0117 0z"/><circle cx="12" cy="10.5" r="2.5"/></svg>FRUITS_TEST</span>
+          <span class="rchip c-amber"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M3 5v14c0 1.1 3.6 2 8 2s8-.9 8-2V5"/><path d="M3 5c0 1.1 3.6 2 8 2s8-.9 8-2-3.6-2-8-2-8 .9-8 2z"/></svg>fruits</span>
+          <span class="rchip"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 3"/></svg>no time filter</span>
+          <span class="rchip c-coral"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="4"/></svg>avg cost per fruit</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="mgr-card">
+      <div class="mgr-sender">
+        <span class="mgr-badge"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11"/></svg></span>
+        <span class="mgr-name">Manager</span>
+      </div>
+
+      <div class="plan-block">
+        <div class="plan-row"><b>Line</b> &nbsp; <span class="mono">FRUITS_TEST</span></div>
+        <div class="plan-row"><b>Time</b> &nbsp; all data (no date filter)</div>
+        <div class="plan-row"><b>Aims</b> &nbsp; Calculate the average cost per fruit from the fruits table</div>
+      </div>
+
+      <div class="subhead">Benefits</div>
+      <ul class="benefit-list">
+        <li>Establishes a baseline for fruit pricing to identify cost trends across the product line.</li>
+        <li>Enables quick comparison of average costs against sales targets to spot underperforming items.</li>
+        <li>Supports budget planning by providing a clear, aggregated view of unit expenses.</li>
+        <li>Simplifies initial data exploration for stakeholders without requiring complex technical queries.</li>
+      </ul>
+
+      <div class="quick-replies">
+        <span class="qr-btn qr-primary"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6"><path d="M5 12l5 5L20 7"/></svg>Go — proceed</span>
+        <span class="qr-btn qr-secondary">More options</span>
+        <span class="qr-btn qr-secondary">Change something&hellip;</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- Turn 2 -->
+  <div class="turn">
+    <div class="user-msg">
+      <div class="sender-row">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><circle cx="12" cy="8" r="4"/><path d="M4 21c0-4 4-6 8-6s8 2 8 6"/></svg>
+        You
+      </div>
+      <div class="msg-text">along with the average what other parameter can you add in it?</div>
+
+      <div class="resolved-strip">
+        <div class="resolved-label">Resolved</div>
+        <div class="resolved-chips">
+          <span class="rchip c-blue unchanged"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M20.5 10.5c0 6-8.5 11-8.5 11s-8.5-5-8.5-11a8.5 8.5 0 0117 0z"/><circle cx="12" cy="10.5" r="2.5"/></svg>FRUITS_TEST</span>
+          <span class="rchip c-amber unchanged"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M3 5v14c0 1.1 3.6 2 8 2s8-.9 8-2V5"/><path d="M3 5c0 1.1 3.6 2 8 2s8-.9 8-2-3.6-2-8-2-8 .9-8 2z"/></svg>fruits</span>
+          <span class="rchip unchanged"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 3"/></svg>no time filter</span>
+        </div>
+        <div class="diff-note">Line, dataset & time unchanged from previous turn</div>
+      </div>
+    </div>
+
+    <div class="mgr-card">
+      <div class="mgr-sender">
+        <span class="mgr-badge"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11"/></svg></span>
+        <span class="mgr-name">Manager</span>
+      </div>
+
+      <div class="options-intro">Here are 3 analysis options for <b>FRUITS_TEST</b>. Select one to proceed:</div>
+
+      <div class="option-card">
+        <span class="select-hint">select &#8594;</span>
+        <div class="option-title"><span class="option-num">1</span>Average Cost and Total Quantity by Fruit</div>
+        <div class="option-meta">
+          Calculate the average cost per fruit and the total quantity sold for each fruit to understand both pricing and volume trends.
+          <div style="margin-top:8px;">
+            <span class="tag">Datasets <b>fruits</b></span>
+            <span class="tag">Join <b>None</b></span>
+          </div>
+          <div class="you-might-see">You might see: a list of fruits with average unit cost alongside total units sold.</div>
+        </div>
+      </div>
+
+      <div class="option-card">
+        <span class="select-hint">select &#8594;</span>
+        <div class="option-title"><span class="option-num">2</span>Average Cost and Total Revenue by Fruit</div>
+        <div class="option-meta">
+          Compute the average cost and total revenue generated (quantity &times; (cost &minus; discount + tax)) for each fruit to assess profitability.
+          <div style="margin-top:8px;">
+            <span class="tag">Datasets <b>fruits</b></span>
+            <span class="tag">Join <b>None</b></span>
+          </div>
+          <div class="you-might-see">You might see: which fruits generate the most revenue relative to their cost.</div>
+        </div>
+      </div>
+
+      <div class="option-card">
+        <span class="select-hint">select &#8594;</span>
+        <div class="option-title"><span class="option-num">3</span>Average Cost and Discount Impact by Fruit</div>
+        <div class="option-meta">
+          Analyze the average cost per fruit and the average discount percentage applied to each fruit to see if discounts correlate with cost levels.
+          <div style="margin-top:8px;">
+            <span class="tag">Datasets <b>fruits</b></span>
+            <span class="tag">Join <b>None</b></span>
+          </div>
+          <div class="you-might-see">You might see: whether higher-cost fruits receive higher or lower discounts.</div>
+        </div>
+      </div>
+
+      <div class="quick-replies">
+        <span class="qr-btn qr-secondary">See more options</span>
+        <span class="qr-btn qr-secondary">Change something&hellip;</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- Composer -->
+  <div class="composer">
+    <div class="composer-banner">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M5 12l5 5L20 7"/></svg>
+      Session complete — start a new analysis from the top bar
+    </div>
+    <div class="composer-input-row">
+      <div class="composer-input">Session complete</div>
+      <div class="composer-send">Send</div>
+    </div>
+  </div>
+  <div class="view-note">Viewing step 1 &middot; select the latest turn to send messages</div>
+
+</div>
+</body>
+</html>

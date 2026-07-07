@@ -7,7 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from agents.executor_agent import register as register_executor
 from agents.manager_agent import register as register_manager
 from agents.planner_agent import register as register_planner
-from api.routes import manager, results, tasks
+from api.routes import manager
 from api.websocket import register_ws_subscriber, websocket_endpoint
 from config import get_settings
 from db.db_subscriber import register as register_db_subscriber
@@ -45,8 +45,6 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-app.include_router(tasks.router)
-app.include_router(results.router)
 app.include_router(manager.router)
 
 

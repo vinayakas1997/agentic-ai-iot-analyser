@@ -5,16 +5,11 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 
+from agents.manager.constants import SOURCE_LABELS
 from agents.manager.registry_context import merge_dataset_intent_from_clarification
 from agents.manager.context.time import merge_time_intent_from_clarification
 from agents.manager.prompt_hints import format_aim_missing_hint
 from agents.manager.slots import empty_line_slot, empty_scope
-
-_SOURCE_LABELS = {
-    "line_name": "exact line name",
-    "synonym": "synonym",
-    "task_alias": "previous analysis alias",
-}
 
 _SKIP_AIM_PHRASES = frozenset(
     {
@@ -138,7 +133,7 @@ def _slot_status_label(slot: dict) -> str:
     if status == "resolved":
         canonical = slot.get("canonical") or mention
         source = slot.get("source")
-        label = _SOURCE_LABELS.get(source, source or "match")
+        label = SOURCE_LABELS.get(source, source or "match")
         return f"**{mention}** → **{canonical}** (matched via {label})"
     if status == "not_found":
         return f"**{mention}** → not found in the IoT catalog"
@@ -755,11 +750,20 @@ def build_line_slots_from_extraction(slots: dict, extracted: dict) -> dict:
     for mention in mentions:
         idx = match_mention_to_existing(mention, line_slots)
         if idx is not None:
+            if idx in processed_indices:
+                # Duplicate match — update existing entry's mention to the correction
+                for existing in merged_slots:
+                    if existing.get("_match_idx") == idx:
+                        existing["mention"] = mention
+                        break
+                continue
             slot = dict(line_slots[idx])
             slot["mention"] = mention
+            slot["_match_idx"] = idx
             processed_indices.add(idx)
         else:
             slot = empty_line_slot(mention)
+            slot["_match_idx"] = -1
 
         detail = detail_by_mention.get(normalize_mention(mention), {})
         if detail.get("aim_raw"):
@@ -783,6 +787,9 @@ def build_line_slots_from_extraction(slots: dict, extracted: dict) -> dict:
             slot["candidates"] = []
 
         merged_slots.append(slot)
+
+    for slot in merged_slots:
+        slot.pop("_match_idx", None)
 
     for i, slot in enumerate(line_slots):
         if i in processed_indices:

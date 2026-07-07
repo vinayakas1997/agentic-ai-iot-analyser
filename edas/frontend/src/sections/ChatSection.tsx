@@ -1,4 +1,4 @@
-import { FormEvent, KeyboardEvent, useState } from "react";
+import { FormEvent, KeyboardEvent, Fragment, useState } from "react";
 import { btnPrimary, panelClass } from "../lib/styles";
 import { useSessionStore, useIsDone, useIsLive } from "../stores/sessionStore";
 import { useUiStore } from "../stores/uiStore";
@@ -24,7 +24,7 @@ export default function ChatSection() {
   return (
     <section className={`${panelClass} order-2 lg:order-none`}>
       <div className="flex items-center justify-between mb-3 shrink-0">
-        <h2 className="text-base font-semibold">Chat</h2>
+        <h2 className="text-base font-semibold font-display">Chat</h2>
         {isDone && (
           <span className="text-xs px-2 py-0.5 rounded-full bg-green-950 text-success">Completed</span>
         )}
@@ -37,35 +37,41 @@ export default function ChatSection() {
           </p>
         )}
         {turns.map((turn, i) => (
-          <div
-            key={turn.turn_index ?? i}
-            className={`mb-4 p-2 rounded-lg cursor-pointer ${
-              i === selectedTurnIndex ? "ring-1 ring-accent bg-blue-500/10" : ""
-            }`}
-            onClick={() => selectTurn(i)}
-            onKeyDown={(e: KeyboardEvent) => e.key === "Enter" && selectTurn(i)}
-            role="button"
-            tabIndex={0}
-          >
-            {turn.user && (
-              <div className="mb-2 ml-auto max-w-[95%] rounded-xl bg-blue-900/40 p-3">
-                <span className="text-[0.7rem] text-muted block mb-1">You</span>
-                <p className="text-sm m-0">{turn.user}</p>
-              </div>
-            )}
-            {turn.agent && (
-              <div className="mb-2 max-w-[95%] rounded-xl bg-zinc-800 p-3">
-                <span className="text-[0.7rem] text-muted block mb-1">Manager</span>
-                <p className="text-sm m-0 whitespace-pre-wrap">{turn.agent}</p>
-              </div>
-            )}
-            {turn.ui?.next_step && (
-              <div className="max-w-[95%] rounded-xl border border-green-900 bg-cta p-3">
-                <span className="text-[0.7rem] text-muted block mb-1">Next</span>
-                <p className="text-sm m-0 whitespace-pre-wrap">{turn.ui.next_step}</p>
-              </div>
-            )}
-          </div>
+          <Fragment key={turn.turn_index ?? i}>
+            {i > 0 && <hr className="border-t border-border/30 my-3" />}
+            <div
+              className={`p-2 rounded-lg cursor-pointer border-l-2 ${
+                i === selectedTurnIndex
+                  ? "ring-1 ring-accent bg-blue-500/10 border-l-accent"
+                  : i % 2 === 1
+                    ? "bg-stripe-odd border-l-rail/30"
+                    : "border-l-transparent"
+              } ${i !== selectedTurnIndex ? "hover:bg-white/[0.02]" : ""}`}
+              onClick={() => selectTurn(i)}
+              onKeyDown={(e: KeyboardEvent) => e.key === "Enter" && selectTurn(i)}
+              role="button"
+              tabIndex={0}
+            >
+              {turn.user && (
+                <div className="mb-2 ml-auto max-w-[95%] rounded-xl bg-blue-900/40 p-3">
+                  <span className="text-[0.7rem] text-muted block mb-1">You</span>
+                  <p className="text-sm m-0">{turn.user}</p>
+                </div>
+              )}
+              {turn.agent && (
+                <div className="mb-2 max-w-[95%] rounded-xl bg-zinc-800 p-3">
+                  <span className="text-[0.7rem] text-muted block mb-1">Manager</span>
+                  <p className="text-sm m-0 leading-relaxed whitespace-pre-wrap">{turn.agent}</p>
+                </div>
+              )}
+              {turn.ui?.next_step && (
+                <div className="max-w-[95%] rounded-xl border border-green-900 bg-cta p-3">
+                  <span className="text-[0.7rem] text-muted block mb-1">Next</span>
+                  <p className="text-sm m-0 leading-relaxed whitespace-pre-wrap">{turn.ui.next_step}</p>
+                </div>
+              )}
+            </div>
+          </Fragment>
         ))}
         {loading && <p className="text-muted text-sm">Thinking…</p>}
       </div>
