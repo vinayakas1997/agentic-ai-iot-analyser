@@ -9,6 +9,7 @@ export interface TurnUi {
   done?: boolean;
   next_step?: string | null;
   suggested_aims?: string[];
+  explanation?: string;
   planner_payload?: {
     line_name?: string;
     datasets?: { name: string; table?: string; role?: string; description?: string }[];
@@ -61,6 +62,8 @@ export interface Turn {
 export interface SessionMeta {
   session_id: string;
   line_name?: string;
+  title?: string | null;
+  mode?: string;
   phase?: string;
   status?: string;
   created_at?: string;
@@ -70,6 +73,8 @@ export interface SessionMeta {
 export interface SessionListItem {
   session_id: string;
   line_name?: string;
+  title?: string | null;
+  mode?: string;
   phase?: string;
   status?: string;
 }

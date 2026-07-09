@@ -124,3 +124,11 @@ export function IconChevronRight(props: Props) {
     </Icon>
   );
 }
+
+export function IconEdit(props: Props) {
+  return (
+    <Icon {...props} strokeWidth="2">
+      <path d="M17 3a2.828 2.828 0 114 4L7.5 20.5 2 22l1.5-5.5L17 3z" />
+    </Icon>
+  );
+}

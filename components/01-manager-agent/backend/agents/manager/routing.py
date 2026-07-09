@@ -20,7 +20,18 @@ def is_confirm_message(state: ManagerState) -> bool:
 
     user_msg = (state.get("user_message") or "").lower().strip()
 
-    return any(word == user_msg or word in user_msg.split() for word in _CONFIRM_WORDS)
+    return user_msg in _CONFIRM_WORDS
+
+
+def is_confirm_like_message(state: ManagerState) -> bool:
+
+    if state.get("phase") != "plan":
+
+        return False
+
+    user_msg = (state.get("user_message") or "").lower().strip()
+
+    return any(word in user_msg.split() for word in _CONFIRM_WORDS)
 
 
 
@@ -93,7 +104,7 @@ def _route_explore(state: ManagerState) -> str | None:
 
         return "merge_proposals_to_plan"
 
-    if action in ("propose", "refine"):
+    if action in ("propose", "refine", "confirm", "select"):
 
         debug_route("_route_explore", "propose_or_refine_plans")
 
@@ -236,6 +247,12 @@ def route_after_inject(state: ManagerState) -> str:
         debug_route("route_after_inject", "detect_confirm")
 
         return "detect_confirm"
+
+    if is_confirm_like_message(state):
+
+        debug_route("route_after_inject", "confirm_redirect")
+
+        return "confirm_redirect"
 
     debug_route("route_after_inject", "extract_slots")
 

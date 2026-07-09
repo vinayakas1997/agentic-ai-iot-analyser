@@ -7,6 +7,7 @@ from bus.subscriber import subscribe
 from config import get_settings
 from db.models import Event
 from llm.client import complete
+from agents.manager.session_db import update_session_mode
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
@@ -151,6 +152,8 @@ async def _finish_with_manager(event: Event, task_id: str, failed: bool = False,
 
 
 async def handle_start(event: Event) -> None:
+    if event.session_id:
+        await update_session_mode(event.session_id, event.user_id, "plan")
     await _start_planner(event)
 
 

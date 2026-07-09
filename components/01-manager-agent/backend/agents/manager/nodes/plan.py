@@ -3,11 +3,14 @@ import logging
 
 from langchain_core.messages import HumanMessage, SystemMessage
 
+from api.websocket import broadcast_event
+
 from agents.manager.db import save_task_definition
 from agents.manager.debug_log import debug, debug_state
 from agents.manager.json_parse import parse_json_from_message
 from agents.manager.llm_client import get_llm as get_llm_client
 from agents.manager.nodes.explore_aims import _coerce_aims_list
+from agents.manager.session_db import update_session_mode
 from agents.manager.message_format import (
     assemble_reply,
     format_line_info_cli,
@@ -128,6 +131,7 @@ async def ask_missing(state: ManagerState) -> ManagerState:
 
 async def reorganize_aim(state: ManagerState) -> ManagerState:
     debug_state("reorganize_aim", state)
+    state = {**state, "error": None}
     slots = state.get("slots") or {}
     line_context = state.get("line_context") or {}
     aim = slots.get("aim") or {}
@@ -161,10 +165,14 @@ async def reorganize_aim(state: ManagerState) -> ManagerState:
         time_json=time_json,
     )
     llm = get_llm_client()
-    response = await llm.ainvoke(
-        [SystemMessage(content=system), HumanMessage(content=aim.get("raw") or "")],
-        caller="reorganize_aim",
-    )
+    try:
+        response = await llm.ainvoke(
+            [SystemMessage(content=system), HumanMessage(content=aim.get("raw") or "")],
+            caller="reorganize_aim",
+        )
+    except Exception:
+        logger.exception("reorganize_aim: LLM call failed")
+        return {**state, "error": "llm_failed", "agent_message": "I couldn't reorganize the plan. Please try again.", "phase": "ask"}
     parsed: dict = {}
     try:
         parsed = parse_json_from_message(response.content or "{}")
@@ -221,6 +229,7 @@ async def _generate_plan_benefits(state: ManagerState, plan: dict) -> str:
 
 async def build_plan_message(state: ManagerState) -> ManagerState:
     debug_state("build_plan_message", state)
+    state = {**state, "error": None}
     plan = dict(state.get("plan") or {})
     slots = state.get("slots") or {}
     time_slot = slots.get("time") or {}
@@ -244,13 +253,31 @@ async def build_plan_message(state: ManagerState) -> ManagerState:
     if benefits:
         msg += f"\n\n**Benefits:**\n{benefits}"
     msg += "\n\nReply **go** to proceed, say *more options* for other plans, or tell me what to change."
-    return {**state, "plan": plan, "agent_message": msg, "phase": "plan"}
+
+    try:
+        await broadcast_event(state.get("user_id", ""), {
+            "topic": "manager.plan_built",
+            "session_id": state.get("session_id", ""),
+            "payload": {
+                "line": plan.get("line"),
+                "aims": plan.get("aims", []),
+                "time_start": plan.get("time_start"),
+                "time_end": plan.get("time_end"),
+            },
+        })
+    except Exception:
+        pass
+
+    line_name = plan.get("line") or (slots.get("line") or {}).get("canonical") or "this line"
+    explanation = f"Here's the analysis plan for **{line_name}**:"
+    return {**state, "plan": plan, "agent_message": msg, "explanation": explanation, "phase": "plan"}
 
 
 async def detect_confirm(state: ManagerState) -> ManagerState:
     debug_state("detect_confirm", state)
-    user_msg = (state.get("user_message") or "").lower().strip()
-    confirmed = any(word == user_msg or word in user_msg.split() for word in _CONFIRM_WORDS)
+    state = {**state, "error": None}
+    user_msg = (state.get("user_message") or "").strip().lower()
+    confirmed = user_msg in _CONFIRM_WORDS
     if not confirmed:
         debug("detect_confirm", "not confirmed")
         return {**state, "task_confirmed": False, "phase": "extract"}
@@ -290,8 +317,11 @@ async def save_task_definition_node(state: ManagerState) -> ManagerState:
     debug_state("save_task_definition", state)
     canonical = (state.get("slots") or {}).get("line", {}).get("canonical")
     if canonical and state.get("task_definition"):
-        version = await save_task_definition(canonical, state["user_id"], state["task_definition"])
-        debug("save_task_definition", "saved", line=canonical, version=version)
+        try:
+            version = await save_task_definition(canonical, state["user_id"], state["task_definition"])
+            debug("save_task_definition", "saved", line=canonical, version=version)
+        except Exception:
+            logger.exception("save_task_definition_node: DB save failed for %s", canonical)
     return {**state}
 
 
@@ -322,6 +352,16 @@ async def send_to_planner(state: ManagerState) -> ManagerState:
         "session_goal": state.get("session_goal"),
     }
     logger.info("planner.start payload: %s", json.dumps(payload, default=str))
+
+    # Set mode to man before publishing — guarantees ask→man before any worker races
+    try:
+        await update_session_mode(
+            session_id=state.get("session_id", ""),
+            user_id=state.get("user_id", ""),
+            mode="man",
+        )
+    except Exception:
+        logger.exception("send_to_planner: failed to set mode=man")
 
     # Publish to the event bus for planner agent consumption
     try:

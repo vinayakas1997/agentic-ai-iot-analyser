@@ -23,6 +23,9 @@ Already saved session plans (do not duplicate verbatim):
 Existing proposals (for refine — copy kept IDs verbatim):
 {existing_proposals_json}
 
+Previously shown proposals (NEVER repeat these titles or aims — generate fresh):
+{seen_proposal_titles_json}
+
 Action: {action}
 Keep plan IDs: {keep_plan_ids}
 Change plan IDs: {change_plan_ids}
@@ -45,7 +48,7 @@ Return ONLY valid JSON:
 }}
 
 Rules:
-- On action propose: return exactly 3 distinct proposals beyond registry suggested aims where possible.
+- On action propose: return exactly 3 proposals distinct from BOTH registry suggested aims AND all previously shown proposals listed above.
 - When user_explore_intent is set, bias proposals toward that focus while staying within scope_label.
 - When session_goal is set, align proposals with that goal.
 - On action refine: return exactly 3 proposals; copy kept plan IDs verbatim; revise only change plan IDs.

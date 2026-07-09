@@ -1,16 +1,17 @@
 """Orchestrate manager turns with DB-backed session state."""
 
+import logging
+
 from agents.manager.runner import run_manager_agent
 from agents.manager.session_db import (
     append_chat_turn,
-    create_session,
+    create_session as _create_session,
     fork_session,
     get_session_row,
     load_chat_messages,
     load_chat_turns,
     load_session,
     list_sessions,
-    next_turn_index,
     reopen_session,
     save_session,
 )
@@ -19,6 +20,12 @@ from agents.manager.session_store import (
     canonical_line_from_state,
     format_turn_response,
 )
+
+logger = logging.getLogger(__name__)
+
+
+async def create_session(user_id: str, title: str | None = None) -> str:
+    return await _create_session(user_id, title=title)
 
 
 async def run_session_turn(
@@ -44,15 +51,13 @@ async def run_session_turn(
     await save_session(user_id, session_id, result)
 
     snapshot = build_turn_snapshot(result)
-    turn_index = await next_turn_index(user_id, session_id)
-    await append_chat_turn(
+    turn_index = await append_chat_turn(
         user_id=user_id,
         session_id=session_id,
         user_message=user_message,
         agent_message=result.get("agent_message") or "",
         line_name=canonical_line_from_state(result),
         node=None,
-        turn_index=turn_index,
         ui_snapshot=snapshot["ui"],
         schema_snapshot=snapshot["schema"],
     )
@@ -73,6 +78,8 @@ async def get_session_detail(user_id: str, session_id: str) -> dict | None:
         "session": {
             "session_id": row.session_id,
             "line_name": row.line_name,
+            "title": row.title,
+            "mode": row.mode,
             "phase": row.phase,
             "status": row.status,
             "created_at": row.created_at.isoformat() if row.created_at else None,

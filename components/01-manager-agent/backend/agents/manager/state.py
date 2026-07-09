@@ -64,6 +64,10 @@ class ManagerState(TypedDict):
 
     explore_phase: str | None
 
+    explore_iteration: int
+
+    seen_proposal_titles: list[str]
+
     aim_exploration: dict | None
 
     explore_context: dict | None

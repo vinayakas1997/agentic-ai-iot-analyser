@@ -216,6 +216,7 @@ async def extract_slots(state: ManagerState) -> ManagerState:
 
     debug_state("extract_slots", state)
 
+    state = {**state, "error": None}
     user_message = (state.get("user_message") or "").strip()
 
     if not user_message:
@@ -267,7 +268,11 @@ async def extract_slots(state: ManagerState) -> ManagerState:
     messages.append(HumanMessage(content=user_message))
 
     llm = get_llm_client()
-    response = await llm.ainvoke(messages, caller="extract_slots")
+    try:
+        response = await llm.ainvoke(messages, caller="extract_slots")
+    except Exception:
+        logger.exception("extract_slots: LLM call failed")
+        return {**state, "error": "llm_failed", "agent_message": "I had trouble understanding that. Could you rephrase?", "phase": "ask"}
 
     try:
 

@@ -22,6 +22,8 @@ from agents.manager.nodes import (
 
     build_plan_message,
 
+    confirm_redirect,
+
     detect_confirm,
 
     extract_slots,
@@ -90,6 +92,8 @@ INTERRUPT_AFTER = [
     "ask_time_ambiguous",
 
     "build_plan_message",
+
+    "confirm_redirect",
 
     "line_not_found",
 
@@ -163,6 +167,8 @@ def build_manager_graph():
 
     graph.add_node("build_plan_message", build_plan_message)
 
+    graph.add_node("confirm_redirect", confirm_redirect)
+
     graph.add_node("detect_confirm", detect_confirm)
 
     graph.add_node("save_task_definition", save_task_definition_node)
@@ -191,7 +197,7 @@ def build_manager_graph():
 
         route_after_inject,
 
-        {"detect_confirm": "detect_confirm", "extract_slots": "extract_slots"},
+        {"detect_confirm": "detect_confirm", "confirm_redirect": "confirm_redirect", "extract_slots": "extract_slots"},
 
     )
 
@@ -346,6 +352,8 @@ def build_manager_graph():
     graph.add_edge("reorganize_aim", "build_plan_message")
 
     graph.add_edge("build_plan_message", END)
+
+    graph.add_edge("confirm_redirect", END)
 
     graph.add_edge("ask_missing", END)
 

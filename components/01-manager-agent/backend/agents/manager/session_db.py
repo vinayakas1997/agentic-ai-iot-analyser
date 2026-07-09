@@ -19,7 +19,7 @@ from db.models import ChatHistory, ManagerSession
 from db.session import AsyncSessionLocal
 
 
-async def create_session(user_id: str) -> str:
+async def create_session(user_id: str, title: str | None = None) -> str:
     session_id = str(uuid.uuid4())
     async with AsyncSessionLocal() as db:
         row = ManagerSession(
@@ -27,6 +27,7 @@ async def create_session(user_id: str) -> str:
             user_id=user_id,
             phase="extract",
             status="active",
+            title=title or None,
             state_json={"version": 1},
             version=1,
         )
@@ -68,19 +69,18 @@ async def save_session(user_id: str, session_id: str, state: dict) -> None:
     now = datetime.now(timezone.utc)
 
     async with AsyncSessionLocal() as db:
-        # Read current version from DB for optimistic locking
+        # Read current version for optimistic locking
         result = await db.execute(
             select(ManagerSession.version).where(
                 ManagerSession.session_id == session_id,
                 ManagerSession.user_id == user_id,
             )
         )
-        row = result.scalar_one_or_none()
-        if row is None:
-            logger.warning("save_session: session %s not found for user %s", session_id, user_id)
-            return
+        current_version = result.scalar_one_or_none()
+        if current_version is None:
+            logger.error("save_session: session %s not found for user %s", session_id, user_id)
+            raise ValueError(f"Session {session_id} not found for user {user_id}")
 
-        current_version = row
         updated = await db.execute(
             update(ManagerSession)
             .where(
@@ -99,8 +99,8 @@ async def save_session(user_id: str, session_id: str, state: dict) -> None:
         )
         if updated.rowcount == 0:
             logger.error(
-                "Concurrent session update detected for %s (version %d was %d)",
-                session_id, current_version, row,
+                "Concurrent session update detected for %s (version %d)",
+                session_id, current_version,
             )
             raise RuntimeError(
                 f"Concurrent modification detected for session {session_id}. "
@@ -153,6 +153,8 @@ async def list_sessions(user_id: str, limit: int = 50) -> list[dict]:
             {
                 "session_id": row.session_id,
                 "line_name": row.line_name,
+                "title": row.title,
+                "mode": row.mode,
                 "phase": row.phase,
                 "status": row.status,
                 "updated_at": row.updated_at.isoformat() if row.updated_at else None,
@@ -180,6 +182,45 @@ async def _last_message_preview(user_id: str, session_id: str) -> str | None:
     return text[:120] + "..." if len(text) > 120 else text
 
 
+async def update_session_title(user_id: str, session_id: str, title: str) -> None:
+    async with AsyncSessionLocal() as db:
+        result = await db.execute(
+            update(ManagerSession)
+            .where(
+                ManagerSession.session_id == session_id,
+                ManagerSession.user_id == user_id,
+            )
+            .values(title=title or None)
+        )
+        if result.rowcount == 0:
+            raise ValueError("session_not_found")
+        await db.commit()
+
+
+async def update_session_mode(session_id: str, user_id: str, mode: str) -> None:
+    async with AsyncSessionLocal() as db:
+        await db.execute(
+            update(ManagerSession)
+            .where(
+                ManagerSession.session_id == session_id,
+                ManagerSession.user_id == user_id,
+            )
+            .values(mode=mode)
+        )
+        await db.commit()
+
+
+async def get_session_mode(session_id: str, user_id: str) -> str | None:
+    async with AsyncSessionLocal() as db:
+        result = await db.execute(
+            select(ManagerSession.mode).where(
+                ManagerSession.session_id == session_id,
+                ManagerSession.user_id == user_id,
+            )
+        )
+        return result.scalar_one_or_none()
+
+
 async def next_turn_index(user_id: str, session_id: str) -> int:
     async with AsyncSessionLocal() as db:
         result = await db.execute(
@@ -204,10 +245,17 @@ async def append_chat_turn(
     ui_snapshot: dict | None = None,
     schema_snapshot: dict | None = None,
 ) -> int:
-    if turn_index is None:
-        turn_index = await next_turn_index(user_id, session_id)
-
     async with AsyncSessionLocal() as db:
+        if turn_index is None:
+            result = await db.execute(
+                select(func.max(ChatHistory.turn_index)).where(
+                    ChatHistory.user_id == user_id,
+                    ChatHistory.session_id == session_id,
+                )
+            )
+            current = result.scalar_one_or_none()
+            turn_index = (current if current is not None else -1) + 1
+
         if user_message.strip():
             db.add(
                 ChatHistory(

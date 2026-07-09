@@ -6,12 +6,16 @@ import { useWorkspaceSocket } from "./hooks/useWorkspaceSocket";
 
 export default function App() {
   const bootstrap = useSessionStore((s) => s.bootstrap);
+  const startPoller = useSessionStore((s) => s.startPoller);
+  const stopPoller = useSessionStore((s) => s.stopPoller);
 
   useWorkspaceSocket();
 
   useEffect(() => {
     bootstrap();
-  }, [bootstrap]);
+    startPoller();
+    return () => stopPoller();
+  }, [bootstrap, startPoller, stopPoller]);
 
   return (
     <div className="flex flex-col h-screen bg-bg-deep text-text">

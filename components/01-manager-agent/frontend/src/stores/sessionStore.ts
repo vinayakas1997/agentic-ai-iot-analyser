@@ -1,7 +1,8 @@
 import axios from "axios";
 import { create } from "zustand";
-import { createSession, forkSession as forkSessionApi, getSession, listSessions, reopenSession as reopenSessionApi, sendMessage } from "../api/manager";
-import type { MessageResponse, SessionListItem, SessionMeta, Turn } from "../types/manager";
+import { createSession, forkSession as forkSessionApi, getSession, listSessions, reopenSession as reopenSessionApi, sendMessage, updateSessionTitle } from "../api/manager";
+import { generateSessionName } from "../lib/names";
+import type { MessageResponse, SchemaSnapshot, SessionListItem, SessionMeta, Turn, TurnUi } from "../types/manager";
 import { useUiStore } from "./uiStore";
 
 function turnFromResponse(res: MessageResponse, userMessage: string): Turn {
@@ -14,6 +15,8 @@ function turnFromResponse(res: MessageResponse, userMessage: string): Turn {
     created_at: new Date().toISOString(),
   };
 }
+
+let _pollTimer: ReturnType<typeof setInterval> | null = null;
 
 function getErrorMessage(e: unknown): string {
   if (axiosIsError(e)) {
@@ -28,6 +31,14 @@ function axiosIsError(e: unknown): e is { response?: { data?: { detail?: string 
   return typeof e === "object" && e !== null && "response" in e;
 }
 
+interface PendingTurn {
+  user: string;
+  agent: string | null;
+  ui: TurnUi | null;
+  schema: SchemaSnapshot | null;
+  loading: boolean;
+}
+
 interface ExecutionEvent {
   topic: string;
   payload: Record<string, unknown>;
@@ -36,32 +47,48 @@ interface ExecutionEvent {
 
 interface SessionState {
   sessionId: string | null;
+  isLocalSession: boolean;
+  pendingTitle: string | null;
   sessions: SessionListItem[];
   turns: Turn[];
   sessionMeta: SessionMeta | null;
   loading: boolean;
   error: string | null;
   executionEvents: ExecutionEvent[];
+  wsStatus: "connecting" | "connected" | "disconnected";
+  pendingTurn: PendingTurn | null;
   bootstrap: () => Promise<void>;
   refreshSessions: () => Promise<SessionListItem[]>;
   switchSession: (id: string) => Promise<void>;
-  newSession: () => Promise<void>;
+  newSession: () => void;
   sendUserMessage: (text: string, lineName?: string) => Promise<MessageResponse | undefined>;
   reopenSession: () => Promise<void>;
   forkSession: () => Promise<void>;
   setError: (error: string | null) => void;
   pushExecutionEvent: (event: ExecutionEvent) => void;
   clearExecutionEvents: () => void;
+  setWsStatus: (status: "connecting" | "connected" | "disconnected") => void;
+  setPendingTurn: (user: string) => void;
+  updatePendingSchema: (update: Partial<SchemaSnapshot>) => void;
+  updatePendingUi: (update: Partial<TurnUi>) => void;
+  clearPendingTurn: () => void;
+  updateSessionTitle: (sessionId: string, title: string) => Promise<void>;
+  startPoller: () => void;
+  stopPoller: () => void;
 }
 
 export const useSessionStore = create<SessionState>((set, get) => ({
   sessionId: null,
+  isLocalSession: false,
+  pendingTitle: null,
   sessions: [],
   turns: [],
   sessionMeta: null,
   loading: false,
   error: null,
   executionEvents: [],
+  wsStatus: "connecting",
+  pendingTurn: null,
 
   refreshSessions: async () => {
     const list = await listSessions();
@@ -79,17 +106,20 @@ export const useSessionStore = create<SessionState>((set, get) => ({
           sessionMeta: detail.session,
           turns: detail.turns,
           sessionId: detail.session.session_id,
+          isLocalSession: false,
         });
         useUiStore.getState().selectTurn(detail.turns.length ? detail.turns.length - 1 : -1);
       } else {
-        const created = await createSession();
+        const tempId = crypto.randomUUID();
+        const name = generateSessionName();
         set({
-          sessionId: created.session_id,
-          sessionMeta: { session_id: created.session_id, status: "active", phase: "extract" },
+          sessionId: tempId,
+          isLocalSession: true,
+          pendingTitle: name,
+          sessionMeta: null,
           turns: [],
         });
         useUiStore.getState().selectTurn(-1);
-        await get().refreshSessions();
       }
     } catch (e) {
       set({ error: getErrorMessage(e) });
@@ -108,6 +138,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
         sessionMeta: detail.session,
         turns: detail.turns,
         sessionId: detail.session.session_id,
+        executionEvents: [],
       });
       useUiStore.getState().selectTurn(detail.turns.length ? detail.turns.length - 1 : -1);
     } catch (e) {
@@ -117,41 +148,55 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     }
   },
 
-  newSession: async () => {
-    set({ error: null, loading: true });
-    try {
-      const created = await createSession();
-      set({
-        sessionId: created.session_id,
-        sessionMeta: { session_id: created.session_id, status: "active", phase: "extract" },
-        turns: [],
-      });
-      useUiStore.getState().selectTurn(-1);
-      await get().refreshSessions();
-    } catch (e) {
-      set({ error: getErrorMessage(e) });
-    } finally {
-      set({ loading: false });
-    }
+  newSession: () => {
+    const tempId = crypto.randomUUID();
+    const name = generateSessionName();
+    set({
+      error: null,
+      sessionId: tempId,
+      isLocalSession: true,
+      pendingTitle: name,
+      sessionMeta: null,
+      turns: [],
+      executionEvents: [],
+      pendingTurn: null,
+    });
+    useUiStore.getState().selectTurn(-1);
   },
 
   sendUserMessage: async (text, lineName = "") => {
-    const { sessionId, turns } = get();
+    const { sessionId, turns, isLocalSession, pendingTitle } = get();
     const selectedTurnIndex = useUiStore.getState().selectedTurnIndex;
     const isDone = turns.length > 0 && Boolean(turns[turns.length - 1]?.ui?.done);
     const isLive = turns.length === 0 || selectedTurnIndex === turns.length - 1;
 
     if (!sessionId || !text.trim() || isDone || !isLive) return;
 
-    set({ error: null, loading: true, executionEvents: [] });
     const userText = text.trim();
+    set({ error: null, loading: true, executionEvents: [], pendingTurn: null });
+    get().setPendingTurn(userText);
     try {
-      const res = await sendMessage(sessionId, userText, lineName);
+      let activeSessionId = sessionId;
+
+      if (isLocalSession) {
+        const name = pendingTitle || generateSessionName();
+        const created = await createSession(name);
+        activeSessionId = created.session_id;
+        set({
+          sessionId: activeSessionId,
+          isLocalSession: false,
+          pendingTitle: null,
+          sessionMeta: { session_id: activeSessionId, title: name, mode: "ask", status: "active", phase: "extract" },
+        });
+      }
+
+      const res = await sendMessage(activeSessionId, userText, lineName);
       const newTurn = turnFromResponse(res, userText);
       set((state) => ({
         turns: [...state.turns, newTurn],
+        pendingTurn: null,
         sessionMeta: {
-          ...(state.sessionMeta || { session_id: sessionId }),
+          ...(state.sessionMeta || { session_id: activeSessionId }),
           phase: res.phase,
           status: res.status,
         },
@@ -160,7 +205,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       await get().refreshSessions();
       return res;
     } catch (e) {
-      set({ error: getErrorMessage(e) });
+      set({ error: getErrorMessage(e), pendingTurn: null });
       throw e;
     } finally {
       set({ loading: false });
@@ -179,6 +224,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
         executionEvents: [],
       });
       useUiStore.getState().selectTurn(detail.turns.length - 1);
+      await get().refreshSessions();
     } catch (e: unknown) {
       if (axios.isAxiosError(e) && e.response?.status === 400) {
         set({ error: e.response.data?.detail || "Cannot edit — planner already started." });
@@ -197,10 +243,27 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     try {
       const { session_id } = await forkSessionApi(sessionId);
       await get().switchSession(session_id);
+      await get().refreshSessions();
     } catch (e) {
       set({ error: getErrorMessage(e) });
     } finally {
       set({ loading: false });
+    }
+  },
+
+  updateSessionTitle: async (sessionId: string, title: string) => {
+    try {
+      await updateSessionTitle(sessionId, title);
+      set((state) => ({
+        sessionMeta: state.sessionMeta?.session_id === sessionId
+          ? { ...state.sessionMeta, title: title || undefined }
+          : state.sessionMeta,
+        sessions: state.sessions.map((s) =>
+          s.session_id === sessionId ? { ...s, title: title || undefined } : s
+        ),
+      }));
+    } catch (e) {
+      set({ error: getErrorMessage(e) });
     }
   },
 
@@ -212,6 +275,65 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     })),
 
   clearExecutionEvents: () => set({ executionEvents: [] }),
+
+  setWsStatus: (status) => set({ wsStatus: status }),
+
+  setPendingTurn: (user) => {
+    set({
+      pendingTurn: { user, agent: null, ui: null, schema: null, loading: true },
+    });
+  },
+
+  updatePendingSchema: (update) => {
+    set((state) => {
+      if (!state.pendingTurn) return state;
+      return {
+        pendingTurn: {
+          ...state.pendingTurn,
+          schema: { ...(state.pendingTurn.schema || {} as SchemaSnapshot), ...update },
+        },
+      };
+    });
+  },
+
+  updatePendingUi: (update) => {
+    set((state) => {
+      if (!state.pendingTurn) return state;
+      return {
+        pendingTurn: {
+          ...state.pendingTurn,
+          ui: { ...(state.pendingTurn.ui || {} as TurnUi), ...update },
+        },
+      };
+    });
+  },
+
+  clearPendingTurn: () => set({ pendingTurn: null }),
+
+  startPoller: () => {
+    if (_pollTimer) return;
+    _pollTimer = setInterval(async () => {
+      try {
+        const list = await listSessions();
+        const state = get();
+        const current = list.find((s) => s.session_id === state.sessionId);
+        set({
+          sessions: list,
+          sessionMeta: current
+            ? { ...(state.sessionMeta || {}), ...current }
+            : state.sessionMeta,
+        });
+      } catch {
+      }
+    }, 15000);
+  },
+
+  stopPoller: () => {
+    if (_pollTimer) {
+      clearInterval(_pollTimer);
+      _pollTimer = null;
+    }
+  },
 }));
 
 export function useSelectedTurn(): Turn | null {

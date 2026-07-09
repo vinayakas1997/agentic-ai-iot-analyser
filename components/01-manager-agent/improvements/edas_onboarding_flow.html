@@ -1,0 +1,556 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>EDAS — Onboarding Flow</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap');
+
+  :root{
+    --bg:#0a0a0f;
+    --panel:#12121a;
+    --panel-border:#232330;
+    --text:#e6e6ee;
+    --text-muted:#7a7a8c;
+    --text-dim:#4a4a5a;
+
+    --manager:#e8804a;
+    --manager-dim: rgba(232,128,74,0.35);
+    --manager-bg: rgba(232,128,74,0.07);
+
+    --planner:#e0c34a;
+    --planner-dim: rgba(224,195,74,0.35);
+    --planner-bg: rgba(224,195,74,0.07);
+
+    --execution:#4ade9a;
+    --execution-dim: rgba(74,222,154,0.35);
+    --execution-bg: rgba(74,222,154,0.07);
+
+    --accent:#7c6ff0;
+    --accent-hover:#8f84f5;
+  }
+
+  *{box-sizing:border-box; margin:0; padding:0;}
+  html,body{height:100%;}
+  body{
+    background:var(--bg);
+    color:var(--text);
+    font-family:'Inter', sans-serif;
+    display:flex;
+    align-items:stretch;
+    justify-content:center;
+    height:100vh;
+    overflow:hidden;
+  }
+
+  .app{
+    width:100%;
+    max-width:900px;
+    display:flex;
+    flex-direction:column;
+    height:100%;
+    padding:28px 24px 20px;
+  }
+
+  .chat-header{
+    font-family:'Space Grotesk', sans-serif;
+    font-size:14px;
+    font-weight:600;
+    letter-spacing:0.02em;
+    color:var(--text-muted);
+    margin-bottom:18px;
+    display:flex;
+    align-items:center;
+    gap:8px;
+  }
+  .chat-header .dot{
+    width:6px;height:6px;border-radius:50%;
+    background:var(--accent);
+  }
+
+  /* ---------- ONBOARDING (idle) STATE ---------- */
+  .onboarding{
+    flex:1;
+    display:flex;
+    flex-direction:column;
+    align-items:center;
+    justify-content:center;
+    gap:36px;
+    transition: opacity 0.4s ease, transform 0.4s ease;
+  }
+
+  .flow-wrap{
+    width:100%;
+    max-width:640px;
+  }
+
+  .flow-title{
+    text-align:center;
+    font-family:'Space Grotesk', sans-serif;
+    font-size:20px;
+    font-weight:600;
+    margin-bottom:6px;
+  }
+  .flow-sub{
+    text-align:center;
+    font-size:13px;
+    color:#b4b4c4;
+    margin-bottom:28px;
+  }
+
+  .flow-diagram{
+    position:relative;
+    width:100%;
+    height:320px;
+  }
+
+  .hub-svg{
+    position:absolute;
+    inset:0;
+    width:100%;
+    height:100%;
+  }
+
+  .conn-line{
+    stroke-width:1;
+    fill:none;
+  }
+  .conn-line.manager{ stroke:var(--manager-dim); }
+  .conn-line.planner{ stroke:var(--planner-dim); }
+  .conn-line.execution{ stroke:var(--execution-dim); }
+
+  .cube.task{ fill:var(--accent); }
+  .cube.manager{ fill:var(--manager); }
+  .cube.planner{ fill:var(--planner); }
+  .cube.execution{ fill:var(--execution); }
+
+  .hub-block{
+    position:absolute;
+    display:flex;
+    flex-direction:column;
+    width:132px;
+  }
+  .hub-block.manager{ left:0; top:96px; }
+  .hub-block.planner{ right:0; top:6px; }
+  .hub-block.execution{ right:0; bottom:6px; }
+
+  .hub-node{
+    display:flex;
+    flex-direction:column;
+    align-items:flex-start;
+    border-radius:12px;
+    border:1.5px solid;
+    padding:10px 12px 11px;
+    width:132px;
+  }
+  .hub-node .hub-name{
+    font-family:'Space Grotesk', sans-serif;
+    font-size:12.5px;
+    font-weight:600;
+    margin-bottom:4px;
+  }
+  .hub-block.manager .hub-node{ border-color:var(--manager-dim); background:var(--manager-bg); color:var(--manager); }
+  .hub-block.planner .hub-node{ border-color:var(--planner-dim); background:var(--planner-bg); color:var(--planner); }
+  .hub-block.execution .hub-node{ border-color:var(--execution-dim); background:var(--execution-bg); color:var(--execution); }
+
+  .hub-desc{
+    font-family:'Inter', sans-serif;
+    font-size:10.5px;
+    font-weight:500;
+    line-height:1.4;
+    margin-top:7px;
+    padding:0 2px;
+  }
+  .hub-block.manager .hub-desc{ color:var(--manager); }
+  .hub-block.planner .hub-desc{ color:var(--planner); }
+  .hub-block.execution .hub-desc{ color:var(--execution); }
+
+  /* ---- sub-agent tree connectors ---- */
+  .sub-agents{
+    position:relative;
+    margin-top:8px;
+    padding-left:14px;
+    display:flex;
+    flex-direction:column;
+    gap:5px;
+  }
+  .sub-agents::before{
+    content:'';
+    position:absolute;
+    left:4px;
+    top:-4px;
+    bottom:7px;
+    width:1px;
+    background: rgba(230,230,238,0.18);
+  }
+  .sub-row{
+    position:relative;
+    display:flex;
+    align-items:center;
+    gap:6px;
+    font-family:'JetBrains Mono', monospace;
+    font-size:9.5px;
+    color:var(--text-muted);
+  }
+  .sub-row::before{
+    content:'';
+    position:absolute;
+    left:-10px;
+    top:50%;
+    width:8px;
+    height:1px;
+    background: rgba(230,230,238,0.18);
+  }
+  .sub-dot{
+    width:5px; height:5px;
+    border-radius:50%;
+    flex-shrink:0;
+    animation: workPulse 1.5s ease-in-out infinite;
+  }
+  .hub-block.manager .sub-dot{ background:var(--manager); }
+  .hub-block.planner .sub-dot{ background:var(--planner); }
+  .hub-block.execution .sub-dot{ background:var(--execution); }
+  .sub-row:nth-child(1) .sub-dot{ animation-delay:0s; }
+  .sub-row:nth-child(2) .sub-dot{ animation-delay:0.35s; }
+  .sub-row:nth-child(3) .sub-dot{ animation-delay:0.7s; }
+  @keyframes workPulse{
+    0%, 100%{ opacity:0.3; transform:scale(0.7); }
+    50%{ opacity:1; transform:scale(1.2); }
+  }
+
+  .hub-registry{
+    position:absolute;
+    left:50%; top:50%;
+    transform:translate(-50%,-50%);
+    width:130px; height:100px;
+    border-radius:10px;
+    border:1.5px solid rgba(230,230,238,0.18);
+    background: rgba(230,230,238,0.03);
+    display:flex; flex-direction:column;
+    align-items:center; justify-content:center;
+    gap:6px;
+  }
+  .hub-registry .registry-label{
+    font-family:'JetBrains Mono', monospace;
+    font-size:10.5px;
+    letter-spacing:0.04em;
+    color:var(--text-muted);
+  }
+  .registry-stack{
+    display:flex;
+    gap:4px;
+  }
+  .registry-stack .rs-cube{
+    width:10px; height:10px;
+    border-radius:2px;
+    animation: cubeSettle 2.4s ease-in-out infinite;
+  }
+  .registry-stack .rs-cube:nth-child(1){ background:var(--manager); animation-delay:0s; }
+  .registry-stack .rs-cube:nth-child(2){ background:var(--accent); animation-delay:0.3s; }
+  .registry-stack .rs-cube:nth-child(3){ background:var(--planner); animation-delay:0.6s; }
+  .registry-stack .rs-cube:nth-child(4){ background:var(--execution); animation-delay:0.9s; }
+  @keyframes cubeSettle{
+    0%, 100%{ transform:translateY(0); opacity:0.55; }
+    50%{ transform:translateY(-3px); opacity:1; }
+  }
+
+
+
+  /* ---------- ACTIVE CHAT STATE ---------- */
+  .chat-log{
+    flex:1;
+    overflow-y:auto;
+    display:none;
+    flex-direction:column;
+    gap:14px;
+    padding-bottom:12px;
+  }
+  .chat-log.visible{ display:flex; }
+
+  .msg{
+    max-width:78%;
+    padding:12px 15px;
+    border-radius:10px;
+    font-size:14px;
+    line-height:1.5;
+    animation: rise 0.3s ease;
+  }
+  @keyframes rise{
+    from{ opacity:0; transform:translateY(6px); }
+    to{ opacity:1; transform:translateY(0); }
+  }
+  .msg.user{
+    align-self:flex-end;
+    background: rgba(124,111,240,0.12);
+    border:1px solid rgba(124,111,240,0.3);
+  }
+  .msg.agent{
+    align-self:flex-start;
+    background:var(--panel);
+    border:1px solid var(--panel-border);
+  }
+  .msg .who{
+    font-family:'Space Grotesk', sans-serif;
+    font-size:11px;
+    font-weight:600;
+    margin-bottom:4px;
+    display:block;
+  }
+  .msg.agent.manager .who{ color:var(--manager); }
+  .msg.agent.planner .who{ color:var(--planner); }
+  .msg.agent.execution .who{ color:var(--execution); }
+  .msg.user .who{ color:var(--text-muted); }
+
+  .mini-pills{
+    display:none;
+    align-items:center;
+    gap:6px;
+    font-family:'JetBrains Mono', monospace;
+    font-size:10.5px;
+    padding:8px 2px 16px;
+    color:var(--text-dim);
+  }
+  .mini-pills.visible{ display:flex; }
+  .mini-pills .pill{
+    padding:3px 9px;
+    border-radius:12px;
+    border:1px solid;
+  }
+  .mini-pills .pill.manager{ color:var(--manager); border-color:var(--manager-dim); background:var(--manager-bg); }
+  .mini-pills .pill.planner{ color:var(--text-dim); border-color:var(--panel-border); }
+  .mini-pills .pill.execution{ color:var(--text-dim); border-color:var(--panel-border); }
+  .mini-pills .arrow{ color:var(--text-dim); }
+
+  /* ---------- INPUT BAR ---------- */
+  .input-bar{
+    display:flex;
+    gap:10px;
+    margin-top:18px;
+  }
+  .input-bar input{
+    flex:1;
+    background:var(--panel);
+    border:1px solid var(--panel-border);
+    border-radius:10px;
+    padding:13px 16px;
+    color:var(--text);
+    font-size:14px;
+    font-family:'Inter', sans-serif;
+    outline:none;
+    transition: border-color 0.15s ease;
+  }
+  .input-bar input:focus{ border-color:var(--accent); }
+  .input-bar input::placeholder{ color: rgba(230,230,238,0.7); }
+
+  .input-bar button{
+    background:var(--accent);
+    color:#fff;
+    border:none;
+    border-radius:10px;
+    padding:0 22px;
+    font-family:'Space Grotesk', sans-serif;
+    font-weight:600;
+    font-size:13.5px;
+    cursor:pointer;
+    transition: background 0.15s ease;
+  }
+  .input-bar button:hover{ background:var(--accent-hover); }
+  .input-bar button:disabled{ background:#3a3a48; cursor:not-allowed; }
+</style>
+</head>
+<body>
+
+<div class="app">
+
+  <div class="chat-header"><span class="dot"></span>Chat</div>
+
+  <!-- ONBOARDING STATE -->
+  <div class="onboarding" id="onboarding">
+    <div class="flow-wrap">
+      <div class="flow-title">Three agents, one shared registry</div>
+      <div class="flow-sub">Each agent works independently, picking up and dropping off tasks</div>
+
+      <div class="flow-diagram">
+        <svg class="hub-svg" viewBox="0 0 640 320">
+          <path class="conn-line manager" d="M132,145 L255,155" />
+          <path class="conn-line planner" d="M508,90 L385,135" />
+          <path class="conn-line execution" d="M508,230 L385,185" />
+
+          <!-- Manager <-> Registry: task out (accent), result back (manager color) -->
+          <rect class="cube task" x="-4" y="-4" width="8" height="8" rx="1.5">
+            <animateMotion dur="2.6s" repeatCount="indefinite" path="M132,145 L255,155" />
+          </rect>
+          <rect class="cube manager" x="-4" y="-4" width="8" height="8" rx="1.5">
+            <animateMotion dur="2.6s" begin="1.3s" repeatCount="indefinite" path="M255,155 L132,145" />
+          </rect>
+
+          <!-- Planner <-> Registry -->
+          <rect class="cube planner" x="-4" y="-4" width="8" height="8" rx="1.5">
+            <animateMotion dur="2.8s" repeatCount="indefinite" path="M385,135 L508,90" />
+          </rect>
+          <rect class="cube task" x="-4" y="-4" width="8" height="8" rx="1.5">
+            <animateMotion dur="2.8s" begin="1.4s" repeatCount="indefinite" path="M508,90 L385,135" />
+          </rect>
+
+          <!-- Executor <-> Registry -->
+          <rect class="cube execution" x="-4" y="-4" width="8" height="8" rx="1.5">
+            <animateMotion dur="2.7s" repeatCount="indefinite" path="M385,185 L508,230" />
+          </rect>
+          <rect class="cube task" x="-4" y="-4" width="8" height="8" rx="1.5">
+            <animateMotion dur="2.7s" begin="1.35s" repeatCount="indefinite" path="M508,230 L385,185" />
+          </rect>
+        </svg>
+
+        <div class="hub-registry">
+          <div class="registry-label">task registry</div>
+          <div class="registry-stack">
+            <div class="rs-cube"></div>
+            <div class="rs-cube"></div>
+            <div class="rs-cube"></div>
+            <div class="rs-cube"></div>
+          </div>
+        </div>
+
+        <div class="hub-block manager">
+          <div class="hub-node">
+            <div class="hub-name">Manager Agent</div>
+            <div class="sub-agents">
+              <div class="sub-row"><span class="sub-dot"></span>subagent1</div>
+              <div class="sub-row"><span class="sub-dot"></span>subagent2</div>
+              <div class="sub-row"><span class="sub-dot"></span>subagent3</div>
+            </div>
+          </div>
+          <div class="hub-desc">Turns your problem into a plan</div>
+        </div>
+
+        <div class="hub-block planner">
+          <div class="hub-node">
+            <div class="hub-name">Planner Agent</div>
+            <div class="sub-agents">
+              <div class="sub-row"><span class="sub-dot"></span>subagent1</div>
+              <div class="sub-row"><span class="sub-dot"></span>subagent2</div>
+              <div class="sub-row"><span class="sub-dot"></span>subagent3</div>
+            </div>
+          </div>
+          <div class="hub-desc">Turns the plan into executable queries</div>
+        </div>
+
+        <div class="hub-block execution">
+          <div class="hub-node">
+            <div class="hub-name">Executor Agent</div>
+            <div class="sub-agents">
+              <div class="sub-row"><span class="sub-dot"></span>subagent1</div>
+              <div class="sub-row"><span class="sub-dot"></span>subagent2</div>
+              <div class="sub-row"><span class="sub-dot"></span>subagent3</div>
+            </div>
+          </div>
+          <div class="hub-desc">Turns queries into reality</div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- ACTIVE CHAT STATE -->
+  <div class="chat-log" id="chatLog"></div>
+  <div class="mini-pills" id="miniPills">
+    <span class="pill manager">Manager</span><span class="arrow">→</span>
+    <span class="pill planner">Planner</span><span class="arrow">→</span>
+    <span class="pill execution">Execution</span>
+  </div>
+
+  <div class="input-bar">
+    <input type="text" id="queryInput" placeholder="Ask anything..." onkeydown="if(event.key==='Enter') submitQuery()">
+    <button onclick="submitQuery()">Send</button>
+  </div>
+
+</div>
+
+<script>
+  let started = false;
+
+  // ---------- Typewriter placeholder ----------
+  const typeExamples = [
+    'Tell me about this machine',
+    'What is the average cost by fruit?',
+    'Show me sales by region'
+  ];
+  const inputEl = document.getElementById('queryInput');
+  let typeIdx = 0, charIdx = 0, deleting = false;
+  let typeTimer = null;
+
+  function typeLoop(){
+    if(started) return; // stop once real chat has begun
+    const full = typeExamples[typeIdx];
+
+    if(!deleting){
+      charIdx++;
+      inputEl.setAttribute('placeholder', full.slice(0, charIdx) + '▌');
+      if(charIdx === full.length){
+        deleting = true;
+        typeTimer = setTimeout(typeLoop, 1400);
+        return;
+      }
+      typeTimer = setTimeout(typeLoop, 45);
+    } else {
+      charIdx--;
+      inputEl.setAttribute('placeholder', full.slice(0, charIdx) + (charIdx > 0 ? '▌' : ''));
+      if(charIdx === 0){
+        deleting = false;
+        typeIdx = (typeIdx + 1) % typeExamples.length;
+        typeTimer = setTimeout(typeLoop, 300);
+        return;
+      }
+      typeTimer = setTimeout(typeLoop, 25);
+    }
+  }
+  typeLoop();
+
+  inputEl.addEventListener('focus', () => {
+    if(typeTimer) clearTimeout(typeTimer);
+    inputEl.setAttribute('placeholder', 'Ask anything...');
+  });
+
+  function submitQuery(){
+    const input = document.getElementById('queryInput');
+    const text = input.value.trim();
+    if(!text) return;
+
+    if(!started){
+      started = true;
+      const onboarding = document.getElementById('onboarding');
+      onboarding.style.opacity = '0';
+      onboarding.style.transform = 'translateY(-8px)';
+      setTimeout(() => {
+        onboarding.style.display = 'none';
+        document.getElementById('chatLog').classList.add('visible');
+        document.getElementById('miniPills').classList.add('visible');
+        appendMsg('user', 'You', text);
+        input.value = '';
+        setTimeout(runAgents, 300);
+      }, 380);
+    } else {
+      appendMsg('user', 'You', text);
+      input.value = '';
+      setTimeout(runAgents, 300);
+    }
+  }
+
+  function appendMsg(role, who, text, agentClass){
+    const log = document.getElementById('chatLog');
+    const div = document.createElement('div');
+    div.className = 'msg ' + role + (agentClass ? ' ' + agentClass : '');
+    div.innerHTML = '<span class="who">' + who + '</span>' + text;
+    log.appendChild(div);
+    log.scrollTop = log.scrollHeight;
+  }
+
+  function runAgents(){
+    appendMsg('agent', 'Manager', 'Got it — confirming scope and handing off to Planner.', 'manager');
+    setTimeout(() => appendMsg('agent', 'Planner', 'Query drafted against your dataset. Passing to Execution.', 'planner'), 700);
+    setTimeout(() => appendMsg('agent', 'Execution', 'Done — results are in the Outputs panel.', 'execution'), 1400);
+  }
+</script>
+
+</body>
+</html>

@@ -1,5 +1,6 @@
 """Sync session context — registry, time inventory, full session inventory."""
 
+from api.websocket import broadcast_event
 from agents.manager.context.session_inventory import build_session_inventory
 from agents.manager.context.task_history import load_task_history_for_state
 from agents.manager.context.time import build_time_inventory
@@ -34,6 +35,23 @@ async def sync_session_context(state: ManagerState) -> ManagerState:
         phase=inventory.get("phase"),
         missing=inventory.get("missing"),
     )
+
+    slots = state.get("slots") or {}
+    line_context = state.get("line_context") or {}
+    datasets_list = (line_context.get("datasets") or [])[:3]
+    try:
+        await broadcast_event(state.get("user_id", ""), {
+            "topic": "manager.context_synced",
+            "session_id": state.get("session_id", ""),
+            "payload": {
+                "line": (slots.get("line") or {}).get("canonical"),
+                "datasets": [d.get("name") for d in datasets_list if d.get("name")],
+                "suggested_aims": line_context.get("suggested_aims", [])[:5],
+            },
+        })
+    except Exception:
+        pass
+
     return {
         **state,
         "session_inventory": inventory,

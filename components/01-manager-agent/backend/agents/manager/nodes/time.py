@@ -1,5 +1,6 @@
 from datetime import datetime, timezone
 
+from api.websocket import broadcast_event
 
 
 
@@ -43,6 +44,7 @@ async def resolve_time_filters(state: ManagerState) -> ManagerState:
 
     debug_state("resolve_time_filters", state)
 
+    state = {**state, "error": None}
     slots = dict(state.get("slots") or {})
 
     time_slot = dict(slots.get("time") or {})
@@ -90,6 +92,21 @@ async def resolve_time_filters(state: ManagerState) -> ManagerState:
     slots["time"] = time_slot
 
     result_state = {**state, "slots": slots, "missing": compute_missing(slots)}
+
+    if time_slot.get("resolved") or time_slot.get("no_filter"):
+        try:
+            await broadcast_event(state.get("user_id", ""), {
+                "topic": "manager.time_resolved",
+                "session_id": state.get("session_id", ""),
+                "payload": {
+                    "start": time_slot.get("start"),
+                    "end": time_slot.get("end"),
+                    "no_filter": time_slot.get("no_filter", False),
+                    "raw": time_slot.get("raw"),
+                },
+            })
+        except Exception:
+            pass
 
     if not time_needs_clarification(slots) and not compute_missing(slots):
         result_state["registry_sync_target"] = "reorganize"

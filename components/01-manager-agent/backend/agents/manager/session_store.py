@@ -1,10 +1,13 @@
 """Serialize/deserialize manager session state for PostgreSQL storage."""
 
-from langchain_core.messages import AIMessage, BaseMessage, HumanMessage
+import json
+
+from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage
 
 from agents.manager.registry_context import build_planner_schema_payload
 
 PERSISTED_STATE_KEYS = (
+    "reference_now",
     "reference_timezone",
     "slots",
     "missing",
@@ -43,14 +46,24 @@ def _message_to_dict(msg: BaseMessage) -> dict:
         role = "assistant"
     else:
         role = getattr(msg, "type", "unknown")
-    return {"role": role, "content": msg.content}
+    content = msg.content
+    if isinstance(content, list):
+        texts = [c.get("text", "") for c in content if isinstance(c, dict)]
+        content = "\n".join(texts) if texts else json.dumps(content)
+    elif not isinstance(content, str):
+        content = str(content) if content is not None else ""
+    return {"role": role, "content": content}
 
 
 def _dict_to_message(item: dict) -> BaseMessage:
     role = item.get("role", "")
     content = item.get("content", "")
+    if not isinstance(content, str):
+        content = str(content) if content is not None else ""
     if role == "user":
         return HumanMessage(content=content)
+    if role == "system":
+        return SystemMessage(content=content)
     return AIMessage(content=content)
 
 
@@ -235,6 +248,7 @@ def build_ui_summary(state: dict) -> dict:
         "planner_payload": state.get("planner_payload"),
         "next_step": next_step,
         "suggested_aims": list(line_context.get("suggested_aims") or []),
+        "explanation": state.get("explanation"),
     }
 
 

@@ -1,8 +1,8 @@
-import { useState } from "react";
+import { useState, useRef, useEffect } from "react";
 import { useSessionStore, useSelectedTurn, useIsLive } from "../stores/sessionStore";
 import ManagerDecisionCard from "../components/ManagerDecisionCard";
 import { panelClass, monoClass } from "../lib/styles";
-import { IconCheck, IconMenu, IconClock, IconDatabase, IconGrid, IconEye } from "../lib/icons";
+import { IconCheck, IconMenu, IconClock, IconDatabase, IconGrid, IconEye, IconEdit } from "../lib/icons";
 
 function Stepper() {
   const executionEvents = useSessionStore((s) => s.executionEvents);
@@ -15,14 +15,23 @@ function Stepper() {
   const execRun = executionEvents.some((e) => e.topic === "executor.run");
   const execDone = executionEvents.some((e) => e.topic === "task.complete");
 
-  const managerActive = ui?.done || hasTurn;
-  const plannerActive = plannerDone || plannerStart;
-  const execActive = execDone || execRun;
+  const managerBlinking = hasTurn && !ui?.done;
+  const managerActive = !!ui?.done;
+  const plannerBlinking = (ui?.done || plannerStart) && !plannerDone;
+  const plannerActive = plannerDone;
+  const execBlinking = (plannerDone || execRun) && !execDone;
+  const execActive = execDone;
 
   const stepActiveClass: Record<string, string> = {
     "stage-manager": "bg-stage-manager text-[#0a0a0a] shadow-[0_0_0_1px_var(--stage-manager-line),0_0_18px_2px_var(--stage-manager-soft)]",
     "stage-planner": "bg-stage-planner text-[#0a0a0a] shadow-[0_0_0_1px_var(--stage-planner-line),0_0_18px_2px_var(--stage-planner-soft)]",
     "stage-execution": "bg-stage-execution text-[#0a0a0a] shadow-[0_0_0_1px_var(--stage-execution-line),0_0_18px_2px_var(--stage-execution-soft)]",
+  };
+
+  const stepBlinkingClass: Record<string, string> = {
+    "stage-manager": "bg-stage-manager text-[#0a0a0a] shadow-[0_0_0_1px_var(--stage-manager-line),0_0_18px_2px_var(--stage-manager-soft)] animate-pulse-glow-manager",
+    "stage-planner": "bg-stage-planner text-[#0a0a0a] shadow-[0_0_0_1px_var(--stage-planner-line),0_0_18px_2px_var(--stage-planner-soft)] animate-pulse-glow-planner",
+    "stage-execution": "bg-stage-execution text-[#0a0a0a] shadow-[0_0_0_1px_var(--stage-execution-line),0_0_18px_2px_var(--stage-execution-soft)] animate-pulse-glow-execution",
   };
 
   const stepInactiveClass: Record<string, string> = {
@@ -34,15 +43,23 @@ function Stepper() {
   const Step = ({
     label,
     active,
+    blinking,
     color,
     icon,
   }: {
     label: string;
     active: boolean;
+    blinking?: boolean;
     color: "stage-manager" | "stage-planner" | "stage-execution";
     icon?: React.ReactNode;
   }) =>
-    active ? (
+    blinking ? (
+      <div
+        className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg ${stepBlinkingClass[color]} font-semibold text-xs`}
+      >
+        {label}
+      </div>
+    ) : active ? (
       <div
         className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg ${stepActiveClass[color]} font-semibold text-xs`}
       >
@@ -57,12 +74,12 @@ function Stepper() {
     );
 
   return (
-    <div className="flex items-center gap-1.5 mb-5 p-3 rounded-xl bg-surface-1 border border-border">
-      <Step label="Manager" active={!!managerActive} color="stage-manager" icon={<IconCheck size={11} />} />
+    <div className="flex items-center gap-1.5 mb-5 p-3 rounded-xl bg-surface-1 border-2 border-border">
+      <Step label="Manager" active={managerActive} blinking={managerBlinking} color="stage-manager" icon={managerActive ? <IconCheck size={11} /> : undefined} />
       <span className="text-tertiary text-[11px]">→</span>
-      <Step label="Planner" active={plannerActive} color="stage-planner" />
+      <Step label="Planner" active={plannerActive} blinking={plannerBlinking} color="stage-planner" />
       <span className="text-tertiary text-[11px]">→</span>
-      <Step label="Execution" active={execActive} color="stage-execution" />
+      <Step label="Execution" active={execActive} blinking={execBlinking} color="stage-execution" />
     </div>
   );
 }
@@ -73,10 +90,28 @@ export default function ContextSection() {
   const turn = useSelectedTurn();
   const isLive = useIsLive();
   const sendUserMessage = useSessionStore((s) => s.sendUserMessage);
+  const updateSessionTitle = useSessionStore((s) => s.updateSessionTitle);
   const schema = turn?.schema;
 
   const [selectedDataset, setSelectedDataset] = useState<string | null>(null);
   const [columnsExpanded, setColumnsExpanded] = useState(false);
+  const [editingTitle, setEditingTitle] = useState(false);
+  const [titleInput, setTitleInput] = useState("");
+  const titleInputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    if (editingTitle && titleInputRef.current) {
+      titleInputRef.current.focus();
+      titleInputRef.current.select();
+    }
+  }, [editingTitle]);
+
+  const handleTitleSave = () => {
+    setEditingTitle(false);
+    if (sessionMeta?.session_id && titleInput !== (sessionMeta.title || "")) {
+      updateSessionTitle(sessionMeta.session_id, titleInput);
+    }
+  };
 
   const filteredColumns = selectedDataset && schema?.columns
     ? schema.columns.filter((c) => c.dataset === selectedDataset)
@@ -102,14 +137,56 @@ export default function ContextSection() {
             </span>
             Session
           </div>
-          <div className="text-[13px] text-muted mb-1">
-            <span className={monoClass}>{sessionMeta.session_id?.slice(0, 8)}…</span>
+          <div className="flex items-center gap-1.5 mb-0.5">
+            {editingTitle ? (
+              <input
+                ref={titleInputRef}
+                type="text"
+                className="flex-1 rounded-lg border border-accent bg-app text-text px-2 py-1 text-sm font-semibold"
+                value={titleInput}
+                onChange={(e) => setTitleInput(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") handleTitleSave();
+                  if (e.key === "Escape") setEditingTitle(false);
+                }}
+                onBlur={handleTitleSave}
+                maxLength={30}
+              />
+            ) : (
+              <button
+                type="button"
+                className="flex items-center gap-1.5 text-sm font-semibold text-text group cursor-pointer"
+                onClick={() => {
+                  setTitleInput(sessionMeta.title || "");
+                  setEditingTitle(true);
+                }}
+              >
+                <span>{sessionMeta.title || sessionMeta.session_id.slice(0, 8)}</span>
+                <IconEdit size={11} className="opacity-0 group-hover:opacity-100 transition-opacity text-muted" />
+              </button>
+            )}
           </div>
-          <div className="text-[13px] text-muted">
-            Turns: <b className="text-text font-medium">4</b>
+          <div className="text-[11.5px] text-tertiary mb-2">
+            <span className={monoClass}>{sessionMeta.session_id}</span>
           </div>
-          <div className="text-[13px] text-muted">
-            Phase: <b className="text-text font-medium">{sessionMeta.phase}</b>
+          <div className="flex items-center gap-2">
+            <span className="text-[13px] text-muted">
+              Turns: <b className="text-text font-medium">{turns.length}</b>
+            </span>
+            <span className="text-muted">·</span>
+            <span
+              className={`text-[10px] font-semibold uppercase px-1.5 py-0.5 rounded border ${
+                sessionMeta.mode === "man"
+                  ? "bg-stage-manager-soft text-stage-manager border-stage-manager-line/40"
+                  : sessionMeta.mode === "plan"
+                    ? "bg-stage-planner-soft text-stage-planner border-stage-planner-line/40"
+                    : sessionMeta.mode === "exe"
+                      ? "bg-stage-execution-soft text-stage-execution border-stage-execution-line/40"
+                      : "bg-ic-blue-soft text-ic-blue border-ic-blue/30"
+              }`}
+            >
+              {sessionMeta.mode || "ask"}
+            </span>
           </div>
         </div>
       )}
@@ -128,7 +205,7 @@ export default function ContextSection() {
       ) : (
         <>
           {schema.datasets && schema.datasets.length > 0 && (
-            <div className="rounded-xl border border-border bg-surface-1 p-4 mb-4 shadow-[0_1px_0_rgba(255,255,255,0.02)_inset,0_8px_24px_-12px_rgba(0,0,0,0.5)]">
+            <div className="rounded-xl border-2 border-border bg-surface-1 p-4 mb-4 shadow-[0_1px_0_rgba(255,255,255,0.02)_inset,0_8px_24px_-12px_rgba(0,0,0,0.5)]">
               <div className="flex items-center gap-2 text-sm font-semibold text-text mb-3">
                 <span className="inline-flex items-center justify-center w-[22px] h-[22px] rounded-[7px] bg-ic-amber-soft text-ic-amber">
                   <IconDatabase size={13} />
@@ -144,8 +221,8 @@ export default function ContextSection() {
                   }}
                   className={`rounded-lg p-3 mb-2 last:mb-0 transition-colors cursor-pointer ${
                     selectedDataset === ds.name
-                      ? "bg-ic-amber-soft/70 border border-ic-amber/20"
-                      : "border border-transparent hover:bg-white/[0.03]"
+                      ? "bg-ic-amber-soft/70 border-2 border-ic-amber/20"
+                      : "border-2 border-transparent hover:bg-white/[0.03]"
                   }`}
                 >
                   <b className="font-medium text-text">{ds.name}</b>
@@ -168,7 +245,7 @@ export default function ContextSection() {
           )}
 
           {schema.columns && schema.columns.length > 0 && (
-            <div className="rounded-xl border border-border bg-surface-1 p-4 mb-4 shadow-[0_1px_0_rgba(255,255,255,0.02)_inset,0_8px_24px_-12px_rgba(0,0,0,0.5)]">
+            <div className="rounded-xl border-2 border-border bg-surface-1 p-4 mb-4 shadow-[0_1px_0_rgba(255,255,255,0.02)_inset,0_8px_24px_-12px_rgba(0,0,0,0.5)]">
               <div className="flex items-center gap-2 text-sm font-semibold text-text mb-3">
                 <span className="inline-flex items-center justify-center w-[22px] h-[22px] rounded-[7px] bg-ic-teal-soft text-ic-teal">
                   <IconGrid size={13} />
@@ -178,10 +255,10 @@ export default function ContextSection() {
                   <span className="text-tertiary font-normal">— {selectedDataset}</span>
                 )}
               </div>
-              <div className="overflow-x-auto rounded-lg border border-border">
+              <div className="overflow-x-auto rounded-lg border-2 border-border">
                 <table className="min-w-full text-[12.5px] border-collapse">
                   <thead>
-                    <tr className="bg-white/[0.03] border-b border-border">
+                    <tr className="bg-white/[0.03] border-b-2 border-border">
                       <th className="font-display text-[10.5px] font-semibold tracking-wider uppercase text-tertiary text-left py-2 px-2.5">Name</th>
                       <th className="font-display text-[10.5px] font-semibold tracking-wider uppercase text-tertiary text-left py-2 px-2.5">Type</th>
                       <th className="font-display text-[10.5px] font-semibold tracking-wider uppercase text-tertiary text-left py-2 px-2.5">Meaning</th>
@@ -189,7 +266,7 @@ export default function ContextSection() {
                   </thead>
                   <tbody>
                     {displayColumns.map((c, i) => (
-                      <tr key={`${c.dataset}-${c.name}-${i}`} className="border-b border-border/30 last:border-b-0">
+                      <tr key={`${c.dataset}-${c.name}-${i}`} className="border-b-2 border-border/30 last:border-b-0">
                         <td className={`${monoClass} font-medium text-text py-2 px-2.5`}>{c.name}</td>
                         <td className={`${monoClass} text-accent text-[11.5px] py-2 px-2.5`}>{c.datatype}</td>
                         <td className="text-muted py-2 px-2.5">{c.meaning || "—"}</td>

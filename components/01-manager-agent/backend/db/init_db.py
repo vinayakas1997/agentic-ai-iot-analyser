@@ -11,6 +11,7 @@ from pathlib import Path
 
 from db.run_migration import apply_migration
 from db.seed_fruits_global import seed as seed_fruits
+from db.fill_mock_data import fill as fill_mock
 
 MIGRATIONS_DIR = Path(__file__).resolve().parent / "migrations"
 
@@ -32,6 +33,8 @@ async def init_db() -> None:
 
     print("All migrations applied. Seeding test data...")
     await seed_fruits()
+    print("Filling Japan scenario mock data...")
+    await fill_mock()
     print("init_db complete.")
 
 

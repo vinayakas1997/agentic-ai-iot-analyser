@@ -65,5 +65,9 @@ def register_ws_subscriber() -> None:
         "manager.result",
         "task.complete",
         "task.failed",
+        "manager.line_resolved",
+        "manager.time_resolved",
+        "manager.context_synced",
+        "manager.plan_built",
     ):
         subscribe(topic, push_handler, 20, "ws_subscriber")

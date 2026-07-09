@@ -8,6 +8,7 @@ from bus.subscriber import subscribe
 from config import get_settings
 from data.data_handler import DataHandler
 from db.models import Event
+from agents.manager.session_db import get_session_mode, update_session_mode
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
@@ -41,6 +42,11 @@ async def handle(event: Event) -> None:
         "query_index": payload.get("query_index", 0),
         "result": result,
     }
+
+    if event.session_id:
+        current_mode = await get_session_mode(event.session_id, event.user_id)
+        if current_mode == "plan":
+            await update_session_mode(event.session_id, event.user_id, "exe")
 
     if result.get("success"):
         await publish_event(

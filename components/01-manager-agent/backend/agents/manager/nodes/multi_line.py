@@ -1,4 +1,9 @@
+import logging
+
+from api.websocket import broadcast_event
 from agents.manager.db import resolve_line_lookup
+
+logger = logging.getLogger(__name__)
 from agents.manager.message_format import (
     assemble_reply,
     format_web_body_suggested_aims,
@@ -21,6 +26,7 @@ from agents.manager.state import ManagerState
 
 async def resolve_all_lines(state: ManagerState) -> ManagerState:
     debug_state("resolve_all_lines", state)
+    state = {**state, "error": None}
     slots = dict(state.get("slots") or {})
     line_slots = list(slots.get("line_slots") or [])
     user_id = state.get("user_id", "")
@@ -42,7 +48,17 @@ async def resolve_all_lines(state: ManagerState) -> ManagerState:
         if not mention:
             continue
 
-        match = await resolve_line_lookup(mention, user_id)
+        try:
+            match = await resolve_line_lookup(mention, user_id)
+        except Exception:
+            logger.exception("resolve_all_lines: DB lookup failed for %s", mention)
+            slot["status"] = "not_found"
+            slot["resolved"] = False
+            slot["canonical"] = None
+            slot["source"] = None
+            slot["candidates"] = []
+            error = "line_lookup_failed"
+            continue
         if match is None:
             slot["status"] = "not_found"
             slot["resolved"] = False
@@ -72,6 +88,18 @@ async def resolve_all_lines(state: ManagerState) -> ManagerState:
                 canonical=match.canonical,
                 source=match.source,
             )
+            try:
+                await broadcast_event(state.get("user_id", ""), {
+                    "topic": "manager.line_resolved",
+                    "session_id": state.get("session_id", ""),
+                    "payload": {
+                        "line": match.canonical,
+                        "mention": mention,
+                        "source": match.source,
+                    },
+                })
+            except Exception:
+                pass
         line_slots[i] = slot
 
     slots["line_slots"] = line_slots

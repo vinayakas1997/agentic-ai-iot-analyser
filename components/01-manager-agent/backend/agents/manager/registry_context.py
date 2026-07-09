@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import re
 from copy import deepcopy
 from typing import Any
@@ -12,6 +13,8 @@ from agents.manager.db import (
     fetch_global_datasets,
     normalize_join_catalog,
 )
+
+logger = logging.getLogger(__name__)
 
 
 def _normalize_mention(text: str) -> str:
@@ -474,7 +477,12 @@ async def sync_dataset_context_for_state(
             }
 
         if need_fetch or bundle is None:
-            fetched = await fetch_fn(canonical)
+            try:
+                fetched = await fetch_fn(canonical)
+            except Exception:
+                logger.exception("sync_dataset_context_for_state: fetch failed for %s", canonical)
+                error_info = {"error": "no_datasets", "line": canonical}
+                continue
             if fetched is None:
                 error_info = {"error": "no_datasets", "line": canonical}
                 continue

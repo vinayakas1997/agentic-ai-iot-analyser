@@ -1,12 +1,11 @@
 import json
-
-
+import logging
 
 from langchain_core.messages import HumanMessage, SystemMessage
 
-
-
 from agents.manager.chat_memory import get_recent_chat_messages
+
+logger = logging.getLogger(__name__)
 from agents.manager.debug_log import debug, debug_state
 from agents.manager.json_parse import parse_json_from_message
 from agents.manager.llm_client import get_llm as get_llm_client
@@ -214,6 +213,8 @@ async def propose_or_refine_plans(state: ManagerState) -> ManagerState:
 
     debug_state("propose_or_refine_plans", state)
 
+    state = {**state, "error": None}
+
     line_context = state.get("line_context") or {}
 
     explore_context = state.get("explore_context")
@@ -232,7 +233,29 @@ async def propose_or_refine_plans(state: ManagerState) -> ManagerState:
 
     existing = list(state.get("analysis_proposals") or [])
 
+    iteration = state.get("explore_iteration") or 0
 
+    seen_titles = list(state.get("seen_proposal_titles") or [])
+
+    MAX_EXPLORE = 4
+
+    if action == "propose":
+        if iteration >= MAX_EXPLORE:
+            msg = (
+                f"I've explored all the analysis angles I can think of for **{scope_label}**.\n\n"
+                "Try a different line or scope, or say *use saved* to revisit saved plans."
+            )
+            debug("propose_or_refine_plans", "exhausted", iteration=iteration)
+            return {
+                **state,
+                "analysis_proposals": None,
+                "explore_phase": None,
+                "phase": "ask",
+                "agent_message": msg,
+                "wants_suggested_aims": False,
+                "aim_exploration": None,
+            }
+        iteration += 1
 
     system = load_prompt(
 
@@ -251,6 +274,8 @@ async def propose_or_refine_plans(state: ManagerState) -> ManagerState:
         registry_suggested_aims=json.dumps(line_context.get("suggested_aims") or []),
 
         existing_proposals_json=json.dumps(existing, indent=2),
+
+        seen_proposal_titles_json=json.dumps(seen_titles, indent=2),
 
         action=action,
 
@@ -284,7 +309,11 @@ async def propose_or_refine_plans(state: ManagerState) -> ManagerState:
     messages.append(HumanMessage(content=state.get("user_message") or ""))
 
     llm = get_llm_client()
-    response = await llm.ainvoke(messages, caller="propose_or_refine_plans")
+    try:
+        response = await llm.ainvoke(messages, caller="propose_or_refine_plans")
+    except Exception:
+        logger.exception("propose_or_refine_plans: LLM call failed")
+        return {**state, "error": "llm_failed", "agent_message": "I had trouble planning that. Please try again.", "phase": "ask"}
 
     parsed: dict = {}
 
@@ -324,9 +353,26 @@ async def propose_or_refine_plans(state: ManagerState) -> ManagerState:
 
 
 
-    if len(proposals) < 3 and existing:
+    if len(proposals) < 3 and existing and iteration <= 1:
 
         proposals = existing
+
+    elif len(proposals) < 3 and existing and iteration > 1:
+
+        msg = (
+            f"I've explored all the analysis angles I can think of for **{scope_label}**.\n\n"
+            "Try a different line or scope, or say *use saved* to revisit saved plans."
+        )
+        debug("propose_or_refine_plans", "stale_fallback", iteration=iteration)
+        return {
+            **state,
+            "analysis_proposals": None,
+            "explore_phase": None,
+            "phase": "ask",
+            "agent_message": msg,
+            "wants_suggested_aims": False,
+            "aim_exploration": None,
+        }
 
 
 
@@ -351,7 +397,19 @@ async def propose_or_refine_plans(state: ManagerState) -> ManagerState:
 
 
 
+    for p in proposals:
+        t = (p.get("title") or "").strip()
+        if t and t not in seen_titles:
+            seen_titles.append(t)
+
     debug("propose_or_refine_plans", "done", count=len(proposals), action=action)
+
+    change_notes = aim_exploration.get("change_notes", "")
+    explanation = (
+        f"You asked me to **{change_notes}**. Here are some updated options:"
+        if change_notes
+        else None
+    )
 
     return {
 
@@ -361,9 +419,15 @@ async def propose_or_refine_plans(state: ManagerState) -> ManagerState:
 
         "explore_phase": explore_phase,
 
+        "explore_iteration": iteration,
+
+        "seen_proposal_titles": seen_titles,
+
         "phase": "explore",
 
         "agent_message": format_proposals_message(proposals, scope_label),
+
+        "explanation": explanation,
 
         "wants_suggested_aims": False,
 
@@ -472,6 +536,10 @@ async def merge_proposals_to_plan(state: ManagerState) -> ManagerState:
         "missing": compute_missing(slots),
 
         "explore_phase": None,
+
+        "explore_iteration": 0,
+
+        "seen_proposal_titles": [],
 
         "phase": "plan",
 

@@ -1,4 +1,5 @@
 import json
+import logging
 
 from langchain_core.messages import HumanMessage, SystemMessage
 
@@ -12,6 +13,8 @@ from agents.manager.schema_format import (
     format_datasets_for_prompt,
 )
 from agents.manager.state import ManagerState
+
+logger = logging.getLogger(__name__)
 
 
 def _proposals_summary(proposals: list[dict] | None) -> str:
@@ -32,6 +35,7 @@ def _proposals_summary(proposals: list[dict] | None) -> str:
 
 async def answer_advisory(state: ManagerState) -> ManagerState:
     debug_state("answer_advisory", state)
+    state = {**state, "error": None}
     slots = state.get("slots") or {}
     line = slots.get("line") or {}
     line_context = state.get("line_context") or {}
@@ -62,10 +66,14 @@ async def answer_advisory(state: ManagerState) -> ManagerState:
         user_message=state.get("user_message") or "",
     )
     llm = get_llm_client()
-    response = await llm.ainvoke(
-        [SystemMessage(content=system), HumanMessage(content=state.get("user_message") or "")],
-        caller="answer_advisory",
-    )
+    try:
+        response = await llm.ainvoke(
+            [SystemMessage(content=system), HumanMessage(content=state.get("user_message") or "")],
+            caller="answer_advisory",
+        )
+    except Exception:
+        logger.exception("answer_advisory: LLM call failed")
+        return {**state, "error": "llm_failed", "agent_message": "Sorry, I had trouble answering that. Please try again.", "phase": "ask"}
     body = (response.content or "").strip()
     footer = format_advisory_footer(plan if has_plan else None, canonical)
     msg = f"{body}\n\n{footer}" if body else footer

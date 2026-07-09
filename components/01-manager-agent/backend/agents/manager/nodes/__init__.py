@@ -1,4 +1,5 @@
 from agents.manager.nodes.advisory import answer_advisory
+from agents.manager.nodes.confirm_redirect import confirm_redirect
 from agents.manager.nodes.explore_aims import merge_proposals_to_plan, propose_or_refine_plans
 from agents.manager.nodes.extract import extract_slots, merge_slots
 from agents.manager.nodes.meta import answer_session_meta_node
@@ -34,6 +35,7 @@ __all__ = [
     "apply_task_reuse",
     "answer_session_meta_node",
     "answer_advisory",
+    "confirm_redirect",
     "line_not_found",
     "ask_line_ambiguous",
     "resolve_time_filters",

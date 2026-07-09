@@ -4,6 +4,7 @@ import pytest
 
 from agents.manager.routing import (
     _route_explore,
+    is_confirm_like_message,
     is_confirm_message,
     route_after_confirm,
     route_after_inject,
@@ -48,6 +49,14 @@ class TestRouteAfterInject:
         s = _state(phase="plan", user_message="yes")
         assert route_after_inject(s) == "detect_confirm"
 
+    def test_confirm_redirect_when_confirm_word_in_sentence(self):
+        s = _state(phase="plan", user_message="go with this plan")
+        assert route_after_inject(s) == "confirm_redirect"
+
+    def test_confirm_redirect_for_i_want_to_proceed(self):
+        s = _state(phase="plan", user_message="I want to proceed")
+        assert route_after_inject(s) == "confirm_redirect"
+
     def test_extract_when_not_plan_phase(self):
         s = _state(phase="extract", user_message="go")
         assert route_after_inject(s) == "extract_slots"
@@ -73,13 +82,36 @@ class TestIsConfirmMessage:
         s = _state(phase="ask", user_message="go")
         assert not is_confirm_message(s)
 
-    def test_confirm_in_sentence(self):
+    def test_not_confirm_in_sentence(self):
         s = _state(phase="plan", user_message="go with this plan")
-        assert is_confirm_message(s)
+        assert not is_confirm_message(s)
 
     def test_not_confirm_for_random_message(self):
         s = _state(phase="plan", user_message="what are the options")
         assert not is_confirm_message(s)
+
+
+class TestIsConfirmLikeMessage:
+    def test_confirm_words(self):
+        for word in ("go", "confirm", "yes", "proceed", "ok"):
+            s = _state(phase="plan", user_message=word)
+            assert is_confirm_like_message(s), f"'{word}' should be confirm-like"
+
+    def test_not_confirm_like_when_not_plan_phase(self):
+        s = _state(phase="ask", user_message="go")
+        assert not is_confirm_like_message(s)
+
+    def test_confirm_like_in_sentence(self):
+        s = _state(phase="plan", user_message="go with this plan")
+        assert is_confirm_like_message(s)
+
+    def test_confirm_like_for_i_want_to_proceed(self):
+        s = _state(phase="plan", user_message="I want to proceed")
+        assert is_confirm_like_message(s)
+
+    def test_not_confirm_like_for_random_message(self):
+        s = _state(phase="plan", user_message="what are the options")
+        assert not is_confirm_like_message(s)
 
 
 class TestRouteAfterResolveAllLines:

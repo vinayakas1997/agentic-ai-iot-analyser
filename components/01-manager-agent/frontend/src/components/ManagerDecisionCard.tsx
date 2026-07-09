@@ -63,7 +63,7 @@ function InlineEdit({
     <div className="flex items-center gap-1.5 mt-2">
       <input
         type="text"
-        className="flex-1 rounded-lg border border-border bg-bg-deep text-text px-3 py-1.5 text-xs font-mono"
+        className="flex-1 rounded-lg border-2 border-border bg-bg-deep text-text px-3 py-1.5 text-xs font-mono"
         value={val}
         placeholder={placeholder}
         onChange={(e) => setVal(e.target.value)}
@@ -91,6 +91,7 @@ function InlineEdit({
 
 export default function ManagerDecisionCard({ turn, isLive, onSendMessage, showHandoff, variant = "detail" }: Props) {
   const [editingField, setEditingField] = useState<string | null>(null);
+  const [showBenefits, setShowBenefits] = useState(false);
   const schema: SchemaSnapshot | null = turn.schema;
   const ui: TurnUi | null = turn.ui;
 
@@ -349,8 +350,22 @@ export default function ManagerDecisionCard({ turn, isLive, onSendMessage, showH
             </div>
           )}
           {ui?.plan?.benefits && (
-            <div className="mt-3 pl-[13px] border-l-2 border-stage-manager-line bg-stage-manager-soft/30 rounded-r-lg py-2 px-3 text-xs text-muted italic leading-relaxed">
-              {ui.plan.benefits}
+            <div className="mt-3">
+              <button
+                type="button"
+                onClick={() => setShowBenefits((v) => !v)}
+                className="flex items-center gap-1.5 text-xs text-muted italic hover:text-text transition-colors cursor-pointer"
+              >
+                <span className={`transition-transform ${showBenefits ? "rotate-90" : ""}`}>▶</span>
+                Benefits explanation
+              </button>
+              {showBenefits && (
+                <div className="mt-2 pl-[13px] border-l-2 border-stage-manager-line bg-stage-manager-soft/30 rounded-r-lg py-2 px-3 text-xs text-muted italic leading-relaxed">
+                  {ui.plan.benefits.split("\n").filter(Boolean).map((b, bi) => (
+                    <p key={bi} className="m-0">{b}</p>
+                  ))}
+                </div>
+              )}
             </div>
           )}
           {!ui?.plan?.aims?.length && schema?.suggested_aims && schema.suggested_aims.length > 0 && (
@@ -378,7 +393,7 @@ export default function ManagerDecisionCard({ turn, isLive, onSendMessage, showH
 
       {/* ── Full handoff payload ── */}
       {showHandoff && ui?.planner_payload && (
-        <div className="mt-4 pt-4 border-t border-stage-manager-line/30">
+        <div className="mt-4 pt-4 border-t-2 border-stage-manager-line/30">
           <span className="text-[10.5px] font-semibold tracking-widest uppercase text-tertiary">
             Handoff to Planner
           </span>

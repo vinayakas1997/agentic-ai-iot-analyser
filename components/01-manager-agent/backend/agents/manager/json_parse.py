@@ -9,5 +9,7 @@ def parse_json_from_message(raw: str) -> dict:
             if chunk.startswith("json"):
                 chunk = chunk[4:].strip()
             if chunk.startswith("{"):
-                return json.loads(chunk)
-    return json.loads(raw.strip())
+                result = json.loads(chunk)
+                return result if isinstance(result, dict) else {}
+    result = json.loads(raw.strip())
+    return result if isinstance(result, dict) else {}

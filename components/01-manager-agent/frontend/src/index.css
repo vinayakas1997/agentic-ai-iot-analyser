@@ -4,7 +4,7 @@
   --color-bg-deep: #08080c;
   --color-surface-1: #111116;
   --color-surface-2: #0d0d12;
-  --color-border: rgba(255,255,255,0.06);
+  --color-border: rgba(255,255,255,0.12);
   --color-border-2: rgba(255,255,255,0.09);
   --color-text: #eeeef2;
   --color-muted: #8d8d9c;
@@ -73,4 +73,94 @@ body {
 
 .font-mono {
   font-family: var(--font-mono);
+}
+
+@keyframes shake {
+  0%, 100% { transform: translateX(0); }
+  25% { transform: translateX(-4px); }
+  75% { transform: translateX(4px); }
+}
+
+.animate-shake {
+  animation: shake 0.3s ease-in-out;
+}
+
+@keyframes pulse-glow-manager {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.6; }
+}
+
+@keyframes pulse-glow-planner {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.6; }
+}
+
+@keyframes pulse-glow-execution {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.6; }
+}
+
+.animate-pulse-glow-manager {
+  animation: pulse-glow-manager 2s ease-in-out infinite;
+}
+
+.animate-pulse-glow-planner {
+  animation: pulse-glow-planner 2s ease-in-out infinite;
+}
+
+.animate-pulse-glow-execution {
+  animation: pulse-glow-execution 2s ease-in-out infinite;
+}
+
+@keyframes workPulse {
+  0%, 100% { opacity: 0.3; transform: scale(0.7); }
+  50% { opacity: 1; transform: scale(1.2); }
+}
+
+@keyframes cubeSettle {
+  0%, 100% { transform: translateY(0); opacity: 0.55; }
+  50% { transform: translateY(-3px); opacity: 1; }
+}
+
+/* ── Chart animations ── */
+@keyframes growBar {
+  from { transform: scaleY(0); }
+  to { transform: scaleY(1); }
+}
+
+@keyframes popIn {
+  from { transform: scale(0); opacity: 0; }
+  to { transform: scale(1); opacity: 0.8; }
+}
+
+@keyframes bobBar {
+  0%, 100% { transform: scaleY(1); }
+  20% { transform: scaleY(var(--bob-a, 0.6)); }
+  55% { transform: scaleY(var(--bob-b, 1.4)); }
+  80% { transform: scaleY(var(--bob-c, 0.8)); }
+}
+
+@keyframes driftDot {
+  0%, 100% { transform: translate(0, 0); }
+  25% { transform: translate(1px, -1.3px); }
+  50% { transform: translate(-0.8px, 0.9px); }
+  75% { transform: translate(0.9px, 0.8px); }
+}
+
+@keyframes driftWide {
+  0%, 100% { transform: translate(0, 0); }
+  25% { transform: translate(var(--dx1, 4px), var(--dy1, -4px)); }
+  50% { transform: translate(var(--dx2, -5px), var(--dy2, 4px)); }
+  75% { transform: translate(var(--dx3, 4px), var(--dy3, 3px)); }
+}
+
+@keyframes driftConverge {
+  0%, 100% { transform: translate(0, 0); }
+  30% { transform: translate(var(--dx1, 2px), var(--dy1, -2px)); }
+  50% { transform: translate(var(--conv-x, 0), var(--conv-y, 0)); }
+  70% { transform: translate(var(--dx3, -2px), var(--dy3, 2px)); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .chart-bar, .chart-dot { animation: none !important; }
 }

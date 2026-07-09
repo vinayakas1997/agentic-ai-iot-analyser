@@ -1,6 +1,7 @@
 from dataclasses import dataclass, field
 
 from sqlalchemy import func, or_, select
+from sqlalchemy.exc import IntegrityError
 
 from db.models import GlobalRegistry, TaskRegistry
 from db.session import AsyncSessionLocal
@@ -283,20 +284,27 @@ async def fetch_task_versions(user_id: str, line_name: str) -> list[dict]:
 
 async def save_task_definition(line_name: str, user_id: str, task_definition: dict) -> int:
     async with AsyncSessionLocal() as db:
-        result = await db.execute(
-            select(func.coalesce(func.max(TaskRegistry.version), 0)).where(
-                TaskRegistry.user_id == user_id,
-                TaskRegistry.line_name == line_name,
+        for attempt in range(3):
+            result = await db.execute(
+                select(func.coalesce(func.max(TaskRegistry.version), 0)).where(
+                    TaskRegistry.user_id == user_id,
+                    TaskRegistry.line_name == line_name,
+                )
             )
-        )
-        max_v = result.scalar_one()
-        new_version = int(max_v) + 1
-        row = TaskRegistry(
-            user_id=user_id,
-            line_name=line_name,
-            version=new_version,
-            task_definition=task_definition,
-        )
-        db.add(row)
-        await db.commit()
-        return new_version
+            max_v = result.scalar_one()
+            new_version = int(max_v) + 1
+            row = TaskRegistry(
+                user_id=user_id,
+                line_name=line_name,
+                version=new_version,
+                task_definition=task_definition,
+            )
+            db.add(row)
+            try:
+                await db.commit()
+                return new_version
+            except IntegrityError:
+                await db.rollback()
+                if attempt == 2:
+                    raise
+        return 0  # unreachable

@@ -1,14 +1,21 @@
 """Task History Context Service — prior saved task definitions."""
 
 from __future__ import annotations
+import logging
 
 from agents.manager.db import fetch_task_versions
+
+logger = logging.getLogger(__name__)
 
 
 async def fetch_task_history(user_id: str, line_name: str, *, limit: int = 5) -> list[dict]:
     if not user_id or not line_name:
         return []
-    rows = await fetch_task_versions(user_id, line_name)
+    try:
+        rows = await fetch_task_versions(user_id, line_name)
+    except Exception:
+        logger.exception("fetch_task_history: DB fetch failed for user=%s line=%s", user_id, line_name)
+        return []
     history: list[dict] = []
     for row in rows[:limit]:
         td = row.get("task_definition") or {}

@@ -1,10 +1,10 @@
-import { FormEvent, KeyboardEvent, Fragment, useState } from "react";
+import { FormEvent, KeyboardEvent, Fragment, useState, useEffect, useRef, useCallback } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import {
   panelClass, monoClass, btnPrimary, btnSecondary,
   userBubbleClass, managerCardClass,
-  qrPrimaryClass, qrSecondaryClass,
+  qrPrimaryClass, qrSecondaryClass, qrPressedClass,
   composerBannerClass,
 } from "../lib/styles";
 import { useSessionStore, useIsDone, useIsLive } from "../stores/sessionStore";
@@ -13,7 +13,9 @@ import type { TurnUi } from "../types/manager";
 import {
   IconUser, IconCheck, IconCheckCircle,
   IconMapPin, IconDatabase, IconClock, IconTarget,
+  IconMenu, IconEdit,
 } from "../lib/icons";
+import OnboardingView from "./OnboardingView";
 
 /* ── Selectable proposal card ── */
 function OptionCard({
@@ -32,10 +34,20 @@ function OptionCard({
     join_description?: string;
     what_you_might_see?: string;
   };
+  const handleKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === "Enter" || e.key === " ") {
+      e.preventDefault();
+      onSelect(`confirm ${index + 1}`);
+    }
+  };
   return (
     <div
-      className="bg-white/[0.02] border border-border rounded-lg p-3.5 mb-2.5 last:mb-0 cursor-pointer transition-all hover:border-stage-manager-line hover:bg-stage-manager-soft/20 hover:-translate-y-px relative group"
+      className="bg-white/[0.02] border-2 border-border rounded-lg p-3.5 mb-2.5 last:mb-0 cursor-pointer transition-all hover:border-stage-manager-line hover:bg-stage-manager-soft/20 hover:-translate-y-px relative group"
       onClick={() => onSelect(`confirm ${index + 1}`)}
+      onKeyDown={handleKeyDown}
+      tabIndex={0}
+      role="button"
+      aria-label={`Select option ${index + 1}: ${p.title || `Option ${index + 1}`}`}
     >
       <span className="hidden group-hover:block absolute top-3 right-3 text-[10.5px] font-semibold text-stage-manager">
         select →
@@ -81,6 +93,18 @@ function chipClass(accent?: "blue" | "amber" | "coral") {
   return `${base} text-text bg-white/[0.04] border-border`;
 }
 
+/* ── Resolve chip accent from dataset role ── */
+function datasetAccent(
+  dsName: string,
+  datasets?: { name: string; role?: string }[]
+): "blue" | "amber" | "coral" {
+  const entry = datasets?.find((d) => d.name === dsName);
+  if (entry?.role === "primary") return "blue";
+  if (entry?.role === "secondary") return "amber";
+  if (entry?.role === "tertiary") return "coral";
+  return "amber";
+}
+
 /* ── Main chat section ── */
 export default function ChatSection() {
   const turns = useSessionStore((s) => s.turns);
@@ -95,42 +119,192 @@ export default function ChatSection() {
   const isLive = useIsLive();
   const isDone = useIsDone();
   const plannerStarted = executionEvents.some((e) => e.topic === "planner.start");
+  const error = useSessionStore((s) => s.error);
+  const setError = useSessionStore((s) => s.setError);
+  const wsStatus = useSessionStore((s) => s.wsStatus);
+  const pendingTurn = useSessionStore((s) => s.pendingTurn);
   const [input, setInput] = useState("");
+  const [shake, setShake] = useState(false);
+  const [activeProposal, setActiveProposal] = useState<{ index: number; title: string } | null>(null);
+  const [showChangeInput, setShowChangeInput] = useState(false);
+  const [changeInput, setChangeInput] = useState("");
+  const [pressedButtons, setPressedButtons] = useState<Set<string>>(new Set());
+
+  /* ── Typewriter placeholder ── */
+  const typeExamples = [
+    "Tell me about this machine",
+    "What is the average cost by fruit?",
+    "Show me sales by region",
+  ];
+  const [placeholder, setPlaceholder] = useState("Ask anything\u2026");
+  const typeIdxRef = useRef(0);
+  const charIdxRef = useRef(0);
+  const deletingRef = useRef(false);
+  const typeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const typewriterActiveRef = useRef(true);
+
+  const typeLoop = useCallback(() => {
+    if (!typewriterActiveRef.current) return;
+    const full = typeExamples[typeIdxRef.current];
+
+    if (!deletingRef.current) {
+      charIdxRef.current++;
+      setPlaceholder(full.slice(0, charIdxRef.current) + "\u258c");
+      if (charIdxRef.current === full.length) {
+        deletingRef.current = true;
+        typeTimerRef.current = setTimeout(typeLoop, 1400);
+        return;
+      }
+      typeTimerRef.current = setTimeout(typeLoop, 45);
+    } else {
+      charIdxRef.current--;
+      setPlaceholder(full.slice(0, charIdxRef.current) + (charIdxRef.current > 0 ? "\u258c" : ""));
+      if (charIdxRef.current === 0) {
+        deletingRef.current = false;
+        typeIdxRef.current = (typeIdxRef.current + 1) % typeExamples.length;
+        typeTimerRef.current = setTimeout(typeLoop, 300);
+        return;
+      }
+      typeTimerRef.current = setTimeout(typeLoop, 25);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (turns.length === 0) {
+      typewriterActiveRef.current = true;
+      typeIdxRef.current = 0;
+      charIdxRef.current = 0;
+      deletingRef.current = false;
+      typeLoop();
+    }
+    return () => {
+      if (typeTimerRef.current) clearTimeout(typeTimerRef.current);
+    };
+  }, [turns.length, typeLoop]);
+
+  const stopTypewriter = () => {
+    typewriterActiveRef.current = false;
+    if (typeTimerRef.current) clearTimeout(typeTimerRef.current);
+    setPlaceholder("Ask anything\u2026");
+  };
+
+  useEffect(() => {
+    if (!pendingTurn) {
+      setActiveProposal(null);
+      setShowChangeInput(false);
+      setChangeInput("");
+    }
+  }, [pendingTurn]);
 
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
-    if (!input.trim() || loading || isDone) return;
+    if (!input.trim()) {
+      setShake(true);
+      setTimeout(() => setShake(false), 300);
+      return;
+    }
+    if (loading || isDone) return;
     const text = input;
     setInput("");
     await sendUserMessage(text);
   };
 
   /* ── Build action buttons for quick replies ── */
-  const buildQuickReplies = (ui: TurnUi, onSend: (msg: string) => void) => {
+  const buildQuickReplies = (ui: TurnUi, onSend: (msg: string) => void, turnIndex: number) => {
     const btns: { label: string; msg: string; primary?: boolean }[] = [];
 
     if (ui.proposals?.length) {
       btns.push({ label: "See more options", msg: "more options" });
-      btns.push({ label: "Change something\u2026", msg: "change something" });
     } else if (ui.plan?.aims?.length && !ui.done) {
       btns.push({ label: "Go — proceed", msg: "go", primary: true });
       btns.push({ label: "More options", msg: "more options" });
-      btns.push({ label: "Change something\u2026", msg: "change something" });
     }
 
-    if (!btns.length) return null;
+    const showChange = !!(ui.proposals?.length || (ui.plan?.aims?.length && !ui.done));
+    if (!btns.length && !showChange) return null;
+
+    const changePressed = pressedButtons.has(`${turnIndex}:change`);
 
     return (
-      <div className="flex flex-wrap gap-2 mt-4 pt-3.5 border-t border-border/30">
-        {btns.map((b) => (
+      <div className="flex flex-wrap gap-2 mt-4 pt-3.5 border-t-2 border-border/30">
+        {btns.map((b) => {
+          const icon = b.msg === "more options"
+            ? <IconMenu size={11} />
+            : null;
+          const isPressed = b.msg === "more options" && pressedButtons.has(`${turnIndex}:more options`);
+          return (
+            <button
+              key={b.label}
+              type="button"
+              className={isPressed ? qrPressedClass : (b.primary ? qrPrimaryClass : qrSecondaryClass)}
+              onClick={() => {
+                if (b.msg === "more options") {
+                  setPressedButtons(prev => new Set(prev).add(`${turnIndex}:more options`));
+                }
+                onSend(b.msg);
+              }}
+            >
+              {icon}
+              {b.label}
+            </button>
+          );
+        })}
+        {showChange && (showChangeInput ? (
+          <div className="flex gap-2 items-start" key="change-input">
+            <input
+              type="text"
+              className="flex-1 rounded-lg border-2 border-border bg-bg-deep text-text px-3 py-1.5 text-sm min-w-[200px]"
+              placeholder="Describe your changes..."
+              value={changeInput}
+              onChange={(e) => setChangeInput(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && changeInput.trim()) {
+                  setPressedButtons(prev => new Set(prev).add(`${turnIndex}:change`));
+                  onSend(changeInput);
+                  setChangeInput("");
+                  setShowChangeInput(false);
+                }
+                if (e.key === "Escape") {
+                  setShowChangeInput(false);
+                  setChangeInput("");
+                }
+              }}
+              autoFocus
+            />
+            <button
+              type="button"
+              className="text-xs px-3 py-1.5 rounded-lg bg-stage-execution text-[#0a1a12] font-semibold whitespace-nowrap"
+              onClick={() => {
+                if (changeInput.trim()) {
+                  setPressedButtons(prev => new Set(prev).add(`${turnIndex}:change`));
+                  onSend(changeInput);
+                  setChangeInput("");
+                  setShowChangeInput(false);
+                }
+              }}
+            >
+              Apply
+            </button>
+            <button
+              type="button"
+              className="text-xs px-2.5 py-1.5 rounded-lg bg-surface-2 text-muted hover:text-text whitespace-nowrap"
+              onClick={() => {
+                setShowChangeInput(false);
+                setChangeInput("");
+              }}
+            >
+              Cancel
+            </button>
+          </div>
+        ) : (
           <button
-            key={b.label}
+            key="change"
             type="button"
-            className={b.primary ? qrPrimaryClass : qrSecondaryClass}
-            onClick={() => onSend(b.msg)}
+            className={changePressed ? qrPressedClass : qrSecondaryClass}
+            onClick={() => setShowChangeInput(true)}
           >
-            {b.primary && <IconCheck size={11} />}
-            {b.label}
+            <IconEdit size={11} />
+            Change something...
           </button>
         ))}
       </div>
@@ -151,11 +325,7 @@ export default function ChatSection() {
 
       {/* ── Turns ── */}
       <div className="flex-1 overflow-y-auto min-h-0 pr-1 mb-3">
-        {turns.length === 0 && (
-          <p className="text-muted text-sm">
-            What would you like to analyze? Try a line name like Vinayaka or fruits test.
-          </p>
-        )}
+        {turns.length === 0 && <OnboardingView />}
         {turns.map((turn, i) => {
           const prevTurn = turns[i - 1];
           const ui = turn.ui;
@@ -164,7 +334,7 @@ export default function ChatSection() {
 
           return (
             <Fragment key={turn.turn_index ?? i}>
-              {i > 0 && <hr className="border-t border-border/30 my-3" />}
+              {i > 0 && <hr className="border-t-2 border-border/30 my-3" />}
               <div
                 className={`p-2.5 rounded-lg cursor-pointer border-l-2 transition-colors ${
                   isSelected
@@ -192,7 +362,7 @@ export default function ChatSection() {
                       schema?.time ||
                       schema?.no_time_filter ||
                       ui?.plan?.aims?.length) && (
-                      <div className="mt-3 pt-2.5 border-t border-border/30">
+                      <div className="mt-3 pt-2.5 border-t-2 border-border/30">
                         <span className="text-[10.5px] font-semibold tracking-wider text-tertiary uppercase block mb-1.5">
                           Resolved
                         </span>
@@ -206,12 +376,17 @@ export default function ChatSection() {
                           {schema?.datasets_in_scope?.map((ds) => (
                             <span
                               key={ds}
-                              className={chipClass("amber")}
+                              className={chipClass(datasetAccent(ds, schema.datasets))}
                             >
                               <IconDatabase size={11} />
                               {ds}
                             </span>
                           ))}
+                          {schema?.datasets_in_scope?.length > 1 && (
+                            <span className={`${monoClass} text-[10.5px] text-ic-violet bg-ic-violet-soft border border-ic-violet/30 px-1.5 py-0.5 rounded-[5px]`}>
+                              Cross-table
+                            </span>
+                          )}
                           {(schema?.time || schema?.no_time_filter || schema?.time_pending) && (
                             <span className={chipClass()}>
                               <IconClock size={11} />
@@ -228,6 +403,19 @@ export default function ChatSection() {
                               {aim}
                             </span>
                           ))}
+                          {schema?.joins?.length > 0 && (
+                            <div className="w-full flex flex-col gap-1 mt-0.5">
+                              {schema.joins.map((join, ji) => (
+                                <span
+                                  key={ji}
+                                  className={`${monoClass} text-[11px] text-ic-blue bg-ic-blue-soft/50 border border-ic-blue/20 px-2 py-0.5 rounded-[6px] w-fit`}
+                                >
+                                  {join.from || join.left_dataset} → {join.to || join.right_dataset}
+                                  {join.on?.length ? ` on ${join.on.join(", ")}` : ""}
+                                </span>
+                              ))}
+                            </div>
+                          )}
                         </div>
                       </div>
                     )}
@@ -245,6 +433,15 @@ export default function ChatSection() {
                         Manager
                       </span>
                     </div>
+
+                    {/* Explanation text */}
+                    {ui?.explanation && (
+                      <div className="text-sm text-muted leading-relaxed mb-3 [&>p]:m-0">
+                        <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                          {ui.explanation}
+                        </ReactMarkdown>
+                      </div>
+                    )}
 
                     {/* Plan mode */}
                     {ui?.plan?.aims?.length && !ui?.proposals?.length && (
@@ -265,6 +462,42 @@ export default function ChatSection() {
                                   : "all data (no date filter)"}
                               </span>
                             </p>
+                          )}
+                          {schema?.datasets_in_scope?.length > 0 && (
+                            <div>
+                              <div className="flex items-center gap-1.5 flex-wrap">
+                                <b className="text-text font-medium">Datasets</b>
+                                {schema.datasets_in_scope.length > 1 && (
+                                  <span className={`${monoClass} text-[10.5px] text-ic-violet bg-ic-violet-soft border border-ic-violet/30 px-1.5 py-0.5 rounded-[5px]`}>
+                                    ×{schema.datasets_in_scope.length}
+                                  </span>
+                                )}
+                              </div>
+                              <div className="flex flex-wrap gap-1.5 mt-1">
+                                {schema.datasets_in_scope.map((ds) => (
+                                  <span key={ds} className={chipClass(datasetAccent(ds, schema.datasets))}>
+                                    <IconDatabase size={11} />
+                                    {ds}
+                                  </span>
+                                ))}
+                              </div>
+                            </div>
+                          )}
+                          {schema?.joins?.length > 0 && (
+                            <div>
+                              <b className="text-text font-medium">Joins</b>
+                              <div className="flex flex-col gap-1 mt-1">
+                                {schema.joins.map((join, ji) => (
+                                  <span
+                                    key={ji}
+                                    className={`${monoClass} text-[12px] text-ic-blue bg-ic-blue-soft/50 border border-ic-blue/20 px-2 py-0.5 rounded-[6px] w-fit`}
+                                  >
+                                    {join.from || join.left_dataset} → {join.to || join.right_dataset}
+                                    {join.on?.length ? ` on ${join.on.join(", ")}` : ""}
+                                  </span>
+                                ))}
+                              </div>
+                            </div>
                           )}
                           <p>
                             <b className="text-text font-medium">Aims</b>{" "}
@@ -305,7 +538,10 @@ export default function ChatSection() {
                             key={pi}
                             index={pi}
                             proposal={prop}
-                            onSelect={sendUserMessage}
+                            onSelect={(msg) => {
+                              setActiveProposal({ index: pi, title: (prop.title as string) || `Option ${pi + 1}` });
+                              sendUserMessage(msg);
+                            }}
                           />
                         ))}
                       </div>
@@ -347,9 +583,9 @@ export default function ChatSection() {
                     )}
 
                     {/* Quick-reply buttons / next_step fallback */}
-                    {ui && buildQuickReplies(ui, sendUserMessage)}
+                    {ui && buildQuickReplies(ui, sendUserMessage, i)}
                     {!ui?.plan?.aims?.length && !ui?.proposals?.length && ui?.next_step && (
-                      <div className="mt-3 pt-3 border-t border-border/30 text-sm text-foreground">
+                      <div className="mt-3 pt-3 border-t-2 border-border/30 text-sm text-foreground">
                         <ReactMarkdown remarkPlugins={[remarkGfm]}>
                           {ui.next_step}
                         </ReactMarkdown>
@@ -362,7 +598,7 @@ export default function ChatSection() {
                             key={aim}
                             type="button"
                             onClick={() => sendUserMessage(aim)}
-                            className="w-full text-left px-4 py-2.5 text-sm rounded-lg bg-bg-deep border border-border shadow-sm hover:shadow-lg hover:-translate-y-0.5 hover:bg-surface-1 active:translate-y-0.5 active:shadow-inner transition-all duration-150 cursor-pointer"
+                            className="w-full text-left px-4 py-2.5 text-sm rounded-lg bg-bg-deep border-2 border-border shadow-sm hover:shadow-lg hover:-translate-y-0.5 hover:bg-surface-1 active:translate-y-0.5 active:shadow-inner transition-all duration-150 cursor-pointer"
                           >
                             <span className="text-xs font-semibold text-stage-manager uppercase tracking-wider mr-2">
                               Suggestion {i + 1}:
@@ -378,10 +614,109 @@ export default function ChatSection() {
             </Fragment>
           );
         })}
-        {loading && <p className="text-muted text-sm">Thinking\u2026</p>}
+        {pendingTurn && (
+          <Fragment>
+            <hr className="border-t-2 border-border/30 my-3" />
+            <div className="p-2.5 rounded-lg border-l-2 border-l-rail/30 bg-stripe-odd">
+              <div className={userBubbleClass}>
+                <div className="flex items-center gap-1.5 text-[11.5px] font-semibold text-user-blue uppercase tracking-wider mb-1.5">
+                  <IconUser size={13} />
+                  You
+                </div>
+                <p className="text-sm text-text leading-relaxed m-0">
+                  {activeProposal
+                    ? `Selected Plan ${activeProposal.index + 1}: ${activeProposal.title}`
+                    : pendingTurn.user}
+                </p>
+                {(pendingTurn.schema?.line ||
+                  pendingTurn.schema?.datasets_in_scope?.length ||
+                  pendingTurn.schema?.time ||
+                  pendingTurn.ui?.plan?.aims?.length) && (
+                  <div className="mt-3 pt-2.5 border-t-2 border-border/30">
+                    <span className="text-[10.5px] font-semibold tracking-wider text-tertiary uppercase block mb-1.5">
+                      Resolved
+                    </span>
+                    <div className="flex flex-wrap gap-1.5">
+                      {pendingTurn.schema?.line && (
+                        <span className={chipClass("blue")}>
+                          <IconMapPin size={11} />
+                          {pendingTurn.schema.line}
+                        </span>
+                      )}
+                      {pendingTurn.schema?.datasets_in_scope?.map((ds) => (
+                        <span key={ds} className={chipClass(datasetAccent(ds, pendingTurn.schema?.datasets))}>
+                          <IconDatabase size={11} />
+                          {ds}
+                        </span>
+                      ))}
+                      {pendingTurn.schema?.datasets_in_scope?.length > 1 && (
+                        <span className={`${monoClass} text-[10.5px] text-ic-violet bg-ic-violet-soft border border-ic-violet/30 px-1.5 py-0.5 rounded-[5px]`}>
+                          Cross-table
+                        </span>
+                      )}
+                      {(pendingTurn.schema?.time || pendingTurn.schema?.no_time_filter) && (
+                        <span className={chipClass()}>
+                          <IconClock size={11} />
+                          {pendingTurn.schema?.time
+                            ? `${pendingTurn.schema.time.start} → ${pendingTurn.schema.time.end}`
+                            : "No time filter"}
+                        </span>
+                      )}
+                      {pendingTurn.ui?.plan?.aims?.map((aim) => (
+                        <span key={aim} className={chipClass("coral")}>
+                          <IconTarget size={11} />
+                          {aim}
+                        </span>
+                      ))}
+                      {pendingTurn.schema?.joins?.length > 0 && (
+                        <div className="w-full flex flex-col gap-1 mt-0.5">
+                          {pendingTurn.schema.joins.map((join, ji) => (
+                            <span
+                              key={ji}
+                              className={`${monoClass} text-[11px] text-ic-blue bg-ic-blue-soft/50 border border-ic-blue/20 px-2 py-0.5 rounded-[6px] w-fit`}
+                            >
+                              {join.from || join.left_dataset} → {join.to || join.right_dataset}
+                              {join.on?.length ? ` on ${join.on.join(", ")}` : ""}
+                            </span>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
+              </div>
+              {pendingTurn.loading && (
+                <div className="flex items-center gap-2 py-2 text-muted text-sm">
+                  <span className="w-2 h-2 rounded-full bg-stage-manager animate-pulse" />
+                  {activeProposal
+                    ? `Building Plan ${activeProposal.index + 1}: ${activeProposal.title}\u2026`
+                    : "Thinking\u2026"}
+                </div>
+              )}
+            </div>
+          </Fragment>
+        )}
+        {error && (
+          <div className="mb-3 p-3 rounded-lg bg-red-900/30 border-2 border-red-500/30 text-red-300 text-sm flex items-start gap-2">
+            <span className="flex-1">{error}</span>
+            <button
+              type="button"
+              className="text-red-400 hover:text-red-300 text-xs font-semibold shrink-0"
+              onClick={() => setError(null)}
+            >
+              Dismiss
+            </button>
+          </div>
+        )}
+
+        {wsStatus === "disconnected" && (
+          <div className="mb-3 p-3 rounded-lg bg-amber-900/30 border-2 border-amber-500/30 text-amber-300 text-sm">
+            {"Connection lost. Reconnecting\u2026"}
+          </div>
+        )}
 
         {isDone && (
-          <div className="rounded-xl border border-border/60 bg-surface-2 p-4 mb-3 mt-3">
+          <div className="rounded-xl border-2 border-border/60 bg-surface-2 p-4 mb-3 mt-3">
             <h3 className="flex items-center gap-1.5 font-display text-xs font-semibold tracking-wider uppercase text-muted mb-2">
               Session complete
             </h3>
@@ -431,16 +766,16 @@ export default function ChatSection() {
             <IconCheck size={13} />
             Session complete — start a new analysis from the top bar
           </div>
-          <div className="flex gap-2 bg-surface-1 border border-border border-t-0 rounded-b-xl p-3">
+          <div className="flex gap-2 bg-surface-1 border-2 border-border border-t-0 rounded-b-xl p-3">
             <input
               type="text"
-              className="flex-1 rounded-lg border border-border/60 bg-white/[0.03] text-tertiary italic px-3 py-2 text-sm"
+              className="flex-1 rounded-lg border-2 border-border/60 bg-white/[0.03] text-tertiary italic px-3 py-2 text-sm"
               placeholder="Session complete"
               disabled
             />
             <button
               type="button"
-              className="bg-white/[0.06] text-tertiary border border-border rounded-lg px-4 py-2 text-sm font-semibold cursor-not-allowed"
+              className="bg-white/[0.06] text-tertiary border-2 border-border rounded-lg px-4 py-2 text-sm font-semibold cursor-not-allowed"
               disabled
             >
               Send
@@ -451,10 +786,11 @@ export default function ChatSection() {
         <form className="flex gap-2 shrink-0" onSubmit={handleSubmit}>
           <input
             type="text"
-            className="flex-1 rounded-lg border border-border bg-app text-text px-3 py-2 text-sm"
-            placeholder="Ask anything\u2026"
+            className={`flex-1 rounded-lg border-2 border-border bg-app text-text px-3 py-2 text-sm ${shake ? "animate-shake" : ""}`}
+            placeholder={placeholder}
             value={input}
             onChange={(e) => setInput(e.target.value)}
+            onFocus={stopTypewriter}
             disabled={loading || !isLive}
           />
           <button
