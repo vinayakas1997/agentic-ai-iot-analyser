@@ -4,35 +4,25 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, WebSocket
 from fastapi.middleware.cors import CORSMiddleware
 
-from agents.executor_agent import register as register_executor
 from agents.manager_agent import register as register_manager
-from agents.planner_agent import register as register_planner
 from api.routes import manager
 from api.websocket import register_ws_subscriber, websocket_endpoint
 from config import get_settings
-from db.db_subscriber import register as register_db_subscriber
-from scheduler.worker_loop import start_worker, stop_worker
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 settings = get_settings()
 
 
-def register_agents() -> None:
-    register_executor()
-    register_planner()
-    register_manager()
-    register_db_subscriber()
-    register_ws_subscriber()
-
-
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    register_agents()
-    await start_worker()
-    logger.info("Manager Agent backend started on port %s", settings.api_port)
+    register_manager()
+    register_ws_subscriber()
+    logger.info(
+        "Manager Agent backend started on port %s — scheduler disabled (planner/executor not yet implemented)",
+        settings.api_port,
+    )
     yield
-    await stop_worker()
 
 
 app = FastAPI(title="Manager Agent", lifespan=lifespan)
