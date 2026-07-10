@@ -1,0 +1,18 @@
+name: "Japan cross-table aim: sales + inventory"
+description: >
+  User asks about japan_fruit and gives an aim that spans two datasets:
+  japan_fruit_sales and japan_fruit_inventory, joined by prefecture and fruit_name.
+  Tests that the system recognises multi-dataset scope.
+steps:
+  - user: "tell me about japan_fruit"
+    expect:
+      interrupt_node: "ask_missing"
+      phase: "ask"
+
+  - user: "compare fruit sales with inventory levels by prefecture"
+    expect:
+      interrupt_node: "build_plan_message"
+      phase: "plan"
+      trace_contains:
+        - event_type: "llm_output"
+          node: "reorganize_aim"

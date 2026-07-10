@@ -6,6 +6,8 @@ from langgraph.graph import END, StateGraph
 
 from agents.manager.nodes import (
 
+    analyze_conversational,
+
     answer_advisory,
 
     answer_session_meta_node,
@@ -67,6 +69,8 @@ from agents.manager.routing import (
 
     route_after_confirm,
 
+    route_after_conversational,
+
     route_after_inject,
 
     route_after_merge,
@@ -84,6 +88,8 @@ from agents.manager.state import ManagerState
 
 
 INTERRUPT_AFTER = [
+
+    "analyze_conversational",
 
     "ask_missing",
 
@@ -130,6 +136,8 @@ def build_manager_graph():
 
 
     graph.add_node("inject_reference_time", inject_reference_time)
+
+    graph.add_node("analyze_conversational", analyze_conversational)
 
     graph.add_node("extract_slots", extract_slots)
 
@@ -197,7 +205,17 @@ def build_manager_graph():
 
         route_after_inject,
 
-        {"detect_confirm": "detect_confirm", "confirm_redirect": "confirm_redirect", "extract_slots": "extract_slots"},
+        {"detect_confirm": "detect_confirm", "confirm_redirect": "confirm_redirect", "analyze_conversational": "analyze_conversational"},
+
+    )
+
+    graph.add_conditional_edges(
+
+        "analyze_conversational",
+
+        route_after_conversational,
+
+        {"extract_slots": "extract_slots", "__end__": END},
 
     )
 

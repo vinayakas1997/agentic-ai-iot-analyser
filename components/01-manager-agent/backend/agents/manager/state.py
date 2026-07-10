@@ -100,4 +100,8 @@ class ManagerState(TypedDict):
 
     iot_column_wishes: list[dict] | None
 
+    conversational_intent: str | None
+
+    conversational_reasoning: str | None
+
 

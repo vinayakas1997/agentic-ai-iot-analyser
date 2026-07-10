@@ -1,0 +1,16 @@
+name: "Ambiguous last month gets clarification"
+description: >
+  After setting up line and aim, user says "the last month". The time phrase
+  is ambiguous and should trigger ask_time_ambiguous.
+steps:
+  - user: "tell me about the vinayaka"
+  - user: "average cost by fruit"
+  - user: "the last month"
+    expect:
+      interrupt_node: "ask_time_ambiguous"
+      trace_contains:
+        - event_type: "llm_output"
+          node: "normalize_time"
+      trace_does_not_contain:
+        - event_type: "llm_output"
+          node: "build_plan_message"

@@ -1,0 +1,19 @@
+name: "Japan three-table join aim"
+description: >
+  User asks about japan_fruit and gives an aim spanning all three datasets:
+  sales, inventory, and supplier quality. Tests whether the join inventory
+  and reorganize_aim correctly handle 3-way joins across prefecture, fruit_name,
+  and supplier_id.
+steps:
+  - user: "tell me about japan_fruit"
+    expect:
+      interrupt_node: "ask_missing"
+      phase: "ask"
+
+  - user: "show me the relationship between quality scores and sales volume by supplier"
+    expect:
+      interrupt_node: "build_plan_message"
+      phase: "plan"
+      trace_contains:
+        - event_type: "llm_output"
+          node: "reorganize_aim"

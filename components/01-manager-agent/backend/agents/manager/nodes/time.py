@@ -110,6 +110,8 @@ async def resolve_time_filters(state: ManagerState) -> ManagerState:
 
     if not time_needs_clarification(slots) and not compute_missing(slots):
         result_state["registry_sync_target"] = "reorganize"
+    elif time_slot.get("resolved") and state.get("plan"):
+        result_state["registry_sync_target"] = "reorganize"
 
     debug(
 

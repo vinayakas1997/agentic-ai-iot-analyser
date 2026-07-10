@@ -68,6 +68,11 @@ MOCK_NORMALIZE: dict[str, dict] = {
         "raw": "last week",
         "interpretations": ["past 7 days", "this week"],
     },
+    "last month": {
+        "kind": "ambiguous",
+        "raw": "last month",
+        "interpretations": ["past 30 days", "last calendar month"],
+    },
     "recently": {
         "kind": "ambiguous",
         "raw": "recently",

@@ -1,5 +1,6 @@
 from agents.manager.nodes.advisory import answer_advisory
 from agents.manager.nodes.confirm_redirect import confirm_redirect
+from agents.manager.nodes.conversational import analyze_conversational
 from agents.manager.nodes.explore_aims import merge_proposals_to_plan, propose_or_refine_plans
 from agents.manager.nodes.extract import extract_slots, merge_slots
 from agents.manager.nodes.meta import answer_session_meta_node
@@ -27,6 +28,7 @@ from agents.manager.nodes.task_reuse import apply_task_reuse
 from agents.manager.nodes.time import inject_reference_time, resolve_time_filters
 
 __all__ = [
+    "analyze_conversational",
     "inject_reference_time",
     "extract_slots",
     "merge_slots",

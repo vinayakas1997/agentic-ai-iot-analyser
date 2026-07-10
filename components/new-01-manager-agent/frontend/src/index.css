@@ -1,0 +1,166 @@
+@import "tailwindcss";
+
+@theme {
+  --color-bg-deep: #08080c;
+  --color-surface-1: #111116;
+  --color-surface-2: #0d0d12;
+  --color-border: rgba(255,255,255,0.12);
+  --color-border-2: rgba(255,255,255,0.09);
+  --color-text: #eeeef2;
+  --color-muted: #8d8d9c;
+  --color-tertiary: #64646f;
+  --color-accent: #7c6fef;
+  --color-success: #3ddc97;
+
+  /* Stage colors */
+  --color-stage-manager: #ff8a4c;
+  --color-stage-manager-soft: rgba(255,138,76,0.15);
+  --color-stage-manager-line: rgba(255,138,76,0.4);
+  --color-stage-planner: #f0c419;
+  --color-stage-planner-soft: rgba(240,196,25,0.14);
+  --color-stage-execution: #3ddc97;
+  --color-stage-execution-soft: rgba(61,220,151,0.14);
+
+  /* User accent color */
+  --color-user-blue: #6e8ff2;
+  --color-user-blue-soft: rgba(110,143,242,0.12);
+  --color-user-blue-line: rgba(110,143,242,0.3);
+
+  /* Stage line variants */
+  --color-stage-planner-line: rgba(240,196,25,0.35);
+  --color-stage-execution-line: rgba(61,220,151,0.35);
+
+  /* Icon accent colors */
+  --color-ic-blue: #5ea8ff;
+  --color-ic-blue-soft: rgba(94,168,255,0.14);
+  --color-ic-violet: #9d8cff;
+  --color-ic-violet-soft: rgba(157,140,255,0.16);
+  --color-ic-amber: #ffcf5c;
+  --color-ic-amber-soft: rgba(255,207,92,0.14);
+  --color-ic-teal: #4fd8c4;
+  --color-ic-teal-soft: rgba(79,216,196,0.14);
+  --color-ic-coral: #ff8a80;
+  --color-ic-coral-soft: rgba(255,138,128,0.14);
+
+  /* Font families */
+  --font-display: "Space Grotesk", sans-serif;
+  --font-body: "Inter", sans-serif;
+  --font-mono: "JetBrains Mono", monospace;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family: var(--font-body);
+  background: var(--color-bg-deep);
+  color: var(--color-text);
+  height: 100vh;
+  overflow: hidden;
+  line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
+}
+
+#root {
+  height: 100vh;
+}
+
+.font-display {
+  font-family: var(--font-display);
+}
+
+.font-mono {
+  font-family: var(--font-mono);
+}
+
+@keyframes shake {
+  0%, 100% { transform: translateX(0); }
+  25% { transform: translateX(-4px); }
+  75% { transform: translateX(4px); }
+}
+
+.animate-shake {
+  animation: shake 0.3s ease-in-out;
+}
+
+@keyframes pulse-glow-manager {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.6; }
+}
+
+@keyframes pulse-glow-planner {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.6; }
+}
+
+@keyframes pulse-glow-execution {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.6; }
+}
+
+.animate-pulse-glow-manager {
+  animation: pulse-glow-manager 2s ease-in-out infinite;
+}
+
+.animate-pulse-glow-planner {
+  animation: pulse-glow-planner 2s ease-in-out infinite;
+}
+
+.animate-pulse-glow-execution {
+  animation: pulse-glow-execution 2s ease-in-out infinite;
+}
+
+@keyframes workPulse {
+  0%, 100% { opacity: 0.3; transform: scale(0.7); }
+  50% { opacity: 1; transform: scale(1.2); }
+}
+
+@keyframes cubeSettle {
+  0%, 100% { transform: translateY(0); opacity: 0.55; }
+  50% { transform: translateY(-3px); opacity: 1; }
+}
+
+/* ── Chart animations ── */
+@keyframes growBar {
+  from { transform: scaleY(0); }
+  to { transform: scaleY(1); }
+}
+
+@keyframes popIn {
+  from { transform: scale(0); opacity: 0; }
+  to { transform: scale(1); opacity: 0.8; }
+}
+
+@keyframes bobBar {
+  0%, 100% { transform: scaleY(1); }
+  20% { transform: scaleY(var(--bob-a, 0.6)); }
+  55% { transform: scaleY(var(--bob-b, 1.4)); }
+  80% { transform: scaleY(var(--bob-c, 0.8)); }
+}
+
+@keyframes driftDot {
+  0%, 100% { transform: translate(0, 0); }
+  25% { transform: translate(1px, -1.3px); }
+  50% { transform: translate(-0.8px, 0.9px); }
+  75% { transform: translate(0.9px, 0.8px); }
+}
+
+@keyframes driftWide {
+  0%, 100% { transform: translate(0, 0); }
+  25% { transform: translate(var(--dx1, 4px), var(--dy1, -4px)); }
+  50% { transform: translate(var(--dx2, -5px), var(--dy2, 4px)); }
+  75% { transform: translate(var(--dx3, 4px), var(--dy3, 3px)); }
+}
+
+@keyframes driftConverge {
+  0%, 100% { transform: translate(0, 0); }
+  30% { transform: translate(var(--dx1, 2px), var(--dy1, -2px)); }
+  50% { transform: translate(var(--conv-x, 0), var(--conv-y, 0)); }
+  70% { transform: translate(var(--dx3, -2px), var(--dy3, 2px)); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .chart-bar, .chart-dot { animation: none !important; }
+}

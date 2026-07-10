@@ -254,12 +254,27 @@ def route_after_inject(state: ManagerState) -> str:
 
         return "confirm_redirect"
 
-    debug_route("route_after_inject", "extract_slots")
+    debug_route("route_after_inject", "analyze_conversational")
+
+    return "analyze_conversational"
+
+
+
+
+
+def route_after_conversational(state: ManagerState) -> str:
+
+    intent = (state.get("conversational_intent") or "extract").strip().lower()
+
+    if intent == "converse":
+
+        debug_route("route_after_conversational", "__end__ (converse)")
+
+        return "__end__"
+
+    debug_route("route_after_conversational", "extract_slots")
 
     return "extract_slots"
-
-
-
 
 
 def route_after_merge(state: ManagerState) -> str:

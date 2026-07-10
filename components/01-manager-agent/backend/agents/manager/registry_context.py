@@ -346,6 +346,7 @@ def format_line_context_from_entry(line_name: str, entry: dict) -> dict:
                 "table": ds.get("table"),
                 "role": ds.get("role"),
                 "description": ds.get("description"),
+                "data_earliest_ts": ds.get("data_earliest_ts"),
             }
         )
 

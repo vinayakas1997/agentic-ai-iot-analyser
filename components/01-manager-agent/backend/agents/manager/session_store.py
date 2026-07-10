@@ -143,8 +143,9 @@ def build_schema_summary(state: dict) -> dict:
             {
                 "name": dataset_name,
                 "table": ds.get("table"),
-                "role": ds.get("role") or "dataset",
+                "role": ds.get("role"),
                 "description": ds.get("description"),
+                "data_earliest_ts": ds.get("data_earliest_ts"),
             }
         )
         for col in ds.get("column_definitions") or []:

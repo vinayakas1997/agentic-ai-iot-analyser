@@ -1,0 +1,17 @@
+name: "Japan scenarios basic single-table flow"
+description: >
+  User asks about japan_fruit and provides a single-table aim.
+  Verifies the JAPAN_SCENARIOS line resolves correctly and the plan builds.
+steps:
+  - user: "tell me about japan_fruit"
+    expect:
+      interrupt_node: "ask_missing"
+      phase: "ask"
+
+  - user: "show total fruit sales by prefecture"
+    expect:
+      interrupt_node: "build_plan_message"
+      phase: "plan"
+      trace_contains:
+        - event_type: "llm_output"
+          node: "reorganize_aim"
