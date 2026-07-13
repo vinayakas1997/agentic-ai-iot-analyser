@@ -35,8 +35,9 @@ def _find_scenarios(pattern: str | None) -> list[Path]:
     return sorted(HERE.glob("scenarios/*.yaml"))
 
 
-async def _create_session(client: httpx.AsyncClient, base_url: str) -> str:
-    resp = await client.post(f"{base_url}/manager/sessions")
+async def _create_session(client: httpx.AsyncClient, base_url: str, title: str | None = None) -> str:
+    payload = {"title": title} if title else {}
+    resp = await client.post(f"{base_url}/manager/sessions", json=payload)
     resp.raise_for_status()
     return resp.json()["session_id"]
 
@@ -226,7 +227,8 @@ async def run_scenario(
     scenario_path: Path,
 ) -> dict:
     scenario = _load_scenario(scenario_path)
-    session_id = await _create_session(client, base_url)
+    title = (scenario.get("name") or "")[:60]
+    session_id = await _create_session(client, base_url, title=title)
 
     results = {
         "scenario": scenario["name"],
@@ -263,6 +265,18 @@ async def run_scenario(
             if e.get("event_type") in ("llm_input", "llm_output", "llm_meta")
         ]
 
+        node_groups: dict[str, dict[str, Any]] = {}
+        for ev in llm_events:
+            n = ev.get("node", "?")
+            if n not in node_groups:
+                node_groups[n] = {"node": n, "inputs": [], "outputs": [], "metas": []}
+            if ev["event_type"] == "llm_input":
+                node_groups[n]["inputs"].append(ev)
+            elif ev["event_type"] == "llm_output":
+                node_groups[n]["outputs"].append(ev)
+            elif ev["event_type"] == "llm_meta":
+                node_groups[n]["metas"].append(ev)
+
         results["turns"].append({
             "turn": step_idx + 1,
             "user_message": user_msg,
@@ -274,6 +288,7 @@ async def run_scenario(
             "trace_event_count": len(trace),
             "llm_calls": len([e for e in llm_events if e.get("event_type") == "llm_meta"]),
             "llm_events": llm_events[:20],
+            "node_groups": list(node_groups.values()),
             "routing_path": _extract_routing_path(trace),
         })
 

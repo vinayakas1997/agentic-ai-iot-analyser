@@ -96,7 +96,7 @@ async def tool_confirm_plan(state: ManagerState) -> ManagerState:
         "task_confirmed": True,
         "task_definition": task_definition,
         "planner_payload": payload,
-        "phase": "done",
+        "phase": "man",
         "agent_message": msg,
         "tool_result": json.dumps({"status": "confirmed", "payload": payload}),
     }

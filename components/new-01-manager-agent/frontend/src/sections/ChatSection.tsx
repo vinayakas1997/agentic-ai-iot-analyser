@@ -209,25 +209,17 @@ export default function ChatSection() {
     await sendUserMessage(text);
   };
 
-  /* ── Build action buttons for quick replies ── */
-  const buildQuickReplies = (ui: TurnUi, onSend: (msg: string) => void, turnIndex: number) => {
-    const btns: { label: string; msg: string; primary?: boolean }[] = [];
-
-    if (ui.proposals?.length) {
-      btns.push({ label: "See more options", msg: "more options" });
-    } else if (ui.plan?.aims?.length && !ui.done) {
-      btns.push({ label: "Go — proceed", msg: "go", primary: true });
-      btns.push({ label: "More options", msg: "more options" });
-    }
-
-    const showChange = !!(ui.proposals?.length || (ui.plan?.aims?.length && !ui.done));
-    if (!btns.length && !showChange) return null;
+  /* ── Render action buttons from backend-provided actions ── */
+  const renderActions = (ui: TurnUi, onSend: (msg: string) => void, turnIndex: number) => {
+    const actions = ui.actions || [];
+    const showChange = ui.show_change;
+    if (!actions.length && !showChange) return null;
 
     const changePressed = pressedButtons.has(`${turnIndex}:change`);
 
     return (
       <div className="flex flex-wrap gap-2 mt-4 pt-3.5 border-t-2 border-border/30">
-        {btns.map((b) => {
+        {actions.map((b) => {
           const icon = b.msg === "more options"
             ? <IconMenu size={11} />
             : null;
@@ -524,6 +516,14 @@ export default function ChatSection() {
                       </div>
                     )}
 
+                    {/* Waiting for planner */}
+                    {ui?.phase === "man" && (
+                      <div className="flex items-center gap-2 py-3 text-sm text-muted">
+                        <span className="w-2.5 h-2.5 rounded-full bg-ic-amber animate-pulse" />
+                        Plan confirmed — waiting for the planner to build queries...
+                      </div>
+                    )}
+
                     {/* Proposals mode */}
                     {ui?.proposals?.length > 0 && (
                       <div>
@@ -583,7 +583,7 @@ export default function ChatSection() {
                     )}
 
                     {/* Quick-reply buttons / next_step fallback */}
-                    {ui && buildQuickReplies(ui, sendUserMessage, i)}
+                    {ui && renderActions(ui, sendUserMessage, i)}
                     {!ui?.plan?.aims?.length && !ui?.proposals?.length && ui?.next_step && (
                       <div className="mt-3 pt-3 border-t-2 border-border/30 text-sm text-foreground">
                         <ReactMarkdown remarkPlugins={[remarkGfm]}>

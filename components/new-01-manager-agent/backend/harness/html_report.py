@@ -1,8 +1,30 @@
-"""Self-contained HTML report generator for scenario runner results."""
+"""Self-contained HTML report generator for scenario runner results.
+Features: Mermaid graph diagram, step narrative, per-node eye toggle.
+"""
 
 from datetime import datetime, timezone
 from html import escape
 from typing import Any
+
+_GRAPH_MMD = """graph TD
+    inject["inject_reference_time"] --> analyst["analyst"]
+    analyst -->|"extract_slots"| tool_extract["tool_extract_slots"]
+    analyst -->|"resolve_line"| tool_line["tool_resolve_line"]
+    analyst -->|"resolve_time"| tool_time["tool_resolve_time"]
+    analyst -->|"fetch_schema"| tool_schema["tool_fetch_schema"]
+    analyst -->|"reorganize_aims"| tool_reorg["tool_reorganize_aims"]
+    analyst -->|"generate_plans"| tool_plans["tool_generate_plans"]
+    analyst -->|"answer_advisory"| tool_adv["tool_answer_advisory"]
+    analyst -->|"confirm_plan"| tool_confirm["tool_confirm_plan"]
+    tool_extract -->|"loop"| analyst
+    tool_line -->|"loop"| analyst
+    tool_time -->|"loop"| analyst
+    tool_schema -->|"loop"| analyst
+    tool_reorg -->|"loop"| analyst
+    tool_plans -->|"loop"| analyst
+    tool_adv -->|"loop"| analyst
+    tool_confirm --> END
+    analyst -->|"respond"| END"""
 
 
 def _summary_banner(results: list[dict]) -> str:
@@ -41,7 +63,7 @@ def _scenario_card(scenario: dict) -> str:
     status = "PASS" if sf == 0 else "FAIL"
     color = "#22c55e" if sf == 0 else "#ef4444"
 
-    turns_html = "".join(_turn_div(t) for t in scenario.get("turns", []))
+    turns_html = "".join(_turn_div(t, name) for t in scenario.get("turns", []))
 
     return f"""
     <div class="card" style="border-left:4px solid {color}">
@@ -55,7 +77,30 @@ def _scenario_card(scenario: dict) -> str:
     </div>"""
 
 
-def _turn_div(turn: dict) -> str:
+def _turn_narrative(turn: dict) -> str:
+    """Generate a human-readable 'what happened' summary."""
+    parts = []
+    routing = turn.get("routing_path", [])
+    if routing:
+        unique_nodes = set()
+        for r in routing:
+            target = r.split(" -> ")[-1] if " -> " in r else r
+            if target not in ("analyst (loop back)", "__end__ (responded)", "__end__ (tool responded)"):
+                unique_nodes.add(target)
+        node_list = ", ".join(sorted(unique_nodes)) if unique_nodes else "responded directly"
+        parts.append(f"Routed through: {node_list}")
+    ng = turn.get("node_groups", [])
+    if ng:
+        llm_nodes = [g["node"] for g in ng if g.get("node")]
+        parts.append(f"LLM invoked: {', '.join(llm_nodes)}")
+    checks = turn.get("checks", [])
+    failed_checks = [c for c in checks if not c.get("passed")]
+    if failed_checks:
+        parts.append(f"Failed checks: {len(failed_checks)}")
+    return ". ".join(parts) if parts else "No data"
+
+
+def _turn_div(turn: dict, scenario_name: str = "") -> str:
     tn = turn.get("turn", "?")
     msg = escape(turn.get("user_message", ""))
     tp = turn.get("passed", 0)
@@ -65,10 +110,11 @@ def _turn_div(turn: dict) -> str:
     agent = escape(turn.get("agent_message_preview", ""))
     trace_count = turn.get("trace_event_count", 0)
     llm_count = turn.get("llm_calls", 0)
+    narrative = escape(_turn_narrative(turn))
 
     checks_html = "".join(_check_row(c) for c in turn.get("checks", []))
     routing_html = _routing_html(turn.get("routing_path", []))
-    llm_html = _llm_html(turn.get("llm_events", []))
+    nodes_html = _node_groups_html(turn.get("node_groups", []))
 
     return f"""
     <details class="turn-details" {'open' if tf > 0 else ''}>
@@ -81,9 +127,10 @@ def _turn_div(turn: dict) -> str:
         <div style="font-size:13px;color:#94a3b8;margin-bottom:12px">
           Trace events: {trace_count} &middot; LLM calls: {llm_count}
         </div>
+        <div class="narrative-box"><strong>What happened:</strong> {narrative}</div>
         {routing_html}
         {checks_html}
-        {llm_html}
+        {nodes_html}
       </div>
     </details>"""
 
@@ -106,7 +153,7 @@ def _check_row(check: dict) -> str:
     name = escape(check.get("name", "?"))
     passed = check.get("passed", False)
     symbol = "&#10003;" if passed else "&#10007;"
-    color = "#22c55e" if passed else "#ef4444"
+    clr = "#22c55e" if passed else "#ef4444"
     actual = check.get("actual")
     expected = check.get("expected")
     details = ""
@@ -115,66 +162,74 @@ def _check_row(check: dict) -> str:
         e_str = escape(str(expected)) if expected is not None else ""
         details = f'<div class="check-detail">expected: {e_str}<br>actual: {a_str}</div>'
     return f"""
-    <div class="check-row" style="color:{color}">
+    <div class="check-row" style="color:{clr}">
       <span class="check-symbol">{symbol}</span>
       <span>{name}</span>
       {details}
     </div>"""
 
 
-def _llm_html(events: list[dict]) -> str:
-    if not events:
+def _node_groups_html(groups: list[dict]) -> str:
+    if not groups:
         return ""
-    rows = ""
-    for ev in events:
-        et = ev.get("event_type", "?")
-        node = escape(ev.get("node", "?"))
-        ts = escape(ev.get("timestamp", ""))
-        data = ev.get("data", {})
-        if et == "llm_input":
-            prompt = escape(str(data.get("prompt", "")))
-            short = prompt[:120] + ("..." if len(prompt) > 120 else "")
-            rows += f"""
-      <tr>
-        <td><span class="llm-badge in">IN</span></td>
-        <td>{node}</td>
-        <td>{ts}</td>
-        <td class="llm-preview" onclick="this.classList.toggle('expanded')">{short}<pre class="llm-full">{prompt}</pre></td>
-      </tr>"""
-        elif et == "llm_output":
-            resp = escape(str(data.get("response", "")))
-            err_text = escape(str(data.get("error", "")))
-            display = resp or err_text
-            short = display[:200] + ("..." if len(display) > 200 else "")
-            rows += f"""
-      <tr>
-        <td><span class="llm-badge out">OUT</span></td>
-        <td>{node}</td>
-        <td>{ts}</td>
-        <td class="llm-preview" onclick="this.classList.toggle('expanded')">{short}<pre class="llm-full">{display}</pre></td>
-      </tr>"""
-        elif et == "llm_meta":
-            lat = data.get("latency_ms", "?")
-            tok = data.get("tokens", "?")
-            ok = data.get("success", "?")
-            rows += f"""
-      <tr>
-        <td><span class="llm-badge meta">META</span></td>
-        <td>{node}</td>
-        <td>{ts}</td>
-        <td>{lat}ms &middot; {tok} tokens &middot; ok={ok}</td>
-      </tr>"""
-    if not rows:
+    sections = ""
+    for g in groups:
+        node = escape(g.get("node", "?"))
+        inp = g.get("inputs", [])
+        out = g.get("outputs", [])
+        meta = g.get("metas", [])
+
+        latency = ""
+        tokens = ""
+        if meta:
+            m = meta[0].get("data", {})
+            lat = m.get("latency_ms", "")
+            tok = m.get("tokens", "")
+            latency = f"{lat:.0f}ms" if isinstance(lat, (int, float)) else str(lat)
+            tokens = str(tok) if tok else ""
+
+        io_html = ""
+        for ev in inp:
+            prompt = escape(str(ev.get("data", {}).get("prompt", "")))
+            io_html += f"""
+            <div class="io-entry">
+              <span class="io-badge in">IN</span>
+              <pre class="io-content">{"<em>empty</em>" if not prompt else prompt}</pre>
+            </div>"""
+        for ev in out:
+            resp = escape(str(ev.get("data", {}).get("response", ev.get("data", {}).get("error", ""))))
+            io_html += f"""
+            <div class="io-entry">
+              <span class="io-badge out">OUT</span>
+              <pre class="io-content">{"<em>empty</em>" if not resp else resp}</pre>
+            </div>"""
+
+        if not io_html:
+            io_html = '<div style="color:#64748b;font-size:13px;padding:8px">No LLM I/O recorded</div>'
+
+        meta_str = f"{latency} {tokens}" if latency or tokens else ""
+        meta_label = f'<span class="node-meta">{escape(meta_str)}</span>' if meta_str else ""
+
+        sections += f"""
+        <div class="node-group">
+          <div class="node-header" onclick="toggleNode(this)">
+            <span class="eye-icon">&#128065;</span>
+            <span class="node-name">{node}</span>
+            {meta_label}
+            <span class="node-toggle">&#9654;</span>
+          </div>
+          <div class="node-body" style="display:none">
+            {io_html}
+          </div>
+        </div>"""
+
+    if not sections:
         return ""
+
     return f"""
     <div class="section">
-      <div class="section-title">LLM Trace</div>
-      <div style="overflow-x:auto">
-        <table class="llm-table">
-          <thead><tr><th>Type</th><th>Node</th><th>Time</th><th>Content</th></tr></thead>
-          <tbody>{rows}</tbody>
-        </table>
-      </div>
+      <div class="section-title">Per-Node LLM Inspection</div>
+      {sections}
     </div>"""
 
 
@@ -184,6 +239,8 @@ _HTML_TEMPLATE = """<!DOCTYPE html>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Manager Agent Scenario Report</title>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
+<script>mermaid.initialize({{startOnLoad:true,theme:"dark",themeVariables:{{fontSize:"14px",primaryColor:"#1e293b",primaryTextColor:"#e2e8f0",primaryBorderColor:"#475569",lineColor:"#64748b",secondaryColor:"#334155",tertiaryColor:"#0f172a"}}}});</script>
 <style>
   *, *::before, *::after {{ box-sizing:border-box; margin:0; padding:0 }}
   body {{ font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Oxygen,Ubuntu,Cantarell,sans-serif;
@@ -200,6 +257,7 @@ _HTML_TEMPLATE = """<!DOCTYPE html>
   .turn-summary::-webkit-details-marker {{ display:none }}
   .turn-body {{ padding:14px; background:#1e293b; border:1px solid #334155; border-top:none; border-radius:0 0 8px 8px }}
   .agent-msg {{ background:#0f172a; padding:10px 14px; border-radius:6px; margin-bottom:12px; font-size:14px; color:#94a3b8 }}
+  .narrative-box {{ background:#0f172a; padding:10px 14px; border-radius:6px; margin-bottom:12px; font-size:13px; color:#93c5fd; border-left:3px solid #3b82f6 }}
   .section {{ margin-bottom:16px }}
   .section:last-child {{ margin-bottom:0 }}
   .section-title {{ font-size:13px; font-weight:600; text-transform:uppercase; letter-spacing:0.5px; color:#64748b; margin-bottom:8px }}
@@ -209,19 +267,24 @@ _HTML_TEMPLATE = """<!DOCTYPE html>
   .check-row {{ display:flex; align-items:flex-start; gap:8px; padding:4px 0; font-size:14px }}
   .check-symbol {{ font-size:16px; flex-shrink:0; width:20px; text-align:center }}
   .check-detail {{ font-size:12px; color:#94a3b8; margin-top:2px; font-family:monospace }}
-  .llm-table {{ width:100%; border-collapse:collapse; font-size:13px }}
-  .llm-table th {{ text-align:left; padding:6px 10px; background:#334155; color:#94a3b8; font-weight:500; white-space:nowrap }}
-  .llm-table td {{ padding:6px 10px; border-bottom:1px solid #334155; vertical-align:top }}
-  .llm-badge {{ display:inline-block; padding:0 6px; border-radius:3px; font-size:11px; font-weight:600; color:#fff }}
-  .llm-badge.in {{ background:#3b82f6 }}
-  .llm-badge.out {{ background:#22c55e }}
-  .llm-badge.meta {{ background:#a855f7 }}
-  .llm-preview {{ cursor:pointer; max-width:500px; overflow:hidden }}
-  .llm-preview .llm-full {{ display:none; margin-top:8px; background:#0f172a; padding:8px; border-radius:4px;
-                            font-size:12px; white-space:pre-wrap; word-break:break-word; max-height:400px; overflow-y:auto }}
-  .llm-preview.expanded .llm-full {{ display:block }}
-  .llm-preview.expanded {{ cursor:pointer; background:#1e293b }}
+  .node-group {{ background:#0f172a; border-radius:6px; margin-bottom:8px; overflow:hidden }}
+  .node-header {{ display:flex; align-items:center; gap:10px; padding:10px 14px; cursor:pointer;
+                 background:#1e293b; user-select:none; transition:background 0.15s }}
+  .node-header:hover {{ background:#334155 }}
+  .eye-icon {{ font-size:18px; flex-shrink:0 }}
+  .node-name {{ font-weight:600; font-size:14px; flex:1 }}
+  .node-meta {{ font-size:12px; color:#64748b; margin-right:8px }}
+  .node-toggle {{ font-size:12px; color:#64748b; transition:transform 0.2s }}
+  .node-body {{ padding:10px 14px; border-top:1px solid #334155 }}
+  .io-entry {{ margin-bottom:8px }}
+  .io-entry:last-child {{ margin-bottom:0 }}
+  .io-badge {{ display:inline-block; padding:1px 6px; border-radius:3px; font-size:10px; font-weight:600; color:#fff; margin-bottom:4px }}
+  .io-badge.in {{ background:#3b82f6 }}
+  .io-badge.out {{ background:#22c55e }}
+  .io-content {{ background:#0f172a; padding:8px; border-radius:4px; font-size:12px; font-family:monospace;
+                white-space:pre-wrap; word-break:break-word; max-height:300px; overflow-y:auto; color:#cbd5e1; line-height:1.5 }}
   a {{ color:#60a5fa }}
+  .mermaid-container {{ background:#0f172a; border-radius:8px; padding:16px; margin-bottom:24px; overflow-x:auto }}
   @media (max-width:768px) {{ body {{ padding:16px }} .card {{ padding:16px }} }}
 </style>
 </head>
@@ -229,9 +292,27 @@ _HTML_TEMPLATE = """<!DOCTYPE html>
 <div class="container">
   <h1>Manager Agent Scenario Report</h1>
   <p style="color:#64748b;font-size:14px;margin-bottom:24px">Generated: {TIMESTAMP}</p>
+  <div class="mermaid-container">
+    <div class="mermaid">
+{GRAPH_MMD}
+    </div>
+  </div>
   {BANNER}
   {SCENARIOS}
 </div>
+<script>
+function toggleNode(header) {{
+  var body = header.nextElementSibling;
+  var toggle = header.querySelector('.node-toggle');
+  if (body.style.display === 'none') {{
+    body.style.display = 'block';
+    toggle.innerHTML = '&#9660;';
+  }} else {{
+    body.style.display = 'none';
+    toggle.innerHTML = '&#9654;';
+  }}
+}}
+</script>
 </body>
 </html>"""
 
@@ -244,4 +325,5 @@ def generate_html_report(results: list[dict]) -> str:
         _HTML_TEMPLATE.replace("{TIMESTAMP}", ts)
         .replace("{BANNER}", banner)
         .replace("{SCENARIOS}", scenarios)
+        .replace("{GRAPH_MMD}", _GRAPH_MMD)
     )

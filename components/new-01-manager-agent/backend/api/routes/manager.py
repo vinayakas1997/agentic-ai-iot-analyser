@@ -5,6 +5,7 @@ from agents.manager.session_service import (
     create_session,
     fork_session_turn,
     get_session_detail,
+    get_session_stats,
     list_sessions,
     reopen_session_turn,
     run_session_turn,
@@ -24,7 +25,7 @@ class SessionCreateOut(BaseModel):
 
 
 class SessionCreateIn(BaseModel):
-    title: str = Field("", max_length=30)
+    title: str = Field("", max_length=120)
 
 
 class SessionTitleIn(BaseModel):
@@ -40,14 +41,20 @@ class MessageIn(BaseModel):
 async def create_manager_session(body: SessionCreateIn | None = None) -> SessionCreateOut:
     user_id = get_default_user_id()
     title = body.title if body and body.title else None
-    session_id = await create_session(user_id, title=title)
-    return SessionCreateOut(session_id=session_id, title=title, mode="ask")
+    session_id, saved_title = await create_session(user_id, title=title)
+    return SessionCreateOut(session_id=session_id, title=saved_title, mode="ask")
 
 
 @router.get("/sessions")
 async def list_manager_sessions() -> list[dict]:
     user_id = get_default_user_id()
     return await list_sessions(user_id)
+
+
+@router.get("/stats")
+async def session_stats() -> dict:
+    user_id = get_default_user_id()
+    return await get_session_stats(user_id)
 
 
 @router.get("/sessions/{session_id}")

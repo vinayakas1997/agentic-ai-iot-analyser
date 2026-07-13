@@ -162,7 +162,7 @@ export default function ContextSection() {
                 }}
               >
                 <span>{sessionMeta.title || sessionMeta.session_id.slice(0, 8)}</span>
-                <IconEdit size={11} className="opacity-0 group-hover:opacity-100 transition-opacity text-muted" />
+                <IconEdit size={11} className="opacity-50 text-muted" />
               </button>
             )}
           </div>

@@ -27,7 +27,9 @@ export interface TurnUi {
     join_catalog?: { from_dataset?: string; to_dataset?: string; on?: string[] }[];
   };
   selectedProposalIndex?: number;
-  proposalProvenance?: { suggestedAim: string; fulfilledByProposalIds: number[] }[];
+  proposal_provenance?: { suggestedAim: string; fulfilledByProposalIds: number[] }[];
+  actions?: { label: string; msg: string; primary?: boolean }[];
+  show_change?: boolean;
 }
 
 export interface SchemaSnapshot {

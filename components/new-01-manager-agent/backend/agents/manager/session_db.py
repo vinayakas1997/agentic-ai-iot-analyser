@@ -15,25 +15,28 @@ from agents.manager.session_store import (
     state_from_json,
     state_to_json,
 )
+from agents.manager.names import generate_session_name
 from db.models import ChatHistory, ManagerSession
 from db.session import AsyncSessionLocal
 
 
-async def create_session(user_id: str, title: str | None = None) -> str:
+async def create_session(user_id: str, title: str | None = None) -> tuple[str, str]:
     session_id = str(uuid.uuid4())
+    if not title:
+        title = generate_session_name()
     async with AsyncSessionLocal() as db:
         row = ManagerSession(
             session_id=session_id,
             user_id=user_id,
             phase="extract",
             status="active",
-            title=title or None,
+            title=title,
             state_json={"version": 1},
             version=1,
         )
         db.add(row)
         await db.commit()
-    return session_id
+    return session_id, title
 
 
 async def load_session(user_id: str, session_id: str) -> dict | None:
@@ -165,6 +168,28 @@ async def list_sessions(user_id: str, limit: int = 50) -> list[dict]:
     return summaries
 
 
+async def get_session_stats(user_id: str) -> dict:
+    async with AsyncSessionLocal() as db:
+        result = await db.execute(
+            select(ManagerSession.phase, func.count().label("count"))
+            .where(ManagerSession.user_id == user_id)
+            .group_by(ManagerSession.phase)
+        )
+        counts: dict[str, int] = {}
+        for row in result:
+            counts[row.phase] = row.count
+    return {
+        "total": sum(counts.values()),
+        "phases": {
+            "extract": counts.get("extract", 0),
+            "ask": counts.get("ask", 0),
+            "tool": counts.get("tool", 0),
+            "man": counts.get("man", 0),
+            "done": counts.get("done", 0),
+        },
+    }
+
+
 async def _last_message_preview(user_id: str, session_id: str) -> str | None:
     async with AsyncSessionLocal() as db:
         result = await db.execute(
@@ -206,7 +231,7 @@ async def update_session_mode(session_id: str, user_id: str, mode: str) -> None:
                 ManagerSession.session_id == session_id,
                 ManagerSession.user_id == user_id,
             )
-            .values(mode=mode)
+            .values(mode=mode, phase=mode)
         )
         await db.commit()
 

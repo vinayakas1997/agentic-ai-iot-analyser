@@ -101,6 +101,71 @@ async def analyst(state: ManagerState) -> ManagerState:
 
     state = {**state, "error": None, "analyst_reasoning": None, "tool_to_call": None, "tool_result": None}
 
+    # Guard: handle edge-case tool results without LLM call
+    last_output = session_json.get("last_tool_output")
+    if isinstance(last_output, dict):
+        # resolve_line: not_found
+        if last_output.get("status") == "not_found":
+            mention = last_output.get("mention") or "that line"
+            hint = ""
+            lower = mention.lower()
+            for article in ("the ", "a ", "an "):
+                if lower.startswith(article):
+                    hint = f" Try removing the word '{article.strip()}' from the name."
+                    break
+            # Clear stale line mention so user can try a different name on next turn
+            slots = dict(state.get("slots") or {})
+            line = dict(slots.get("line") or {})
+            line["mention"] = None
+            line["canonical"] = None
+            line["resolved"] = False
+            slots["line"] = line
+            slots["line_slots"] = []
+            return {
+                **state,
+                "slots": slots,
+                "agent_message": f"I couldn't find **{mention}** in the IoT catalog.{hint}\n\nPlease try another name or check the spelling.",
+                "phase": "ask",
+            }
+        # resolve_line: ambiguous
+        if last_output.get("status") == "ambiguous":
+            mention = last_output.get("mention") or "that line"
+            candidates = last_output.get("candidates") or []
+            listed = ", ".join(f"**{c}**" for c in candidates)
+            # Clear stale line mention so user can type the exact name
+            slots = dict(state.get("slots") or {})
+            line = dict(slots.get("line") or {})
+            line["mention"] = None
+            line["canonical"] = None
+            line["resolved"] = False
+            slots["line"] = line
+            return {
+                **state,
+                "slots": slots,
+                "agent_message": f'Multiple lines match **"{mention}"**: {listed}.\n\nPlease reply with the exact line name you want.',
+                "phase": "ask",
+            }
+        # resolve_time: ambiguous
+        if last_output.get("kind") == "ambiguous" and not session_json.get("time", {}).get("resolved"):
+            raw = session_json.get("time", {}).get("raw") or "that phrase"
+            interpretations = last_output.get("interpretations") or []
+            if interpretations:
+                listed = "\n".join(f"  - {item}" for item in interpretations)
+                return {
+                    **state,
+                    "agent_message": f'Time phrase **"{raw}"** is unclear. Did you mean:\n{listed}\n\nPlease reply with one.',
+                    "phase": "ask",
+                }
+        # resolve_time: invalid
+        if last_output.get("kind") == "invalid" and not session_json.get("time", {}).get("resolved"):
+            raw = session_json.get("time", {}).get("raw") or "that phrase"
+            detail = last_output.get("reason", "could not parse time")
+            return {
+                **state,
+                "agent_message": f'Could not understand time phrase **"{raw}"**: {detail}\n\nPlease rephrase the time range.',
+                "phase": "ask",
+            }
+
     if not user_message:
         return {**state, "phase": "extract"}
 
@@ -170,15 +235,20 @@ async def analyst(state: ManagerState) -> ManagerState:
         result["phase"] = "ask"
         return result
 
+    # If LLM says call_tool but tool name is missing/empty, treat as respond
+    if action == "call_tool" and not tool:
+        result["agent_message"] = str(message or "Let me summarize what I've found and how we can proceed.").strip()
+        result["phase"] = "ask"
+        return result
+
     if action == "call_tool" and tool:
         if tool_call_count >= 10:
             result["agent_message"] = "I've gathered enough information. Let me summarize what I know and suggest next steps."
             result["phase"] = "ask"
             return result
 
-        # Guard: prevent auto-confirm without user saying go/confirm/yes/proceed/ok
-        _CONFIRM_WORDS = ("go", "confirm", "yes", "proceed", "ok")
-        if tool == "confirm_plan" and user_message.lower().strip() not in _CONFIRM_WORDS:
+        # Guard: only allow confirm_plan via __confirm__ button token
+        if tool == "confirm_plan" and user_message.strip() != "__confirm__":
             plan = session_json.get("plan") or {}
             aim_items = plan.get("aims") or []
             if not aim_items:
@@ -191,9 +261,9 @@ async def analyst(state: ManagerState) -> ManagerState:
             result["agent_message"] = (
                 f"The analysis plan is ready for **{canonical}**.\n\n"
                 f"**Aims:**\n{aims_text}\n\n"
-                "Would you like to proceed? Press **Go — proceed** to confirm and execute."
+                "Press **Go — proceed** to confirm and execute."
             )
-            result["phase"] = "plan"
+            result["phase"] = "ask"
             return result
 
         # Guard: skip fetch_schema if already fetched
@@ -214,5 +284,7 @@ async def analyst(state: ManagerState) -> ManagerState:
         result["phase"] = "tool"
         return result
 
-    result["phase"] = "extract"
+    # Treat unrecognized/missing action as respond
+    result["agent_message"] = str(message or "Let me summarize what I've found and how we can proceed.").strip()
+    result["phase"] = "ask"
     return result

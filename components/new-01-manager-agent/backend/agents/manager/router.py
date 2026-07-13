@@ -12,28 +12,7 @@ TOOL_MAP = {
     "confirm_plan": "tool_confirm_plan",
 }
 
-_CONFIRM_WORDS = ("go", "confirm", "yes", "proceed", "ok")
-
-
-def is_confirm_message(user_msg: str) -> bool:
-    return user_msg in _CONFIRM_WORDS
-
-
-def is_confirm_like_message(user_msg: str) -> bool:
-    for w in _CONFIRM_WORDS:
-        if w in user_msg:
-            return True
-    return False
-
-
 def route_after_inject(state: ManagerState) -> str:
-    user_msg = (state.get("user_message") or "").lower().strip()
-    if state.get("phase") == "plan" and is_confirm_message(user_msg):
-        debug_route("route_after_inject", "analyst (confirm)")
-        return "analyst"
-    if state.get("phase") == "plan" and is_confirm_like_message(user_msg):
-        debug_route("route_after_inject", "confirm_redirect")
-        return "confirm_redirect"
     debug_route("route_after_inject", "analyst")
     return "analyst"
 

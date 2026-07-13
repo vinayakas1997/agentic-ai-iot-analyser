@@ -1,4 +1,4 @@
-import { useState, useMemo } from "react";
+import { useState } from "react";
 import type { Turn, TurnUi, SchemaSnapshot } from "../types/manager";
 import { decisionCardClass, raisedCardClass, sectionHeaderClass, fieldLabelClass, monoClass } from "../lib/styles";
 import { IconCheckCircle, IconMapPin, IconDatabase, IconClock, IconTarget, IconStar } from "../lib/icons";
@@ -15,26 +15,6 @@ function formatLineMatch(match: { mention?: string; canonical?: string; source?:
   const source = SOURCE_LABELS[match.source || ""] || match.source || "match";
   if (mention === match.canonical) return `${match.canonical} (${source})`;
   return `${mention} → ${match.canonical} (${source})`;
-}
-
-function buildProvenance(
-  suggestedAims: string[] | undefined,
-  proposals: Record<string, unknown>[] | undefined
-): { suggestedAim: string; fulfilledByProposalIds: number[] }[] {
-  if (!suggestedAims?.length || !proposals?.length) return [];
-  const lowerSuggested = suggestedAims.map((a) => a.toLowerCase());
-  return suggestedAims.map((aim) => {
-    const ids: number[] = [];
-    proposals.forEach((p) => {
-      const pAims = (p as { aims?: string[] }).aims || [];
-      const matched = pAims.some((pa) => {
-        const lower = pa.toLowerCase();
-        return lowerSuggested.some((sa) => lower.includes(sa) || sa.includes(lower));
-      });
-      if (matched) ids.push((p as { id?: number }).id ?? 0);
-    });
-    return { suggestedAim: aim, fulfilledByProposalIds: ids };
-  });
 }
 
 interface Props {
@@ -95,10 +75,7 @@ export default function ManagerDecisionCard({ turn, isLive, onSendMessage, showH
   const schema: SchemaSnapshot | null = turn.schema;
   const ui: TurnUi | null = turn.ui;
 
-  const provenance = useMemo(
-    () => buildProvenance(schema?.suggested_aims, ui?.proposals),
-    [schema?.suggested_aims, ui?.proposals]
-  );
+  const provenance = ui?.proposal_provenance || [];
 
   const hasDecision = schema?.line_match || schema?.line || schema?.datasets_in_scope?.length;
 

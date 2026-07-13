@@ -167,8 +167,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   sendUserMessage: async (text, lineName = "") => {
     const { sessionId, turns, isLocalSession, pendingTitle, loading, sessionMeta } = get();
     const selectedTurnIndex = useUiStore.getState().selectedTurnIndex;
-    const lastUiDone = turns.length > 0 && Boolean(turns[turns.length - 1]?.ui?.done);
-    const isDone = lastUiDone && !(sessionMeta && sessionMeta.status === "active" && sessionMeta.phase !== "done");
+    const isDone = turns.length > 0 && Boolean(turns[turns.length - 1]?.ui?.done);
     const isLive = turns.length === 0 || selectedTurnIndex === turns.length - 1;
 
     if (!sessionId || !text.trim() || isDone || !isLive || loading) return;
@@ -352,8 +351,6 @@ export function useIsLive(): boolean {
 
 export function useIsDone(): boolean {
   const turns = useSessionStore((s) => s.turns);
-  const sessionMeta = useSessionStore((s) => s.sessionMeta);
   if (!turns.length) return false;
-  if (sessionMeta && sessionMeta.status === "active" && sessionMeta.phase !== "done") return false;
   return Boolean(turns[turns.length - 1]?.ui?.done);
 }

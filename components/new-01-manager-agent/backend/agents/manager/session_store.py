@@ -105,7 +105,7 @@ def canonical_line_from_state(state: dict) -> str | None:
 
 
 def session_status_from_state(state: dict) -> str:
-    if state.get("phase") == "done" or state.get("planner_payload"):
+    if state.get("phase") == "done":
         return "completed"
     return "active"
 
@@ -243,25 +243,65 @@ def pair_messages_to_turns(rows: list[dict]) -> list[dict]:
     return [by_index[k] for k in sorted(by_index.keys())]
 
 
+def build_provenance(suggested_aims: list[str] | None, proposals: list[dict] | None) -> list[dict]:
+    """Map suggested aims to proposal fulfillments by fuzzy matching."""
+    if not suggested_aims or not proposals:
+        return []
+    lower_suggested = [a.lower() for a in suggested_aims]
+    result = []
+    for aim in suggested_aims:
+        ids: list[int] = []
+        for p in proposals:
+            p_aims = p.get("aims") or []
+            for pa in p_aims:
+                lower = pa.lower()
+                matched = any(lower in sa or sa in lower for sa in lower_suggested)
+                if matched:
+                    ids.append(p.get("id", 0))
+                    break
+        result.append({"suggestedAim": aim, "fulfilledByProposalIds": ids})
+    return result
+
+
 def build_ui_summary(state: dict) -> dict:
     """Thin projection for API clients / future frontend."""
     slots = state.get("slots") or {}
     line = slots.get("line") or {}
     line_context = state.get("line_context") or {}
     next_step = state.get("message_next_step")
+    phase = state.get("phase", "extract")
+    done = phase == "done"
+
+    actions = []
+    if phase != "man":
+        proposals = state.get("analysis_proposals")
+        plan = state.get("plan")
+        if proposals:
+            actions.append({"label": "See more options", "msg": "more options"})
+        elif plan and plan.get("aims") and not done:
+            actions.append({"label": "Go — proceed", "msg": "__confirm__", "primary": True})
+            actions.append({"label": "More options", "msg": "more options"})
+    show_change = bool(state.get("analysis_proposals") or (state.get("plan") and state["plan"].get("aims") and not done))
+
     return {
-        "phase": state.get("phase", "extract"),
+        "phase": phase,
         "line": line.get("canonical") or line.get("mention"),
         "missing": state.get("missing") or [],
         "plan": state.get("plan"),
         "proposals": state.get("analysis_proposals"),
         "saved_plans": state.get("saved_plans") or [],
         "scope_pending": bool(state.get("scope_pending")),
-        "done": state.get("phase") == "done",
+        "done": done,
         "planner_payload": state.get("planner_payload"),
         "next_step": next_step,
         "suggested_aims": list(line_context.get("suggested_aims") or []),
         "explanation": state.get("explanation"),
+        "actions": actions,
+        "show_change": show_change,
+        "proposal_provenance": build_provenance(
+            list(line_context.get("suggested_aims") or []),
+            state.get("analysis_proposals"),
+        ),
     }
 
 

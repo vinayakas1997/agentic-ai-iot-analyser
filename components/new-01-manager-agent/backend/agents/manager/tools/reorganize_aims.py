@@ -72,6 +72,7 @@ async def tool_reorganize_aims(state: ManagerState) -> ManagerState:
         **state,
         "slots": slots,
         "plan": plan,
-        "phase": "plan",
+        "analysis_proposals": None,
+        "phase": "ask",
         "tool_result": json.dumps({"aims": aim["aims"], "plan": plan}),
     }

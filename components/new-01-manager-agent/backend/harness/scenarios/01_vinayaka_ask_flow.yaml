@@ -1,41 +1,26 @@
 name: "Full vinayaka flow with time filter"
 description: >
-  User asks about vinayaka (advisory), picks an aim, then adds a time filter.
-  Tests that time clarification is triggered when "last month" is ambiguous.
+  User asks about vinayaka, picks an aim, then adds a time filter.
+  Tests that the graph routes through all the expected tool nodes.
 steps:
   - user: "tell me about the vinayaka"
     expect:
-      interrupt_node: "ask_missing"
       phase: "ask"
-      routing_path:
-        - "route_after_inject -> extract_slots"
-        - "route_after_merge -> resolve_all_lines"
-        - "route_after_resolve_all_lines -> sync_session_context"
-        - "route_after_sync_session_context -> resolve_time_filters"
-        - "route_after_time -> ask_missing"
+      trace_contains:
+        - event_type: "routing"
+          node: "route_after_analyst"
+          data:
+            target: "tool_answer_advisory"
 
   - user: "average cost by fruit"
     expect:
-      interrupt_node: "build_plan_message"
-      phase: "plan"
-      routing_path:
-        - "route_after_inject -> extract_slots"
-        - "route_after_merge -> resolve_all_lines"
-        - "route_after_resolve_all_lines -> sync_session_context"
-        - "route_after_sync_session_context -> resolve_time_filters"
-        - "route_after_time -> sync_session_context"
-        - "route_after_sync_session_context -> reorganize_aim"
+      phase: "ask"
 
   - user: "the last month"
     expect:
-      interrupt_node: "ask_time_ambiguous"
       phase: "ask"
       trace_contains:
-        - event_type: "llm_output"
-          node: "normalize_time"
-      routing_path:
-        - "route_after_inject -> extract_slots"
-        - "route_after_merge -> resolve_all_lines"
-        - "route_after_resolve_all_lines -> sync_session_context"
-        - "route_after_sync_session_context -> resolve_time_filters"
-        - "route_after_time -> ask_time_ambiguous"
+        - event_type: "routing"
+          node: "route_after_analyst"
+          data:
+            target: "tool_resolve_time"

@@ -17,7 +17,7 @@ DECISION RULES (use the first matching rule):
 6. schema_fetched is false → call fetch_schema.
 7. all slots ready, plan proposals missing → call generate_plans.
 8. user asking about plans/data (not confirming) → call answer_advisory.
-9. user typed exactly "go", "confirm", "yes", "proceed", or "ok" with a plan ready → call confirm_plan.
+9. user typed '__confirm__' with a plan ready → call confirm_plan.
 10. nothing else needed → respond with a helpful message.
 
 TOOLS:

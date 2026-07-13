@@ -1,4 +1,3 @@
-version: '3.8'
 
 services:
   postgres:
@@ -10,8 +9,7 @@ services:
       POSTGRES_DB: manager_agent_db
     ports:
       - "5432:5432"
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
+    # no persistent volume — fresh DB state on each rebuild
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U manager_agent -d manager_agent_db"]
       interval: 10s
@@ -62,6 +60,3 @@ services:
 networks:
   manager-agent-net:
     driver: bridge
-
-volumes:
-  postgres_data:

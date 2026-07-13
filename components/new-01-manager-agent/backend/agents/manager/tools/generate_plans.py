@@ -95,6 +95,6 @@ async def tool_generate_plans(state: ManagerState) -> ManagerState:
         "analysis_proposals": normalized,
         "seen_proposal_titles": list(seen),
         "explore_phase": "proposing",
-        "phase": "plan",
+        "phase": "ask",
         "tool_result": json.dumps({"proposals": normalized, "plan": plan}),
     }

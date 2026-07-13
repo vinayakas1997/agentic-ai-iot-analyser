@@ -50,8 +50,6 @@ def _is_session_done(phase: str | None, existing: dict | None) -> bool:
         return True
     if existing and existing.get("phase") == "done":
         return True
-    if existing and existing.get("planner_payload"):
-        return True
     return False
 
 

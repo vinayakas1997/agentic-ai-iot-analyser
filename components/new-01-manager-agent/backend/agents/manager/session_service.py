@@ -8,6 +8,7 @@ from agents.manager.session_db import (
     create_session as _create_session,
     fork_session,
     get_session_row,
+    get_session_stats as _get_session_stats,
     load_chat_messages,
     load_chat_turns,
     load_session,
@@ -24,7 +25,7 @@ from agents.manager.session_store import (
 logger = logging.getLogger(__name__)
 
 
-async def create_session(user_id: str, title: str | None = None) -> str:
+async def create_session(user_id: str, title: str | None = None) -> tuple[str, str]:
     return await _create_session(user_id, title=title)
 
 
@@ -106,10 +107,15 @@ async def fork_session_turn(user_id: str, session_id: str) -> str:
     return await fork_session(user_id, session_id)
 
 
+async def get_session_stats(user_id: str) -> dict:
+    return await _get_session_stats(user_id)
+
+
 __all__ = [
     "create_session",
     "fork_session_turn",
     "get_session_detail",
+    "get_session_stats",
     "list_sessions",
     "reopen_session_turn",
     "run_session_turn",
