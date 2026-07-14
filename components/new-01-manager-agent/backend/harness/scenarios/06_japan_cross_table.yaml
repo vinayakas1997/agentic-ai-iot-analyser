@@ -10,6 +10,11 @@ steps:
         - event_type: "routing"
           node: "route_after_analyst"
           data:
+            target: "tool_answer_advisory"
+      trace_does_not_contain:
+        - event_type: "routing"
+          node: "route_after_analyst"
+          data:
             target: "tool_generate_plans"
 
   - user: "compare fruit sales with inventory levels by prefecture"

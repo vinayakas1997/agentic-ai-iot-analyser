@@ -53,6 +53,7 @@ interface SessionState {
   turns: Turn[];
   sessionMeta: SessionMeta | null;
   loading: boolean;
+  statusMessage: string | null;
   error: string | null;
   executionEvents: ExecutionEvent[];
   wsStatus: "connecting" | "connected" | "disconnected";
@@ -65,6 +66,7 @@ interface SessionState {
   reopenSession: () => Promise<void>;
   forkSession: () => Promise<void>;
   setError: (error: string | null) => void;
+  setStatusMessage: (msg: string | null) => void;
   pushExecutionEvent: (event: ExecutionEvent) => void;
   clearExecutionEvents: () => void;
   setWsStatus: (status: "connecting" | "connected" | "disconnected") => void;
@@ -85,6 +87,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   turns: [],
   sessionMeta: null,
   loading: false,
+  statusMessage: null,
   error: null,
   executionEvents: [],
   wsStatus: "connecting",
@@ -173,12 +176,27 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     if (!sessionId || !text.trim() || isDone || !isLive || loading) return;
 
     const userText = text.trim();
-    set({ error: null, loading: true, executionEvents: [], pendingTurn: null });
+    set({ error: null, loading: true, statusMessage: "Analyzing your request...", executionEvents: [], pendingTurn: null });
     get().setPendingTurn(userText);
+
+    const statusSteps = [
+      "Analyzing your request...",
+      "Resolving line and time...",
+      "Fetching data schema...",
+      "Building analysis plan...",
+      "Generating response...",
+    ];
+    let stepIndex = 0;
+    const statusTimer = setInterval(() => {
+      stepIndex = (stepIndex + 1) % statusSteps.length;
+      set({ statusMessage: statusSteps[stepIndex] });
+    }, 3000);
+
     try {
       let activeSessionId = sessionId;
 
       if (isLocalSession) {
+        set({ statusMessage: "Creating new session..." });
         const name = pendingTitle || generateSessionName();
         const created = await createSession(name);
         activeSessionId = created.session_id;
@@ -191,6 +209,8 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       }
 
       const res = await sendMessage(activeSessionId, userText, lineName);
+      clearInterval(statusTimer);
+      set({ statusMessage: "Response received" });
       const newTurn = turnFromResponse(res, userText);
       set((state) => ({
         turns: [...state.turns, newTurn],
@@ -205,10 +225,12 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       await get().refreshSessions();
       return res;
     } catch (e) {
+      clearInterval(statusTimer);
       set({ error: getErrorMessage(e), pendingTurn: null });
       throw e;
     } finally {
-      set({ loading: false });
+      clearInterval(statusTimer);
+      set({ loading: false, statusMessage: null });
     }
   },
 
@@ -268,6 +290,8 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   },
 
   setError: (error) => set({ error }),
+
+  setStatusMessage: (msg) => set({ statusMessage: msg }),
 
   pushExecutionEvent: (event) =>
     set((state) => ({

@@ -1,5 +1,6 @@
 import json
 import logging
+import re
 
 from langchain_core.messages import HumanMessage, SystemMessage
 
@@ -38,6 +39,7 @@ def _build_session_json(state: ManagerState) -> dict:
             "mention": line.get("mention"),
             "canonical": line.get("canonical"),
             "resolved": line.get("resolved", False),
+            "source": line.get("source"),
         },
         "time": {
             "raw": time.get("raw"),
@@ -97,7 +99,20 @@ async def analyst(state: ManagerState) -> ManagerState:
     logger.debug("analyst: starting")
     user_message = (state.get("user_message") or "").strip()
 
+    # Detect if user selected a suggested aim
+    suggested_aims = (state.get("line_context") or {}).get("suggested_aims") or []
+    selected_suggested = any(
+        aim == user_message
+        for s_aim in suggested_aims
+        for aim in ([s_aim] if isinstance(s_aim, str) else [s_aim.get("aim")])
+    )
+    if selected_suggested:
+        state["selected_suggested_aim"] = user_message
+
+    # Reset explore_phase when line mention changes
     session_json = _build_session_json(state)
+    if session_json.get("line", {}).get("mention") and not session_json.get("line", {}).get("resolved"):
+        state["explore_phase"] = None
 
     state = {**state, "error": None, "analyst_reasoning": None, "tool_to_call": None, "tool_result": None}
 
@@ -220,11 +235,13 @@ async def analyst(state: ManagerState) -> ManagerState:
     }
 
     if action == "respond":
-        # Guard: if all slots ready but no proposals yet, generate plans instead of responding
+        # Guard: if user gave an aim and plan proposals are missing, generate plans
+        has_aim = bool(session_json.get("aim", {}).get("raw") or session_json.get("aim", {}).get("aims"))
         if (
             not state.get("analysis_proposals")
             and session_json.get("line", {}).get("resolved")
             and session_json.get("schema_fetched")
+            and has_aim
         ):
             result["tool_to_call"] = "generate_plans"
             result["phase"] = "tool"
@@ -243,27 +260,76 @@ async def analyst(state: ManagerState) -> ManagerState:
 
     if action == "call_tool" and tool:
         if tool_call_count >= 10:
-            result["agent_message"] = "I've gathered enough information. Let me summarize what I know and suggest next steps."
-            result["phase"] = "ask"
+            has_schema = session_json.get("schema_fetched")
+            has_aim = bool(session_json.get("aim", {}).get("raw") or session_json.get("aim", {}).get("aims"))
+            if has_schema and has_aim:
+                result["tool_to_call"] = "generate_plans"
+            elif has_schema:
+                result["tool_to_call"] = "answer_advisory"
+            else:
+                result["agent_message"] = "I've gathered enough information. Let me summarize what I know and suggest next steps."
+                result["phase"] = "ask"
+                return result
+            result["phase"] = "tool"
+            result["tool_call_count"] = tool_call_count + 1
             return result
 
-        # Guard: only allow confirm_plan via __confirm__ button token
-        if tool == "confirm_plan" and user_message.strip() != "__confirm__":
-            plan = session_json.get("plan") or {}
-            aim_items = plan.get("aims") or []
-            if not aim_items:
+        # Guard: only allow confirm_plan via __confirm__ or confirm {n}
+        if tool == "confirm_plan":
+            user_msg = user_message.strip().lower()
+            if user_msg == "__confirm__":
+                pass
+            elif re.match(r'^confirm\s+(\d+)$', user_msg):
+                confirm_match = re.match(r'^confirm\s+(\d+)$', user_msg)
+                proposal_idx = int(confirm_match.group(1)) - 1
                 proposals = state.get("analysis_proposals") or []
-                for p in proposals:
-                    if isinstance(p, dict):
-                        aim_items.extend(p.get("aims") or [])
-            aims_text = "\n".join(f"- {a[:120]}" for a in aim_items[:5])
-            canonical = session_json.get("line", {}).get("canonical") or ""
-            result["agent_message"] = (
-                f"The analysis plan is ready for **{canonical}**.\n\n"
-                f"**Aims:**\n{aims_text}\n\n"
-                "Press **Go — proceed** to confirm and execute."
-            )
-            result["phase"] = "ask"
+                if 0 <= proposal_idx < len(proposals):
+                    selected = proposals[proposal_idx]
+                    result["plan"] = {
+                        "aims": selected.get("aims", []),
+                        "benefits": selected.get("what_you_might_see", ""),
+                    }
+                else:
+                    result["agent_message"] = "Invalid proposal selection. Please try again."
+                    result["phase"] = "ask"
+                    return result
+            else:
+                plan = session_json.get("plan") or {}
+                aim_items = plan.get("aims") or []
+                if not aim_items:
+                    proposals = state.get("analysis_proposals") or []
+                    for p in proposals:
+                        if isinstance(p, dict):
+                            aim_items.extend(p.get("aims") or [])
+                aims_text = "\n".join(f"- {a[:120]}" for a in aim_items[:5])
+                canonical = session_json.get("line", {}).get("canonical") or ""
+                result["agent_message"] = (
+                    f"The analysis plan is ready for **{canonical}**.\n\n"
+                    f"**Aims:**\n{aims_text}\n\n"
+                    "Press **Go — proceed** to confirm and execute."
+                )
+                result["phase"] = "ask"
+                return result
+
+        # Guard: route "more options" to generate_plans instead of answer_advisory
+        if tool == "answer_advisory" and any(
+            phrase in user_message.lower() for phrase in ["more options", "another option", "another plan", "different options"]
+        ):
+            result["tool_to_call"] = "generate_plans"
+            result["tool_call_count"] = tool_call_count + 1
+            result["phase"] = "tool"
+            return result
+
+        # Guard: don't generate plans without a user-provided aim
+        has_aim = bool(
+            session_json.get("aim", {}).get("raw")
+            or session_json.get("aim", {}).get("aims")
+            or state.get("selected_suggested_aim")
+        )
+        if tool == "generate_plans" and not has_aim:
+            result["tool_to_call"] = "answer_advisory"
+            result["phase"] = "tool"
+            result["tool_call_count"] = tool_call_count + 1
             return result
 
         # Guard: skip fetch_schema if already fetched

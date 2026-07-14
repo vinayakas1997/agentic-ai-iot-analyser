@@ -1,10 +1,6 @@
 import { useMemo } from "react";
 import { cardClass } from "../lib/styles";
-import {
-  useSessionStore,
-  useIsDone,
-  useSelectedTurn,
-} from "../stores/sessionStore";
+import { useSessionStore } from "../stores/sessionStore";
 import { useUiStore } from "../stores/uiStore";
 import {
   waitingCardClass, waitingMetaClass, lockedRowClass,
@@ -304,21 +300,16 @@ function WaitingOnPlanner() {
 }
 
 /* ── Execution progress & results ── */
-function ExecutionProgress({ isDone }: { isDone: boolean }) {
+function ExecutionProgress() {
   const executionEvents = useSessionStore((s) => s.executionEvents);
   const lastEvent = useMemo(() => {
-  if (!executionEvents.length) return <WaitingOnPlanner />;
-    return executionEvents[executionEvents.length - 1];
+    return executionEvents.length > 0 ? executionEvents[executionEvents.length - 1] : null;
   }, [executionEvents]);
 
-  const plannerStarted = executionEvents.some((e) => e.topic === "planner.start");
-
   // Waiting on Planner
-  if (isDone && !plannerStarted) {
+  if (!executionEvents.length) {
     return <WaitingOnPlanner />;
   }
-
-  if (!executionEvents.length) return null;
 
   const statusFromEvent = (topic: string) => {
     switch (topic) {
@@ -393,10 +384,6 @@ export default function OutputSection() {
   const turns = useSessionStore((s) => s.turns);
   const selectedTurnIndex = useUiStore((s) => s.selectedTurnIndex);
   const executionEvents = useSessionStore((s) => s.executionEvents);
-  const turn = useSelectedTurn();
-  const isDone = useIsDone();
-  const ui = turn?.ui;
-  const plannerStarted = executionEvents.some((e) => e.topic === "planner.start");
 
   const hasRealResults = lastEventTopic(executionEvents) === "task.complete";
 
@@ -412,7 +399,7 @@ export default function OutputSection() {
       <div className="flex-1 overflow-hidden min-h-0">
         <DividerLabel first>Current state</DividerLabel>
 
-        <WaitingOnPlanner />
+        <ExecutionProgress />
 
         {!hasRealResults && <PreviewCharts />}
       </div>

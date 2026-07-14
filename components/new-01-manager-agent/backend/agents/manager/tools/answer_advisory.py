@@ -34,6 +34,8 @@ async def tool_answer_advisory(state: ManagerState) -> ManagerState:
         proposals_json=json.dumps(state.get("analysis_proposals") or []),
         plan_aims_json=json.dumps(plan.get("aims") if plan else []),
         user_message=state.get("user_message", ""),
+        line_mention=line.get("mention") or "",
+        line_source=line.get("source") or "",
     )
 
     llm = get_llm_client()

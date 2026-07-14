@@ -347,16 +347,16 @@ export default function ManagerDecisionCard({ turn, isLive, onSendMessage, showH
           )}
           {!ui?.plan?.aims?.length && schema?.suggested_aims && schema.suggested_aims.length > 0 && (
             <div className="flex flex-wrap gap-1.5 mt-1">
-              {schema.suggested_aims.map((aim) => {
-                const provider = provenance.find((p) => p.suggestedAim === aim);
+              {schema.suggested_aims.map((entry) => {
+                const provider = provenance.find((p) => p.suggestedAim === entry.aim);
                 const propIds = provider?.fulfilledByProposalIds?.filter(Boolean) || [];
                 return (
                   <span
-                    key={aim}
+                    key={entry.aim}
                     className="text-xs px-2.5 py-1 rounded-[7px] bg-ic-violet-soft text-ic-violet"
                     title={propIds.length > 0 ? `Fulfilled by proposal(s): ${propIds.join(", ")}` : "Suggested only"}
                   >
-                    {aim}
+                    {entry.aim}
                     {propIds.length > 0 && (
                       <span className="ml-1">→ P{propIds.join(",")}</span>
                     )}

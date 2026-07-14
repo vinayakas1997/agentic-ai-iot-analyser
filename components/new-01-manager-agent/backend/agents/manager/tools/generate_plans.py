@@ -67,11 +67,32 @@ async def tool_generate_plans(state: ManagerState) -> ManagerState:
                 "title": str(p.get("title", "")),
                 "aims": p.get("aims", []),
                 "what_you_might_see": str(p.get("what_you_might_see", "")),
+                "feasible": p.get("feasible", True),
+                "feasibility_reason": p.get("feasibility_reason", ""),
+                "alternative": p.get("alternative", ""),
             })
 
     seen = set(state.get("seen_proposal_titles") or [])
     for p in normalized:
         seen.add(p["title"])
+
+    # If user selected a suggested aim, keep only the focused proposal
+    selected_aim = state.get("selected_suggested_aim")
+    if selected_aim:
+        focused = [p for p in normalized if selected_aim in p.get("aims", [])]
+        if not focused:
+            focused = [{
+                "id": 1,
+                "title": selected_aim,
+                "aims": [selected_aim],
+                "what_you_might_see": "This analysis focuses on " + selected_aim,
+                "feasible": True,
+                "feasibility_reason": "",
+                "alternative": "",
+            }]
+        normalized = focused
+        # Clear the flag so it doesn't apply to subsequent calls
+        state.pop("selected_suggested_aim", None)
 
     all_aims = []
     all_benefits = []

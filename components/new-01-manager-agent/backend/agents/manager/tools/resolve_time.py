@@ -19,13 +19,20 @@ async def tool_resolve_time(state: ManagerState) -> ManagerState:
     reference_now = state.get("reference_now", "")
 
     if not raw:
+        datasets = (state.get("line_context") or {}).get("dataset_summaries") or []
+        earliest = min(
+            (ds.get("data_earliest_ts") for ds in datasets if ds.get("data_earliest_ts")),
+            default=None
+        )
         time_slot["resolved"] = True
         time_slot["no_filter"] = True
+        time_slot["default_range"] = True
+        time_slot["data_earliest"] = earliest
         slots["time"] = time_slot
         return {
             **state,
             "slots": slots,
-            "tool_result": json.dumps({"status": "no_filter"}),
+            "tool_result": json.dumps({"status": "no_filter", "data_earliest": earliest}),
         }
 
     system = load_prompt(

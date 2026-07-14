@@ -58,6 +58,8 @@ Rules:
 - Do not invent tables, columns, or joins not in context.
 - Each proposal must include what_you_might_see.
 - IDs must be 1, 2, and 3.
+- When user selected a specific suggested aim (check user_message): return exactly 1 proposal focused on that aim; include detailed business value explanation in what_you_might_see; do not add extra aims beyond what the user selected.
+- When user's aim is NOT from registry suggested aims, first assess feasibility based on available columns, tables, and joins. Include feasible (true/false), feasibility_reason (list which columns support the aim and which are missing), and alternative (closest alternative aim if not feasible) in each proposal. Always produce exactly 1 proposal for custom aims.
 
 User message:
 {user_message}

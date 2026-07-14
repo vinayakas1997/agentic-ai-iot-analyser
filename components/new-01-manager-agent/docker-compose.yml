@@ -50,7 +50,7 @@ services:
       - "4001:7008"
     environment:
       - VITE_API_URL=http://localhost:4002
-      - VITE_WS_URL=ws://localhost:4002/ws
+      - VITE_WS_URL=ws://localhost:4002
       - VITE_DEFAULT_USER_ID=98765
     depends_on:
       - backend

@@ -1,4 +1,4 @@
-import { FormEvent, KeyboardEvent, Fragment, useState, useEffect, useRef, useCallback } from "react";
+import { FormEvent, KeyboardEvent, Fragment, useState, useEffect, useMemo, useRef, useCallback } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import {
@@ -33,6 +33,9 @@ function OptionCard({
     datasets_used?: string[];
     join_description?: string;
     what_you_might_see?: string;
+    feasible?: boolean;
+    feasibility_reason?: string;
+    alternative?: string;
   };
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === "Enter" || e.key === " ") {
@@ -57,6 +60,15 @@ function OptionCard({
           {index + 1}
         </span>
         <span className="text-sm font-semibold text-text">{p.title || `Option ${index + 1}`}</span>
+        {p.feasible !== undefined && (
+          <span className={`ml-auto text-[10px] font-semibold tracking-wider uppercase px-1.5 py-0.5 rounded-full ${
+            p.feasible
+              ? "bg-green-900/40 text-green-300 border border-green-500/30"
+              : "bg-red-900/40 text-red-300 border border-red-500/30"
+          }`}>
+            {p.feasible ? "Doable" : "Not doable"}
+          </span>
+        )}
       </div>
       <div className="ml-7 text-xs text-muted leading-relaxed">
         {p.aims?.join(", ")}
@@ -79,6 +91,23 @@ function OptionCard({
             You might see: {p.what_you_might_see}
           </div>
         )}
+        {p.feasibility_reason && (
+          <div className="text-[11px] text-muted mt-1.5 leading-snug">
+            {p.feasibility_reason}
+          </div>
+        )}
+        {p.feasible === false && p.alternative && (
+          <button
+            type="button"
+            className="mt-1.5 text-[11px] font-semibold text-ic-blue hover:text-blue-300 underline underline-offset-2"
+            onClick={(e) => {
+              e.stopPropagation();
+              onSelect(p.alternative!);
+            }}
+          >
+            Try instead: {p.alternative}
+          </button>
+        )}
       </div>
     </div>
   );
@@ -91,6 +120,11 @@ function chipClass(accent?: "blue" | "amber" | "coral") {
   if (accent === "amber") return `${base} text-ic-amber bg-ic-amber-soft border-ic-amber/30`;
   if (accent === "coral") return `${base} text-ic-coral bg-ic-coral-soft border-ic-coral/30`;
   return `${base} text-text bg-white/[0.04] border-border`;
+}
+
+/* ── Internal protocol messages that shouldn't render as a raw chat turn ── */
+function isControlMessage(text: string): boolean {
+  return text === "__confirm__" || /^confirm\s+\d+$/i.test(text);
 }
 
 /* ── Resolve chip accent from dataset role ── */
@@ -109,6 +143,7 @@ function datasetAccent(
 export default function ChatSection() {
   const turns = useSessionStore((s) => s.turns);
   const loading = useSessionStore((s) => s.loading);
+  const statusMessage = useSessionStore((s) => s.statusMessage);
   const sendUserMessage = useSessionStore((s) => s.sendUserMessage);
   const reopenSession = useSessionStore((s) => s.reopenSession);
   const forkSession = useSessionStore((s) => s.forkSession);
@@ -129,6 +164,21 @@ export default function ChatSection() {
   const [showChangeInput, setShowChangeInput] = useState(false);
   const [changeInput, setChangeInput] = useState("");
   const [pressedButtons, setPressedButtons] = useState<Set<string>>(new Set());
+
+  /* ── Track which suggested aims have already been asked, and where ── */
+  const turnRefs = useRef<Record<number, HTMLDivElement | null>>({});
+  const pickedAimTurnIndex = useMemo(() => {
+    const map: Record<string, number> = {};
+    turns.forEach((t, i) => {
+      const text = (t.user || "").trim();
+      if (text && !(text in map)) map[text] = i;
+    });
+    return map;
+  }, [turns]);
+  const scrollToTurn = (idx: number) => {
+    selectTurn(idx);
+    turnRefs.current[idx]?.scrollIntoView({ behavior: "smooth", block: "center" });
+  };
 
   /* ── Typewriter placeholder ── */
   const typeExamples = [
@@ -319,15 +369,19 @@ export default function ChatSection() {
       <div className="flex-1 overflow-y-auto min-h-0 pr-1 mb-3">
         {turns.length === 0 && <OnboardingView />}
         {turns.map((turn, i) => {
+          if (isControlMessage((turn.user || "").trim())) return null;
           const prevTurn = turns[i - 1];
+          const nextTurn = turns[i + 1];
           const ui = turn.ui;
           const schema = turn.schema;
           const isSelected = i === selectedTurnIndex;
+          const confirmedByNextTurn = !!nextTurn && isControlMessage((nextTurn.user || "").trim());
 
           return (
             <Fragment key={turn.turn_index ?? i}>
               {i > 0 && <hr className="border-t-2 border-border/30 my-3" />}
               <div
+                ref={(el) => { turnRefs.current[i] = el; }}
                 className={`p-2.5 rounded-lg cursor-pointer border-l-2 transition-colors ${
                   isSelected
                     ? "ring-1 ring-accent bg-blue-500/10 border-l-accent"
@@ -402,7 +456,7 @@ export default function ChatSection() {
                                   key={ji}
                                   className={`${monoClass} text-[11px] text-ic-blue bg-ic-blue-soft/50 border border-ic-blue/20 px-2 py-0.5 rounded-[6px] w-fit`}
                                 >
-                                  {join.from || join.left_dataset} → {join.to || join.right_dataset}
+                                  {join.from_dataset} → {join.to_dataset}
                                   {join.on?.length ? ` on ${join.on.join(", ")}` : ""}
                                 </span>
                               ))}
@@ -436,7 +490,7 @@ export default function ChatSection() {
                     )}
 
                     {/* Plan mode */}
-                    {ui?.plan?.aims?.length && !ui?.proposals?.length && (
+                    {(ui?.plan?.aims?.length ?? 0) > 0 && (ui?.proposals?.length ?? 0) === 0 && (
                       <div>
                         <div className="text-[13.5px] text-muted leading-relaxed space-y-1.5 mb-3">
                           {schema?.line && (
@@ -484,7 +538,7 @@ export default function ChatSection() {
                                     key={ji}
                                     className={`${monoClass} text-[12px] text-ic-blue bg-ic-blue-soft/50 border border-ic-blue/20 px-2 py-0.5 rounded-[6px] w-fit`}
                                   >
-                                    {join.from || join.left_dataset} → {join.to || join.right_dataset}
+                                    {join.from_dataset} → {join.to_dataset}
                                     {join.on?.length ? ` on ${join.on.join(", ")}` : ""}
                                   </span>
                                 ))}
@@ -496,6 +550,11 @@ export default function ChatSection() {
                             <span className="text-text">{ui.plan.aims.join(", ")}</span>
                           </p>
                         </div>
+                        {ui?.time_default_notice && (
+                          <div className="mt-2 p-2 rounded-lg bg-ic-blue-soft/30 border border-ic-blue/20 text-[12px] text-ic-blue">
+                            {ui.time_default_notice}
+                          </div>
+                        )}
                         {ui.plan.benefits && (
                           <>
                             <p className="text-[11px] font-semibold uppercase tracking-wider text-tertiary mb-1.5">
@@ -516,6 +575,53 @@ export default function ChatSection() {
                       </div>
                     )}
 
+                    {/* Single-proposal mode (already-decided, plain prose) */}
+                    {ui?.proposals?.length === 1 && (() => {
+                      const p = ui.proposals[0] as {
+                        title?: string;
+                        feasible?: boolean;
+                        feasibility_reason?: string;
+                        what_you_might_see?: string;
+                        alternative?: string;
+                      };
+                      const bullets = [p.what_you_might_see, p.feasibility_reason].filter(Boolean) as string[];
+                      return (
+                        <div className="text-[13.5px] text-muted leading-relaxed">
+                          <p className="mb-2">
+                            Here's the analysis plan for{" "}
+                            <b className="text-text">{schema?.line || "this line"}</b>:{" "}
+                            <b className="text-text font-medium">{p.title}</b>
+                            {p.feasible !== undefined && (
+                              <span className={`ml-1.5 text-[11px] font-semibold ${p.feasible ? "text-green-300" : "text-red-300"}`}>
+                                ({p.feasible ? "Doable" : "Not doable"})
+                              </span>
+                            )}
+                          </p>
+                          {bullets.length > 0 && (
+                            <ul className="m-0 p-0 list-none">
+                              {bullets.map((b, bi) => (
+                                <li
+                                  key={bi}
+                                  className="text-[13px] text-muted leading-relaxed pl-3.5 relative mb-1 before:content-[''] before:absolute before:left-0 before:top-[7px] before:w-1 before:h-1 before:rounded-full before:bg-stage-manager"
+                                >
+                                  {b}
+                                </li>
+                              ))}
+                            </ul>
+                          )}
+                          {p.feasible === false && p.alternative && (
+                            <button
+                              type="button"
+                              className="mt-1.5 text-[11px] font-semibold text-ic-blue hover:text-blue-300 underline underline-offset-2"
+                              onClick={() => sendUserMessage(p.alternative!)}
+                            >
+                              Try instead: {p.alternative}
+                            </button>
+                          )}
+                        </div>
+                      );
+                    })()}
+
                     {/* Waiting for planner */}
                     {ui?.phase === "man" && (
                       <div className="flex items-center gap-2 py-3 text-sm text-muted">
@@ -525,7 +631,7 @@ export default function ChatSection() {
                     )}
 
                     {/* Proposals mode */}
-                    {ui?.proposals?.length > 0 && (
+                    {(ui?.proposals?.length ?? 0) > 1 && (
                       <div>
                         <p className="text-[13.5px] text-muted mb-3">
                           Here are {ui.proposals.length} analysis option
@@ -548,7 +654,7 @@ export default function ChatSection() {
                     )}
 
                     {/* Fallback markdown */}
-                    {!ui?.plan?.aims?.length && !ui?.proposals?.length && (
+                    {(ui?.plan?.aims?.length ?? 0) === 0 && (ui?.proposals?.length ?? 0) === 0 && (
                       <div className="text-sm leading-relaxed space-y-1 [&>p]:m-0 [&>ul]:pl-4 [&>ol]:pl-4 [&>li>p]:m-0 [&>pre]:bg-black/40 [&>pre]:p-2 [&>pre]:rounded [&>pre]:overflow-x-auto [&>code]:bg-black/30 [&>code]:px-1 [&>code]:rounded [&>blockquote]:border-l-2 [&>blockquote]:border-blue-500 [&>blockquote]:pl-3 [&>blockquote]:italic [&>blockquote]:text-muted">
                         <ReactMarkdown
                           remarkPlugins={[remarkGfm]}
@@ -583,7 +689,14 @@ export default function ChatSection() {
                     )}
 
                     {/* Quick-reply buttons / next_step fallback */}
-                    {ui && renderActions(ui, sendUserMessage, i)}
+                    {ui && (confirmedByNextTurn ? (
+                      <div className="flex items-center gap-1.5 mt-4 pt-3.5 border-t-2 border-border/30 text-sm text-stage-execution font-medium">
+                        <IconCheck size={14} />
+                        Confirmed — sent to execution
+                      </div>
+                    ) : (
+                      renderActions(ui, sendUserMessage, i)
+                    ))}
                     {!ui?.plan?.aims?.length && !ui?.proposals?.length && ui?.next_step && (
                       <div className="mt-3 pt-3 border-t-2 border-border/30 text-sm text-foreground">
                         <ReactMarkdown remarkPlugins={[remarkGfm]}>
@@ -592,20 +705,70 @@ export default function ChatSection() {
                       </div>
                     )}
                     {!ui?.plan?.aims?.length && !ui?.proposals?.length && ui?.suggested_aims?.length > 0 && (
-                      <div className="mt-3 flex flex-col gap-2">
-                        {ui.suggested_aims.map((aim, i) => (
-                          <button
-                            key={aim}
-                            type="button"
-                            onClick={() => sendUserMessage(aim)}
-                            className="w-full text-left px-4 py-2.5 text-sm rounded-lg bg-bg-deep border-2 border-border shadow-sm hover:shadow-lg hover:-translate-y-0.5 hover:bg-surface-1 active:translate-y-0.5 active:shadow-inner transition-all duration-150 cursor-pointer"
-                          >
-                            <span className="text-xs font-semibold text-stage-manager uppercase tracking-wider mr-2">
-                              Suggestion {i + 1}:
-                            </span>
-                            <span className="text-text">{aim}</span>
-                          </button>
-                        ))}
+                      <div className="mt-3 flex flex-col gap-3">
+                        {(() => {
+                          const groups: Record<string, typeof ui.suggested_aims> = {};
+                          for (const a of ui.suggested_aims) {
+                            const ds = a.dataset || "Other";
+                            if (!groups[ds]) groups[ds] = [];
+                            groups[ds].push(a);
+                          }
+                          return Object.entries(groups).map(([dsName, aims]) => {
+                            const accent = datasetAccent(dsName, schema?.datasets);
+                            return (
+                              <div key={dsName}>
+                                <div className={`text-[11px] font-semibold tracking-wider uppercase mb-1.5 ${chipClass(accent)} w-fit`}>
+                                  <IconDatabase size={11} />
+                                  {dsName}
+                                  {schema?.datasets?.find(d => d.name === dsName)?.role && (
+                                    <span className="ml-1 opacity-70">({schema.datasets.find(d => d.name === dsName)!.role})</span>
+                                  )}
+                                </div>
+                                <div className="flex flex-col gap-1.5">
+                                  {aims.map((a) => {
+                                    const pickedIdx = pickedAimTurnIndex[a.aim.trim()];
+                                    const isPicked = pickedIdx !== undefined;
+                                    return (
+                                    <button
+                                      key={a.aim}
+                                      type="button"
+                                      onClick={() => (isPicked ? scrollToTurn(pickedIdx) : sendUserMessage(a.aim))}
+                                      className={`w-full text-left px-4 py-2.5 text-sm rounded-lg border-2 transition-all duration-150 cursor-pointer ${
+                                        isPicked
+                                          ? "bg-ic-violet-soft/15 border-ic-violet/40 hover:bg-ic-violet-soft/25"
+                                          : accent === "blue"
+                                            ? "bg-ic-blue-soft/10 border-ic-blue/20 hover:bg-ic-blue-soft/25 hover:border-ic-blue/40"
+                                            : accent === "amber"
+                                              ? "bg-ic-amber-soft/10 border-ic-amber/20 hover:bg-ic-amber-soft/25 hover:border-ic-amber/40"
+                                              : "bg-ic-coral-soft/10 border-ic-coral/20 hover:bg-ic-coral-soft/25 hover:border-ic-coral/40"
+                                      }`}
+                                    >
+                                      <span className="text-text">{a.aim}</span>
+                                      {isPicked && (
+                                        <span className="ml-2 text-[10px] font-semibold uppercase tracking-wider text-ic-violet">
+                                          ✓ asked
+                                        </span>
+                                      )}
+                                      {a.kpi_value && (
+                                        <p className="text-[11px] text-muted mt-0.5 leading-snug">{a.kpi_value}</p>
+                                      )}
+                                    </button>
+                                    );
+                                  })}
+                                </div>
+                              </div>
+                            );
+                          });
+                        })()}
+                        {schema?.joins && schema.joins.length > 0 && (
+                          <div className="text-[11px] text-ic-blue mt-1 mb-1">
+                            Cross-table analysis available:{" "}
+                            {schema.joins.map(j => `${j.from_dataset} ↔ ${j.to_dataset}`).join(", ")}
+                          </div>
+                        )}
+                        <div className="text-[11px] text-tertiary italic border-t-2 border-border/20 pt-2 mt-1">
+                          These are per-dataset suggestions. For complex or cross-relational analysis, share your thoughts and I'll create a custom plan.
+                        </div>
                       </div>
                     )}
                   </div>
@@ -626,7 +789,9 @@ export default function ChatSection() {
                 <p className="text-sm text-text leading-relaxed m-0">
                   {activeProposal
                     ? `Selected Plan ${activeProposal.index + 1}: ${activeProposal.title}`
-                    : pendingTurn.user}
+                    : isControlMessage((pendingTurn.user || "").trim())
+                      ? "Confirming…"
+                      : pendingTurn.user}
                 </p>
                 {(pendingTurn.schema?.line ||
                   pendingTurn.schema?.datasets_in_scope?.length ||
@@ -675,7 +840,7 @@ export default function ChatSection() {
                               key={ji}
                               className={`${monoClass} text-[11px] text-ic-blue bg-ic-blue-soft/50 border border-ic-blue/20 px-2 py-0.5 rounded-[6px] w-fit`}
                             >
-                              {join.from || join.left_dataset} → {join.to || join.right_dataset}
+                              {join.from_dataset} → {join.to_dataset}
                               {join.on?.length ? ` on ${join.on.join(", ")}` : ""}
                             </span>
                           ))}
@@ -688,9 +853,9 @@ export default function ChatSection() {
               {pendingTurn.loading && (
                 <div className="flex items-center gap-2 py-2 text-muted text-sm">
                   <span className="w-2 h-2 rounded-full bg-stage-manager animate-pulse" />
-                  {activeProposal
+                  {statusMessage || (activeProposal
                     ? `Building Plan ${activeProposal.index + 1}: ${activeProposal.title}\u2026`
-                    : "Thinking\u2026"}
+                    : "Thinking\u2026")}
                 </div>
               )}
             </div>

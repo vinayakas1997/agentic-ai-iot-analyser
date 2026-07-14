@@ -65,7 +65,13 @@ async def tool_fetch_schema(state: ManagerState) -> ManagerState:
             for ds in datasets
         ],
         "suggested_aims": [
-            aim for ds in datasets
+            {
+                "aim": aim,
+                "dataset": ds.get("dataset_name"),
+                "role": ds.get("role"),
+                "kpi_value": "",
+            }
+            for ds in datasets
             for aim in (ds.get("suggested_aims") or [])
         ],
         "join_catalog": schema.get("join_catalog") or [],

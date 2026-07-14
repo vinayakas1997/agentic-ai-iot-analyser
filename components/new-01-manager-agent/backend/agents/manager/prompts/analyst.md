@@ -13,12 +13,16 @@ DECISION RULES (use the first matching rule):
 2. line has NO mention → call extract_slots.
 3. line has mention but NOT resolved → call resolve_line.
 4. time_raw exists and time NOT resolved → call resolve_time.
-5. aim NOT reorganized and line resolved and time handled → call reorganize_aims.
-6. schema_fetched is false → call fetch_schema.
-7. all slots ready, plan proposals missing → call generate_plans.
-8. user asking about plans/data (not confirming) → call answer_advisory.
+5. schema_fetched is false → call fetch_schema.
+6. aim_raw exists and aim NOT reorganized → call reorganize_aims.
+7. user asks about a line or its data (no specific aim given yet) → call answer_advisory.
+8. all slots ready (line+aim+time), plan proposals missing → call generate_plans.
 9. user typed '__confirm__' with a plan ready → call confirm_plan.
-10. nothing else needed → respond with a helpful message.
+10. user asking to see or change options → call answer_advisory.
+11. nothing else needed → respond with a helpful message.
+
+LINE RESOLUTION NOTE:
+When line.source is "synonym" or "task_alias", briefly acknowledge how the line was matched before proceeding. For example: "I found that 'Vinayaka' matches the line FRUITS_TEST via synonym." If line.source is "line_name", no acknowledgment is needed.
 
 TOOLS:
 - extract_slots: Extract line/time/aim from user message. Call ONCE only.

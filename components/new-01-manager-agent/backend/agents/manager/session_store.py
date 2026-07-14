@@ -4,6 +4,8 @@ import json
 
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage
 
+from agents.manager.utils.schema_utils import build_planner_schema_payload
+
 PERSISTED_STATE_KEYS = (
     "reference_now",
     "reference_timezone",
@@ -30,6 +32,7 @@ PERSISTED_STATE_KEYS = (
     "scope_selection",
     "scope_pending",
     "iot_column_wishes",
+    "seen_proposal_titles",
 )
 
 
@@ -79,24 +82,6 @@ def _deserialize_chat_history(data: list | None) -> list[BaseMessage]:
     return [_dict_to_message(item) for item in data if isinstance(item, dict)]
 
 
-def _build_planner_schema_payload(line_context: dict | None, dataset_context: dict | None) -> dict:
-    if not line_context:
-        return {
-            "datasets_in_scope": [],
-            "datasets_excluded": [],
-            "dataset_schemas": [],
-            "join_catalog": [],
-        }
-    line_name = line_context.get("line_name")
-    entry = (dataset_context or {}).get("by_line", {}).get(line_name) or {}
-    return {
-        "datasets_in_scope": line_context.get("datasets_in_scope") or entry.get("included") or [],
-        "datasets_excluded": line_context.get("datasets_excluded") or entry.get("excluded") or [],
-        "dataset_schemas": line_context.get("datasets_full") or [],
-        "join_catalog": line_context.get("join_catalog") or [],
-    }
-
-
 def canonical_line_from_state(state: dict) -> str | None:
     slots = state.get("slots") or {}
     line = slots.get("line") or {}
@@ -142,7 +127,7 @@ def build_schema_summary(state: dict) -> dict:
     line = slots.get("line") or {}
     time_slot = slots.get("time") or {}
 
-    schema_payload = _build_planner_schema_payload(line_context, dataset_context)
+    schema_payload = build_planner_schema_payload(line_context, dataset_context)
     datasets_full = schema_payload.get("dataset_schemas") or line_context.get("datasets_full") or []
 
     columns: list[dict] = []
@@ -188,6 +173,12 @@ def build_schema_summary(state: dict) -> dict:
             "source": line.get("source"),
         }
 
+    earliest_list = [
+        ds.get("data_earliest_ts") for ds in datasets_full
+        if isinstance(ds, dict) and ds.get("data_earliest_ts")
+    ]
+    data_available_from = min(earliest_list) if earliest_list else None
+
     return {
         "line": line.get("canonical") or line.get("mention") or line_context.get("line_name"),
         "line_match": line_match,
@@ -200,6 +191,7 @@ def build_schema_summary(state: dict) -> dict:
         "time": time_range,
         "time_pending": time_pending,
         "no_time_filter": bool(time_slot.get("no_filter")),
+        "data_available_from": data_available_from,
     }
 
 
@@ -243,13 +235,14 @@ def pair_messages_to_turns(rows: list[dict]) -> list[dict]:
     return [by_index[k] for k in sorted(by_index.keys())]
 
 
-def build_provenance(suggested_aims: list[str] | None, proposals: list[dict] | None) -> list[dict]:
+def build_provenance(suggested_aims: list | None, proposals: list[dict] | None) -> list[dict]:
     """Map suggested aims to proposal fulfillments by fuzzy matching."""
     if not suggested_aims or not proposals:
         return []
-    lower_suggested = [a.lower() for a in suggested_aims]
+    aim_texts = [a.get("aim") if isinstance(a, dict) else a for a in suggested_aims]
+    lower_suggested = [a.lower() for a in aim_texts]
     result = []
-    for aim in suggested_aims:
+    for aim in aim_texts:
         ids: list[int] = []
         for p in proposals:
             p_aims = p.get("aims") or []
@@ -276,12 +269,21 @@ def build_ui_summary(state: dict) -> dict:
     if phase != "man":
         proposals = state.get("analysis_proposals")
         plan = state.get("plan")
-        if proposals:
+        if proposals and len(proposals) > 1:
             actions.append({"label": "See more options", "msg": "more options"})
         elif plan and plan.get("aims") and not done:
             actions.append({"label": "Go — proceed", "msg": "__confirm__", "primary": True})
             actions.append({"label": "More options", "msg": "more options"})
     show_change = bool(state.get("analysis_proposals") or (state.get("plan") and state["plan"].get("aims") and not done))
+
+    time_slot = slots.get("time") or {}
+    time_default_notice = None
+    if time_slot.get("no_filter"):
+        time_default_notice = (
+            "No time range specified — using all available data "
+            f"(from {time_slot.get('data_earliest') or 'earliest record'}). "
+            "If you need a specific period, let me know and I'll adjust the plan."
+        )
 
     return {
         "phase": phase,
@@ -298,6 +300,7 @@ def build_ui_summary(state: dict) -> dict:
         "explanation": state.get("explanation"),
         "actions": actions,
         "show_change": show_change,
+        "time_default_notice": time_default_notice,
         "proposal_provenance": build_provenance(
             list(line_context.get("suggested_aims") or []),
             state.get("analysis_proposals"),
