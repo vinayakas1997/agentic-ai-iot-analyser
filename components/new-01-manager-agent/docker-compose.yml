@@ -25,6 +25,9 @@ services:
     container_name: manager_agent_backend
     ports:
       - "4002:7009"
+    volumes:
+      - ./backend:/app
+    command: ["uvicorn", "api.server:app", "--host", "0.0.0.0", "--port", "7009", "--reload"]
     environment:
       - DB_URL=postgresql+asyncpg://manager_agent:manager_agent_pass@postgres:5432/manager_agent_db
       - VLLM_BASE_URL=http://host.docker.internal:8009/v1
@@ -48,6 +51,9 @@ services:
     container_name: manager_agent_frontend
     ports:
       - "4001:7008"
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
     environment:
       - VITE_API_URL=http://localhost:4002
       - VITE_WS_URL=ws://localhost:4002

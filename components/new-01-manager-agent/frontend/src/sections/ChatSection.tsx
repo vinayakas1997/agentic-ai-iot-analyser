@@ -167,6 +167,14 @@ export default function ChatSection() {
 
   /* ── Track which suggested aims have already been asked, and where ── */
   const turnRefs = useRef<Record<number, HTMLDivElement | null>>({});
+  const scrollContainerRef = useRef<HTMLDivElement | null>(null);
+
+  /* ── Auto-scroll to the newest turn whenever one arrives ── */
+  useEffect(() => {
+    const el = scrollContainerRef.current;
+    if (!el) return;
+    el.scrollTo({ top: el.scrollHeight, behavior: "smooth" });
+  }, [turns.length]);
   const pickedAimTurnIndex = useMemo(() => {
     const map: Record<string, number> = {};
     turns.forEach((t, i) => {
@@ -375,7 +383,12 @@ export default function ChatSection() {
           const ui = turn.ui;
           const schema = turn.schema;
           const isSelected = i === selectedTurnIndex;
-          const confirmedByNextTurn = !!nextTurn && isControlMessage((nextTurn.user || "").trim());
+          // The backend explicitly signals execution via ui.executed set when
+          // phase transitions to "man" (tool_confirm_plan ran).  Previously
+          // the frontend inferred this from the next turn's message text, but
+          // that heuristic was fragile — it couldn't distinguish the "Go —
+          // proceed" button (__confirm__) from a proposal selection (confirm N).
+          const confirmedByNextTurn = !!ui?.executed;
 
           return (
             <Fragment key={turn.turn_index ?? i}>

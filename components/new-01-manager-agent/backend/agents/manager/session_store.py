@@ -6,6 +6,16 @@ from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, System
 
 from agents.manager.utils.schema_utils import build_planner_schema_payload
 
+# Keys persisted across HTTP turns.  When adding a new field to ManagerState
+# (state.py), decide:
+#   - If it must survive across turns → add it to this tuple AND to
+#     runner.py _default_state().
+#   - If it is per-turn ephemeral → document it in the "not persisted" comment
+#     below so the next person knows the decision was deliberate.
+#
+# Intentionally NOT persisted (resets to default each HTTP turn):
+#   tool_call_count, tool_call_history, analyst_reasoning, tool_to_call,
+#   tool_result, error, agent_message, selected_suggested_aim
 PERSISTED_STATE_KEYS = (
     "reference_now",
     "reference_timezone",
@@ -294,6 +304,7 @@ def build_ui_summary(state: dict) -> dict:
         "saved_plans": state.get("saved_plans") or [],
         "scope_pending": bool(state.get("scope_pending")),
         "done": done,
+        "executed": phase == "man",
         "planner_payload": state.get("planner_payload"),
         "next_step": next_step,
         "suggested_aims": list(line_context.get("suggested_aims") or []),

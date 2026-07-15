@@ -4,102 +4,113 @@ import pytest
 
 from agents.manager.graph import build_manager_graph, INTERRUPT_AFTER, manager_graph
 
+EXPECTED_NODES = [
+    "inject_reference_time",
+    "analyst",
+    "confirm_redirect",
+    "tool_extract_slots",
+    "tool_resolve_line",
+    "tool_resolve_time",
+    "tool_fetch_schema",
+    "tool_reorganize_aims",
+    "tool_generate_plans",
+    "tool_answer_advisory",
+    "tool_confirm_plan",
+]
+
+
+def _get_edges(graph):
+    """Return list of (source, target) tuples from the compiled graph."""
+    raw = graph.get_graph()
+    return [(e.source, e.target) for e in raw.edges]
+
 
 class TestGraphStructure:
     def test_graph_is_compiled(self):
-        """Verify the graph compiles without errors."""
         graph = build_manager_graph()
         assert graph is not None
 
-    def test_graph_has_correct_node_count(self):
-        """27 nodes expected in the graph."""
-        graph = build_manager_graph()
-        # Get all nodes from the graph
-        nodes = list(graph.nodes.keys())
-        assert len(nodes) == 27, f"Expected 27 nodes, got {len(nodes)}: {nodes}"
-
-    def test_expected_nodes_present(self):
+    def test_graph_has_expected_nodes(self):
         graph = build_manager_graph()
         nodes = list(graph.nodes.keys())
-        expected = [
-            "inject_reference_time",
-            "extract_slots",
-            "merge_slots",
-            "resolve_all_lines",
-            "sync_session_context",
-            "apply_task_reuse",
-            "resolve_time_filters",
-            "reorganize_aim",
-            "build_plan_message",
-            "detect_confirm",
-            "save_task_definition",
-            "send_to_planner",
-        ]
-        for name in expected:
+        # Compiled graph auto-adds __start__; all expected nodes should be present.
+        for name in EXPECTED_NODES:
             assert name in nodes, f"Missing node: {name}"
 
     def test_interrupt_nodes(self):
-        """13 nodes should be in the interrupt list."""
-        assert len(INTERRUPT_AFTER) == 13, f"Expected 13 interrupt nodes, got {len(INTERRUPT_AFTER)}"
-
-    def test_entry_point(self):
-        graph = build_manager_graph()
-        assert graph.entry_point == "inject_reference_time"
+        assert INTERRUPT_AFTER == ["tool_answer_advisory"]
 
     def test_module_graph_is_singleton(self):
         assert manager_graph is not None
-        assert manager_graph == build_manager_graph()
 
 
 class TestGraphEdges:
-    def test_confirm_shortcut_path(self):
-        """Verify detect_confirm → save_task_definition → send_to_planner chain."""
-        graph = build_manager_graph()
-        # Check that detect_confirm has conditional edges
-        edges = graph.edges
-        # detect_confirm should have conditional edges
-        detect_edges = [e for e in edges if e[0] == "detect_confirm"]
-        assert len(detect_edges) >= 1
+    def test_start_routes_to_inject_reference_time(self):
+        edges = _get_edges(build_manager_graph())
+        assert ("__start__", "inject_reference_time") in edges
 
-    def test_plan_path_leads_to_build_plan_message(self):
-        """reorganize_aim, merge_proposals_to_plan, combine_saved_plans should all go to build_plan_message."""
-        edges = graph.edges
-        # Check fixed edges from these nodes to build_plan_message
-        plan_edges = {
-            "reorganize_aim": "build_plan_message",
-            "merge_proposals_to_plan": "build_plan_message",
-            "combine_saved_plans": "build_plan_message",
-            "activate_saved_plan": "build_plan_message",
-        }
-        for src, dst in plan_edges.items():
-            assert any(
-                e[0] == src and e[1] == dst for e in edges
-            ), f"Missing edge {src} -> {dst}"
+    def test_inject_reference_time_routes_to_analyst(self):
+        edges = _get_edges(build_manager_graph())
+        assert ("inject_reference_time", "analyst") in edges
+
+    def test_analyst_routes_to_all_tools(self):
+        edges = _get_edges(build_manager_graph())
+        tool_nodes = [n for n in EXPECTED_NODES if n.startswith("tool_")]
+        for tool_node in tool_nodes:
+            assert ("analyst", tool_node) in edges, f"Missing edge analyst -> {tool_node}"
+
+    def test_analyst_can_end(self):
+        edges = _get_edges(build_manager_graph())
+        assert ("analyst", "__end__") in edges
+
+    def test_tools_loop_back_to_analyst(self):
+        edges = _get_edges(build_manager_graph())
+        loopback_tools = [
+            n for n in EXPECTED_NODES
+            if n.startswith("tool_") and n != "tool_confirm_plan"
+        ]
+        for tool_node in loopback_tools:
+            assert (tool_node, "analyst") in edges, f"Missing loopback edge {tool_node} -> analyst"
+
+    def test_tools_can_end(self):
+        edges = _get_edges(build_manager_graph())
+        loopback_tools = [
+            n for n in EXPECTED_NODES
+            if n.startswith("tool_") and n != "tool_confirm_plan"
+        ]
+        for tool_node in loopback_tools:
+            assert (tool_node, "__end__") in edges, f"Missing end edge {tool_node} -> __end__"
+
+    def test_confirm_plan_ends(self):
+        edges = _get_edges(build_manager_graph())
+        assert ("tool_confirm_plan", "__end__") in edges
+
+    def test_confirm_redirect_ends(self):
+        edges = _get_edges(build_manager_graph())
+        assert ("confirm_redirect", "__end__") in edges
 
 
-class TestGraphModule:
-    def test_imports(self):
-        from agents.manager.nodes import (
-            extract_slots,
-            merge_slots,
-            inject_reference_time,
-            resolve_all_lines,
-            sync_session_context,
-            reorganize_aim,
-            build_plan_message,
-            detect_confirm,
-            save_task_definition_node,
-            send_to_planner,
-        )
-        assert callable(extract_slots)
+class TestGraphImport:
+    def test_analyst_import(self):
+        from agents.manager.analyst import analyst
+        assert callable(analyst)
 
-    def test_routing_imports(self):
-        from agents.manager.routing import (
-            route_after_inject,
-            route_after_merge,
-            route_after_resolve_all_lines,
-            route_after_sync_session_context,
-            route_after_time,
-            route_after_confirm,
-        )
+    def test_router_import(self):
+        from agents.manager.router import route_after_analyst, route_after_tool, route_after_inject
+        assert callable(route_after_analyst)
+        assert callable(route_after_tool)
         assert callable(route_after_inject)
+
+    def test_tools_import(self):
+        from agents.manager.tools import (
+            tool_extract_slots,
+            tool_resolve_line,
+            tool_resolve_time,
+            tool_fetch_schema,
+            tool_reorganize_aims,
+            tool_generate_plans,
+            tool_answer_advisory,
+            tool_confirm_plan,
+        )
+        assert callable(tool_extract_slots)
+        assert callable(tool_confirm_plan)

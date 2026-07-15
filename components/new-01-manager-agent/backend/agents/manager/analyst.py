@@ -12,6 +12,130 @@ from agents.manager.state import ManagerState
 logger = logging.getLogger(__name__)
 
 
+def _handle_confirm(state: ManagerState, user_msg: str, session_json: dict) -> ManagerState:
+    """Handle confirm_plan routing deterministically, bypassing the LLM entirely.
+
+    Covers all three cases:
+    - ``__confirm__`` → mark the plan for execution (tool_to_call="confirm_plan")
+    - ``confirm N``  → select proposal N for review (narrow plan, show review card)
+    - anything else confirm-like → show the current plan summary with instructions.
+    """
+    tool_call_count = state.get("tool_call_count", 0)
+    if user_msg == "__confirm__":
+        return {
+            **state,
+            "analyst_reasoning": None,
+            "tool_to_call": "confirm_plan",
+            "tool_result": None,
+            "tool_call_count": tool_call_count + 1,
+            "phase": "tool",
+        }
+
+    confirm_match = re.match(r'^confirm\s+(\d+)$', user_msg)
+    if confirm_match:
+        proposal_idx = int(confirm_match.group(1)) - 1
+        proposals = state.get("analysis_proposals") or []
+        if 0 <= proposal_idx < len(proposals):
+            selected = proposals[proposal_idx]
+            canonical = session_json.get("line", {}).get("canonical") or ""
+            title = selected.get("title") or ""
+            benefits = selected.get("what_you_might_see") or ""
+            aims = selected.get("aims") or []
+            aims_text = "\n".join(f"- {a[:160]}" for a in aims[:5])
+            msg = f"Here's the analysis plan for **{canonical}**"
+            msg += f": {title}" if title else ""
+            msg += f"\n\n**Aims:**\n{aims_text}\n"
+            if benefits:
+                msg += f"\n{benefits}\n"
+            msg += "\nReply **go** to proceed, say *more options* for other plans, or tell me what to change."
+            return {
+                **state,
+                "analyst_reasoning": None,
+                "tool_to_call": None,
+                "tool_result": None,
+                "plan": {
+                    "aims": aims,
+                    "benefits": benefits,
+                    "line": canonical,
+                },
+                "analysis_proposals": [selected],
+                "agent_message": msg,
+                "phase": "ask",
+            }
+        return {
+            **state,
+            "analyst_reasoning": None,
+            "tool_to_call": None,
+            "tool_result": None,
+            "agent_message": "Invalid proposal selection. Please try again.",
+            "phase": "ask",
+        }
+
+    # Fallback: confirm-like message that didn't match known patterns —
+    # show the current plan summary with instructions.
+    plan = session_json.get("plan") or {}
+    aim_items = plan.get("aims") or []
+    if not aim_items:
+        for p in (state.get("analysis_proposals") or []):
+            if isinstance(p, dict):
+                aim_items.extend(p.get("aims") or [])
+    aims_text = "\n".join(f"- {a[:120]}" for a in aim_items[:5])
+    canonical = session_json.get("line", {}).get("canonical") or ""
+    return {
+        **state,
+        "analyst_reasoning": None,
+        "tool_to_call": None,
+        "tool_result": None,
+        "agent_message": (
+            f"The analysis plan is ready for **{canonical}**.\n\n"
+            f"**Aims:**\n{aims_text}\n\n"
+            "Press **Go — proceed** to confirm and execute."
+        ),
+        "phase": "ask",
+    }
+
+
+def _detect_tool_loop(state: ManagerState, session_json: dict) -> str | None:
+    """Detect if the agent is stuck calling the same tool with no progress.
+
+    Returns an honest, actionable message if a loop is detected, or None to
+    proceed normally.  The threshold is 3+ identical consecutive tool calls
+    without meaningful state advancement (line unresolved, schema unfetched).
+    """
+    history = state.get("tool_call_history") or []
+    if len(history) < 3:
+        return None
+    last_three = history[-3:]
+    if len(set(last_three)) > 1:
+        return None
+
+    slots = state.get("slots") or {}
+    line = slots.get("line") or {}
+    line_mention = line.get("mention")
+    line_resolved = line.get("resolved")
+
+    # If line resolved and schema fetched, progress is being made — not a loop.
+    if line_resolved and session_json.get("schema_fetched"):
+        return None
+
+    tool = last_three[0]
+    if tool in ("extract_slots", "resolve_line"):
+        if line_mention:
+            return (
+                f"I'm having trouble resolving **{line_mention}** to a known production line. "
+                "Could you double-check the spelling, or give me the exact line name?"
+            )
+        return (
+            "I couldn't figure out which production line or machine you're asking about. "
+            "Could you tell me the exact line name (e.g. FRUITS_TEST)?"
+        )
+
+    return (
+        "I seem to be having trouble processing your request. "
+        "Could you rephrase or provide more details?"
+    )
+
+
 def _build_session_json(state: ManagerState) -> dict:
     slots = state.get("slots") or {}
     line = slots.get("line") or {}
@@ -99,15 +223,36 @@ async def analyst(state: ManagerState) -> ManagerState:
     logger.debug("analyst: starting")
     user_message = (state.get("user_message") or "").strip()
 
-    # Detect if user selected a suggested aim
+    # Pre-check: route confirm actions deterministically, bypassing the LLM
+    # entirely. The LLM's probabilistic tool-choice is the root cause of
+    # §3.8-type failures; this pre-check eliminates that failure mode
+    # categorically for all confirmation-related messages.
+    user_msg = user_message.strip().lower()
+    if user_msg == "__confirm__" or re.match(r'^confirm\s+\d+$', user_msg):
+        session_json = _build_session_json(state)
+        return _handle_confirm(state, user_msg, session_json)
+
+    # Detect if user selected a suggested aim. Match fuzzily (not just exact
+    # equality) since users usually paraphrase ("average cost by fruit")
+    # rather than typing the full registry sentence ("Calculate average cost
+    # by fruit for the FRUITS_TEST line using the fruits dataset.") — an
+    # exact-only check never fires for typed follow-ups, which left
+    # tool_generate_plans unable to narrow proposals and caused it to dump
+    # every proposal's aims into the plan.
     suggested_aims = (state.get("line_context") or {}).get("suggested_aims") or []
-    selected_suggested = any(
-        aim == user_message
-        for s_aim in suggested_aims
-        for aim in ([s_aim] if isinstance(s_aim, str) else [s_aim.get("aim")])
-    )
-    if selected_suggested:
-        state["selected_suggested_aim"] = user_message
+    user_message_norm = user_message.strip().lower()
+    matched_suggested_aim = None
+    if user_message_norm:
+        for s_aim in suggested_aims:
+            aim_text = s_aim if isinstance(s_aim, str) else s_aim.get("aim")
+            if not aim_text:
+                continue
+            aim_norm = aim_text.strip().lower()
+            if aim_norm == user_message_norm or user_message_norm in aim_norm or aim_norm in user_message_norm:
+                matched_suggested_aim = aim_text
+                break
+    if matched_suggested_aim:
+        state["selected_suggested_aim"] = matched_suggested_aim
 
     # Reset explore_phase when line mention changes
     session_json = _build_session_json(state)
@@ -199,6 +344,25 @@ async def analyst(state: ManagerState) -> ManagerState:
 
     messages = [SystemMessage(content=system), HumanMessage(content=user_message)]
 
+    # Circuit breaker: detect repeated identical tool calls without progress.
+    # This catches extraction/resolution loops early (within 3 repeats) rather
+    # than waiting for tool_call_count >= 10 (60-90+ seconds of wall time).
+    # Also clears the stuck line mention so the next message gets a clean retry.
+    cb_reason = _detect_tool_loop(state, session_json)
+    if cb_reason:
+        slots = dict(state.get("slots") or {})
+        line = dict(slots.get("line") or {})
+        line["mention"] = None
+        slots["line"] = line
+        return {
+            **state,
+            "slots": slots,
+            "agent_message": cb_reason,
+            "phase": "ask",
+            "tool_to_call": None,
+            "tool_result": None,
+        }
+
     llm = get_llm_client()
     try:
         response = await llm.ainvoke(messages, caller="analyst")
@@ -217,6 +381,11 @@ async def analyst(state: ManagerState) -> ManagerState:
     tool = parsed.get("tool")
     tool_input = parsed.get("tool_input") or {}
 
+    # Track tool decisions for loop detection
+    tool_call_history = list(state.get("tool_call_history") or [])
+    if action == "call_tool" and tool:
+        tool_call_history.append(tool)
+
     raw_content = response.content
     if isinstance(raw_content, list):
         raw_text = " ".join(c.get("text", str(c)) if isinstance(c, dict) else str(c) for c in raw_content)
@@ -232,6 +401,7 @@ async def analyst(state: ManagerState) -> ManagerState:
         "analyst_reasoning": reasoning,
         "tool_to_call": tool if action == "call_tool" else None,
         "tool_result": None,
+        "tool_call_history": tool_call_history,
     }
 
     if action == "respond":
@@ -267,49 +437,39 @@ async def analyst(state: ManagerState) -> ManagerState:
             elif has_schema:
                 result["tool_to_call"] = "answer_advisory"
             else:
-                result["agent_message"] = "I've gathered enough information. Let me summarize what I know and suggest next steps."
+                # We burned through 10 tool calls without ever resolving a
+                # line/schema — almost always means extraction couldn't
+                # pin down a line name from the message. Say so honestly
+                # instead of the misleading "I've gathered enough
+                # information" filler, and clear the stuck mention so the
+                # next message gets a clean retry instead of looping again.
+                line_mention = session_json.get("line", {}).get("mention")
+                if line_mention:
+                    result["agent_message"] = (
+                        f"I couldn't resolve **{line_mention}** to a known production line. "
+                        "Could you double-check the spelling, or give me the exact line name?"
+                    )
+                else:
+                    result["agent_message"] = (
+                        "I couldn't figure out which production line or machine you're asking about. "
+                        "Could you tell me the exact line name (e.g. FRUITS_TEST)?"
+                    )
+                slots = dict(state.get("slots") or {})
+                line = dict(slots.get("line") or {})
+                line["mention"] = None
+                slots["line"] = line
+                result["slots"] = slots
                 result["phase"] = "ask"
                 return result
             result["phase"] = "tool"
             result["tool_call_count"] = tool_call_count + 1
             return result
 
-        # Guard: only allow confirm_plan via __confirm__ or confirm {n}
+        # Guard: confirm_plan routing (pre-check at the top of this function
+        # catches the common case before the LLM; this is a safety net for
+        # any path that reaches here regardless).
         if tool == "confirm_plan":
-            user_msg = user_message.strip().lower()
-            if user_msg == "__confirm__":
-                pass
-            elif re.match(r'^confirm\s+(\d+)$', user_msg):
-                confirm_match = re.match(r'^confirm\s+(\d+)$', user_msg)
-                proposal_idx = int(confirm_match.group(1)) - 1
-                proposals = state.get("analysis_proposals") or []
-                if 0 <= proposal_idx < len(proposals):
-                    selected = proposals[proposal_idx]
-                    result["plan"] = {
-                        "aims": selected.get("aims", []),
-                        "benefits": selected.get("what_you_might_see", ""),
-                    }
-                else:
-                    result["agent_message"] = "Invalid proposal selection. Please try again."
-                    result["phase"] = "ask"
-                    return result
-            else:
-                plan = session_json.get("plan") or {}
-                aim_items = plan.get("aims") or []
-                if not aim_items:
-                    proposals = state.get("analysis_proposals") or []
-                    for p in proposals:
-                        if isinstance(p, dict):
-                            aim_items.extend(p.get("aims") or [])
-                aims_text = "\n".join(f"- {a[:120]}" for a in aim_items[:5])
-                canonical = session_json.get("line", {}).get("canonical") or ""
-                result["agent_message"] = (
-                    f"The analysis plan is ready for **{canonical}**.\n\n"
-                    f"**Aims:**\n{aims_text}\n\n"
-                    "Press **Go — proceed** to confirm and execute."
-                )
-                result["phase"] = "ask"
-                return result
+            return _handle_confirm(state, user_message.strip().lower(), session_json)
 
         # Guard: route "more options" to generate_plans instead of answer_advisory
         if tool == "answer_advisory" and any(

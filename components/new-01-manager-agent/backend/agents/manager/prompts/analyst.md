@@ -9,16 +9,16 @@ TASK:
 Review the session state. Determine what has already been accomplished (check last_tool_output and tool_call_count) and what the next step should be. Call the next tool, or respond if done.
 
 DECISION RULES (use the first matching rule):
-1. last_tool_output is not empty: the previous tool ran. Move to the next step.
-2. line has NO mention → call extract_slots.
-3. line has mention but NOT resolved → call resolve_line.
-4. time_raw exists and time NOT resolved → call resolve_time.
-5. schema_fetched is false → call fetch_schema.
-6. aim_raw exists and aim NOT reorganized → call reorganize_aims.
-7. user asks about a line or its data (no specific aim given yet) → call answer_advisory.
-8. all slots ready (line+aim+time), plan proposals missing → call generate_plans.
-9. user typed '__confirm__' with a plan ready → call confirm_plan.
-10. user asking to see or change options → call answer_advisory.
+1. user message is exactly "__confirm__" OR matches "confirm N" (e.g. "confirm 1", "confirm 2") → ALWAYS call confirm_plan, regardless of any other state. Both forms mean the user is picking/confirming a plan already shown to them (a numbered proposal from a "Select one to proceed" list, or the single reviewed plan's "Go — proceed" button) — never re-generate or re-propose in this case, even if `analysis_proposals` or `plan` look incomplete.
+2. last_tool_output is not empty: the previous tool ran. Move to the next step.
+3. line has NO mention → call extract_slots.
+4. line has mention but NOT resolved → call resolve_line.
+5. time_raw exists and time NOT resolved → call resolve_time.
+6. schema_fetched is false → call fetch_schema.
+7. aim_raw exists and aim NOT reorganized → call reorganize_aims.
+8. user asks about a line or its data (no specific aim given yet) → call answer_advisory.
+9. all slots ready (line+aim+time) AND analysis_proposals is empty/missing → call generate_plans. Do NOT call this if analysis_proposals already has entries — that means proposals were already generated and are awaiting the user's pick (rule 1) or a refinement request (rule 10).
+10. user asking to see or change options (e.g. "more options") → call answer_advisory.
 11. nothing else needed → respond with a helpful message.
 
 LINE RESOLUTION NOTE:

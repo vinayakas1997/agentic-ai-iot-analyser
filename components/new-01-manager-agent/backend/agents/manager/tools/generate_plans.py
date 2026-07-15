@@ -11,6 +11,30 @@ from agents.manager.state import ManagerState
 logger = logging.getLogger(__name__)
 
 
+def _match_registry_suggested_aim(user_message: str, suggested_aims: list) -> str | None:
+    """Does the user's current message clearly refer to one registry-suggested aim?
+
+    Computed fresh from state.user_message + line_context every call, rather
+    than a flag set by an earlier node and carried across turns/nodes — that
+    approach proved unreliable (the session's checkpoint resume could
+    resurrect a stale value from an earlier point in a prior turn, causing
+    e.g. "more options" to incorrectly stay pinned to the previously
+    selected aim). user_message and line_context are both freshly
+    reconstructed every turn, so this is safe to recompute each time.
+    """
+    user_norm = (user_message or "").strip().lower()
+    if not user_norm:
+        return None
+    for s_aim in suggested_aims or []:
+        aim_text = s_aim if isinstance(s_aim, str) else (s_aim.get("aim") if isinstance(s_aim, dict) else None)
+        if not aim_text:
+            continue
+        aim_norm = aim_text.strip().lower()
+        if aim_norm == user_norm or user_norm in aim_norm or aim_norm in user_norm:
+            return aim_text
+    return None
+
+
 async def tool_generate_plans(state: ManagerState) -> ManagerState:
     logger.debug("tool_generate_plans: starting")
     slots = state.get("slots") or {}
@@ -76,10 +100,34 @@ async def tool_generate_plans(state: ManagerState) -> ManagerState:
     for p in normalized:
         seen.add(p["title"])
 
-    # If user selected a suggested aim, keep only the focused proposal
-    selected_aim = state.get("selected_suggested_aim")
+    # If user selected a suggested aim, keep only the focused proposal.
+    # Match fuzzily against each proposal's aim text — the LLM's proposals
+    # are usually a longer rewrite of the short registry aim ("Calculate
+    # average defect rate by batch for the FRUITS_TEST line using the
+    # fruit_quality dataset." vs "average defect rate by batch"), so exact
+    # list membership almost never hits and we'd fall through to the generic
+    # placeholder below, losing the LLM's actual benefits/what_you_might_see
+    # text.
+    selected_aim = _match_registry_suggested_aim(
+        state.get("user_message"), line_context.get("suggested_aims")
+    )
     if selected_aim:
-        focused = [p for p in normalized if selected_aim in p.get("aims", [])]
+        selected_norm = selected_aim.strip().lower()
+        focused = [
+            p for p in normalized
+            if any(
+                selected_norm in a.lower() or a.lower() in selected_norm
+                for a in (p.get("aims") or [])
+                if a
+            )
+        ]
+        if not focused and len(normalized) == 1:
+            # The model already narrowed to a single proposal on its own
+            # (per the prompt's "user selected a specific aim" rule) — even
+            # if its phrasing doesn't textually match the registry aim, it's
+            # the only candidate, so keep its real title/benefits instead of
+            # discarding them for the generic placeholder below.
+            focused = normalized
         if not focused:
             focused = [{
                 "id": 1,
@@ -91,8 +139,24 @@ async def tool_generate_plans(state: ManagerState) -> ManagerState:
                 "alternative": "",
             }]
         normalized = focused
-        # Clear the flag so it doesn't apply to subsequent calls
-        state.pop("selected_suggested_aim", None)
+    elif len(normalized) > 1:
+        # No registry-suggested-aim match, but the model still returned (or
+        # reused) more than one proposal. If the user's current aim text
+        # clearly points at only some of them, don't silently fold every
+        # proposal's aims into the plan — that resurrects stale/unrelated
+        # proposals from earlier in the session.
+        aim_raw = (aim.get("raw") or state.get("user_message") or "").strip().lower()
+        if aim_raw:
+            focused = [
+                p for p in normalized
+                if any(
+                    aim_raw in a.lower() or a.lower() in aim_raw
+                    for a in (p.get("aims") or [])
+                    if a
+                )
+            ]
+            if focused and len(focused) < len(normalized):
+                normalized = focused
 
     all_aims = []
     all_benefits = []
@@ -110,6 +174,24 @@ async def tool_generate_plans(state: ManagerState) -> ManagerState:
         "line": (state.get("slots") or {}).get("line", {}).get("canonical"),
     }
 
+    proposal_msgs = []
+    for p in normalized:
+        aims_str = "; ".join(p.get("aims") or [])
+        proposal_msgs.append(f"  * {p['title']}: {aims_str}")
+    proposals_text = "\n".join(proposal_msgs)
+    if len(normalized) == 1:
+        agent_message = (
+            f"I found a focused analysis plan for you:\n\n{proposals_text}\n\n"
+            "Review it above, then reply **confirm 1** to lock it in and see the review card, "
+            "or **more options** to explore fresh alternatives."
+        )
+    else:
+        agent_message = (
+            f"I generated {len(normalized)} analysis options:\n\n{proposals_text}\n\n"
+            "Pick one by replying **confirm 1**, **confirm 2**, etc. to narrow down, "
+            "or ask **more options** for fresh alternatives."
+        )
+
     return {
         **state,
         "plan": plan,
@@ -117,5 +199,6 @@ async def tool_generate_plans(state: ManagerState) -> ManagerState:
         "seen_proposal_titles": list(seen),
         "explore_phase": "proposing",
         "phase": "ask",
+        "agent_message": agent_message,
         "tool_result": json.dumps({"proposals": normalized, "plan": plan}),
     }

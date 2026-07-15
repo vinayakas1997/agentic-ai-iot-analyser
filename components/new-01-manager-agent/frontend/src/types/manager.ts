@@ -7,6 +7,7 @@ export interface TurnUi {
   saved_plans?: { id?: string; label?: string; aims?: string[] }[];
   scope_pending?: boolean;
   done?: boolean;
+  executed?: boolean;
   next_step?: string | null;
   suggested_aims?: {
     aim: string;

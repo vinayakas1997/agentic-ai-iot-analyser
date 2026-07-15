@@ -1368,7 +1368,9 @@ async def test_tell_me_more_routes_advisory() -> None:
 
 async def test_advisory_node_mock_llm() -> None:
     from agents.manager.nodes.advisory import answer_advisory
-    from agents.manager.nodes.extract import set_llm
+# NOTE: the old architecture (agents.manager.nodes.*) no longer exists.
+# Tests that depended on it have been moved to tests/ subdirectory.
+# Keeping this file for reference only; new tests go in tests/.
 
     set_llm(_mock_llm_router())
     state = {

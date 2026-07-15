@@ -90,6 +90,7 @@ def _default_state(existing: dict | None) -> dict:
         "tool_to_call": None,
         "tool_result": None,
         "tool_call_count": 0,
+        "tool_call_history": [],
     }
 
 

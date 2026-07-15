@@ -14,7 +14,6 @@ class ManagerState(TypedDict):
     slots: dict
     line_context: dict | None
     plan: dict | None
-    plan_proposals: list[dict] | None
     dataset_context: dict | None
 
     phase: str
@@ -47,5 +46,7 @@ class ManagerState(TypedDict):
     explore_context: dict | None
     aim_exploration: dict | None
     user_explore_intent: str | None
+    selected_suggested_aim: str | None
 
     tool_call_count: int
+    tool_call_history: list[str]

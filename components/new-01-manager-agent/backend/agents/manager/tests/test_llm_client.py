@@ -28,7 +28,8 @@ class TestLLMClientInit:
 
 
 class TestLLMClientCircuitBreaker:
-    def test_record_failure_opens_circuit_at_threshold(self, monkeypatch):
+    @pytest.mark.asyncio
+    async def test_record_failure_opens_circuit_at_threshold(self, monkeypatch):
         client = LLMClient(circuit_breaker_threshold=3, circuit_breaker_reset_seconds=60)
         import time as time_module
         fake_time = [100.0]
@@ -36,15 +37,16 @@ class TestLLMClientCircuitBreaker:
 
         for i in range(3):
             client._consecutive_failures = i
-            client._record_failure()
+            await client._record_failure()
 
         assert client._consecutive_failures >= 3
         assert client._circuit_open_until > 0
 
-    def test_record_success_resets_failures(self):
+    @pytest.mark.asyncio
+    async def test_record_success_resets_failures(self):
         client = LLMClient()
         client._consecutive_failures = 3
-        client._record_success()
+        await client._record_success()
         assert client._consecutive_failures == 0
         assert client._circuit_open_until == 0.0
 

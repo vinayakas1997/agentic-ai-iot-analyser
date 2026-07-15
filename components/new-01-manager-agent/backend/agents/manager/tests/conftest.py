@@ -4,7 +4,17 @@ from typing import Any
 
 import pytest
 
-from agents.manager.slots import empty_slots
+
+def _empty_slots() -> dict:
+    return {
+        "line": {"mention": None, "canonical": None, "resolved": False, "source": None, "candidates": []},
+        "time": {"raw": None, "start_raw": None, "end_raw": None, "mentioned": False, "start": None, "end": None, "resolved": False, "ambiguous": False, "interpretations": [], "no_filter": False, "parse_error": None, "canonical": None},
+        "aim": {"raw": None, "aims": [], "reorganized": False},
+        "scope": {"slot_count": 0, "intent_mode": "single", "joint_aim_raw": None, "joint_time_raw": None},
+        "line_slots": [],
+        "active_line_index": None,
+        "dataset_context": {"by_line": {}, "active_line": None, "pending_mentions": [], "pending_exclude": [], "pending_include": []},
+    }
 
 
 @pytest.fixture
@@ -15,7 +25,7 @@ def empty_state() -> dict[str, Any]:
         "user_message": "",
         "reference_now": "2026-06-19T12:00:00+00:00",
         "reference_timezone": "UTC",
-        "slots": empty_slots(),
+        "slots": _empty_slots(),
         "missing": [],
         "line_context": None,
         "plan": None,
@@ -52,7 +62,7 @@ def empty_state() -> dict[str, Any]:
 @pytest.fixture
 def resolved_line_slots() -> dict:
     """State with a resolved line (FRUITS_TEST) ready for slot filling."""
-    slots = empty_slots()
+    slots = _empty_slots()
     slots["line"]["mention"] = "FRUITS_TEST"
     slots["line"]["canonical"] = "FRUITS_TEST"
     slots["line"]["resolved"] = True
