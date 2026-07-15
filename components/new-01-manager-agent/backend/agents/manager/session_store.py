@@ -105,6 +105,8 @@ def session_status_from_state(state: dict) -> str:
     return "active"
 
 
+MAX_BYTES = 200 * 1024 * 1024  # 200 MB — safe margin below PG jsonb 256 MB limit
+
 def state_to_json(state: dict) -> dict:
     """Extract JSON-safe persisted subset from a manager turn result."""
     out: dict = {}
@@ -116,6 +118,13 @@ def state_to_json(state: dict) -> dict:
             out[key] = _serialize_chat_history(value)
         else:
             out[key] = value
+    serialized = json.dumps(out)
+    if len(serialized) > MAX_BYTES:
+        raise RuntimeError(
+            f"Session state too large ({len(serialized)} bytes, max {MAX_BYTES}). "
+            "This is likely caused by a runaway loop adding data each iteration. "
+            "Start a new session."
+        )
     return out
 
 

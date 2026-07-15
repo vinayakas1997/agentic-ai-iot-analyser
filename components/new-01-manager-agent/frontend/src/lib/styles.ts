@@ -21,11 +21,11 @@ export const userBubbleClass =
 export const managerCardClass =
   "rounded-xl border-2 border-stage-manager-line border-l-3 border-l-stage-manager bg-surface-2 p-4 mb-2 shadow-[0_0_24px_-10px_var(--stage-manager)]";
 export const qrPrimaryClass =
-  "inline-flex items-center gap-1.5 text-xs font-semibold px-3.5 py-1.5 rounded-full bg-stage-manager/65 text-[#2a1607] border border-stage-manager/50 cursor-pointer hover:bg-stage-manager/85 hover:-translate-y-px transition-all shadow-[0_0_10px_-4px_var(--stage-manager)]";
+  "inline-flex items-center gap-1.5 text-sm font-semibold px-4 py-2 rounded-full bg-stage-manager text-[#2a1607] border border-stage-manager/70 cursor-pointer hover:bg-stage-manager/90 hover:-translate-y-px transition-all shadow-[0_0_14px_-4px_var(--stage-manager)]";
 export const qrSecondaryClass =
-  "inline-flex items-center gap-1.5 text-xs font-semibold px-3.5 py-1.5 rounded-full bg-white/[0.04] text-text border border-border/60 cursor-pointer hover:bg-white/[0.08] hover:border-text-secondary transition-all";
+  "inline-flex items-center gap-1.5 text-sm font-semibold px-4 py-2 rounded-full bg-white/[0.07] text-text border border-border/70 cursor-pointer hover:bg-white/[0.12] hover:border-white/30 transition-all";
 export const qrPressedClass =
-  "inline-flex items-center gap-1.5 text-xs font-semibold px-3.5 py-1.5 rounded-full bg-ic-blue-soft text-ic-blue border border-ic-blue/30 cursor-pointer transition-all";
+  "inline-flex items-center gap-1.5 text-sm font-semibold px-4 py-2 rounded-full bg-ic-blue-soft/80 text-ic-blue border border-ic-blue/40 cursor-pointer transition-all";
 export const composerBannerClass =
   "flex items-center gap-2 bg-stage-execution-soft/30 border-2 border-stage-execution-line/40 border-b-0 rounded-t-xl px-3.5 py-2.5 text-xs font-medium text-stage-execution";
 

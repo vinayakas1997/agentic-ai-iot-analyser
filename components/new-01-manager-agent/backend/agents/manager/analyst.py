@@ -12,6 +12,74 @@ from agents.manager.state import ManagerState
 logger = logging.getLogger(__name__)
 
 
+def _format_benefits_from_text(raw: str) -> list[str]:
+    """Split a free-text benefits string into separate bullet points."""
+    if not raw:
+        return []
+    parts = re.split(r'(?<=[.!])\s+(?=[A-Z])', raw.strip())
+    return [p.strip() for p in parts if p.strip()]
+
+
+def _relevant_columns(datasets_full: list, aims_text: str) -> list[dict]:
+    """Find column names mentioned in the aims text, grouped by dataset.
+
+    Only columns whose name appears in the aim description are returned,
+    so the user sees the subset that the analysis actually touches.
+    """
+    aim_lower = aims_text.lower()
+    result = []
+    for ds in datasets_full:
+        name = ds.get("dataset_name") or ds.get("name") or ""
+        if not name:
+            continue
+        matched: list[str] = []
+        for col in (ds.get("column_definitions") or []):
+            col_name = col.get("name", "")
+            if col_name and col_name.lower() in aim_lower and col_name not in matched:
+                matched.append(col_name)
+        if matched:
+            result.append({"dataset": name, "columns": matched})
+    return result
+
+
+def _format_columns_natural(columns_data: list[dict]) -> str:
+    """Render the 'Data & columns used' section as natural-language lines."""
+    if not columns_data:
+        return ""
+    lines: list[str] = []
+    for entry in columns_data:
+        cols = entry["columns"]
+        if not cols:
+            continue
+        quoted = [f"'{c}'" for c in cols]
+        if len(quoted) == 1:
+            col_text = quoted[0]
+        elif len(quoted) == 2:
+            col_text = f"{quoted[0]} and {quoted[1]}"
+        else:
+            col_text = ", ".join(quoted[:-1]) + f", and {quoted[-1]}"
+        lines.append(f"- *{entry['dataset']}* has {col_text}")
+    return "\n".join(lines)
+
+
+def _format_join_explanation(line_context: dict | None) -> str:
+    """Return a join-explanation line from the join_catalog."""
+    join_catalog = (line_context or {}).get("join_catalog") or []
+    lines: list[str] = []
+    for j in join_catalog:
+        from_ds = j.get("from_dataset") or ""
+        to_ds = j.get("to_dataset") or ""
+        on_keys = j.get("on") or []
+        note = j.get("note") or ""
+        if from_ds and to_ds and on_keys:
+            key_list = ", ".join(f"'{k}'" for k in on_keys)
+            parts = [f"Join on {key_list} between **{from_ds}** and **{to_ds}**"]
+            if note:
+                parts.append(f"_{note}_")
+            lines.append("- " + " — ".join(parts))
+    return "\n".join(lines)
+
+
 def _handle_confirm(state: ManagerState, user_msg: str, session_json: dict) -> ManagerState:
     """Handle confirm_plan routing deterministically, bypassing the LLM entirely.
 
@@ -39,15 +107,40 @@ def _handle_confirm(state: ManagerState, user_msg: str, session_json: dict) -> M
             selected = proposals[proposal_idx]
             canonical = session_json.get("line", {}).get("canonical") or ""
             title = selected.get("title") or ""
-            benefits = selected.get("what_you_might_see") or ""
+            feasible = selected.get("feasible", True)
+            benefits_raw = selected.get("what_you_might_see") or ""
             aims = selected.get("aims") or []
-            aims_text = "\n".join(f"- {a[:160]}" for a in aims[:5])
+            feasibility_tag = "(Doable)" if feasible else "(Not doable)"
+
+            aims_text = "\n".join(f"- {a}" for a in aims[:5])
+
+            line_context = state.get("line_context")
+            datasets_full = (line_context or {}).get("datasets_full") or []
+            columns_data = _relevant_columns(datasets_full, aims_text)
+            columns_natural = _format_columns_natural(columns_data)
+            join_text = _format_join_explanation(line_context)
+
+            benefit_parts = _format_benefits_from_text(benefits_raw)
+            if len(benefit_parts) < 2 and aims:
+                benefit_parts.append("Leverages join keys and relevant columns across datasets for comprehensive analysis.")
+            benefits_text = "\n".join(f"- {b}" for b in benefit_parts) if benefit_parts else ""
+
             msg = f"Here's the analysis plan for **{canonical}**"
-            msg += f": {title}" if title else ""
-            msg += f"\n\n**Aims:**\n{aims_text}\n"
-            if benefits:
-                msg += f"\n{benefits}\n"
-            msg += "\nReply **go** to proceed, say *more options* for other plans, or tell me what to change."
+            msg += f": {title} {feasibility_tag}" if title else ""
+            msg += f"\n\n**What it does:**\n{aims_text}\n"
+            if columns_natural:
+                msg += f"\n**Data & columns used:**\n{columns_natural}\n"
+            if join_text:
+                msg += f"{join_text}\n"
+            if benefits_text:
+                msg += f"\n**Benefits:**\n{benefits_text}\n"
+            msg += (
+                "\n---\n"
+                "**How to proceed:**\n"
+                "- ✅ **Go — proceed** if you're satisfied with this plan\n"
+                "- 🔄 **More options** for fresh alternatives\n"
+                "- ✏️ **Change something** to modify details of this plan"
+            )
             return {
                 **state,
                 "analyst_reasoning": None,
@@ -55,7 +148,7 @@ def _handle_confirm(state: ManagerState, user_msg: str, session_json: dict) -> M
                 "tool_result": None,
                 "plan": {
                     "aims": aims,
-                    "benefits": benefits,
+                    "benefits": benefits_text.strip(),
                     "line": canonical,
                 },
                 "analysis_proposals": [selected],
@@ -424,7 +517,16 @@ async def analyst(state: ManagerState) -> ManagerState:
 
     # If LLM says call_tool but tool name is missing/empty, treat as respond
     if action == "call_tool" and not tool:
-        result["agent_message"] = str(message or "Let me summarize what I've found and how we can proceed.").strip()
+        msg = str(message or "Let me summarize what I've found and how we can proceed.").strip()
+        if state.get("analysis_proposals") or state.get("plan"):
+            msg += (
+                "\n\n---\n"
+                "**How to proceed:**\n"
+                "- ✅ **Go — proceed** if you're satisfied with this plan\n"
+                "- 🔄 **More options** for fresh alternatives\n"
+                "- ✏️ **Change something** to modify details of this plan"
+            )
+        result["agent_message"] = msg
         result["phase"] = "ask"
         return result
 
@@ -511,6 +613,15 @@ async def analyst(state: ManagerState) -> ManagerState:
         return result
 
     # Treat unrecognized/missing action as respond
-    result["agent_message"] = str(message or "Let me summarize what I've found and how we can proceed.").strip()
-    result["phase"] = "ask"
-    return result
+        msg = str(message or "Let me summarize what I've found and how we can proceed.").strip()
+        if state.get("analysis_proposals") or state.get("plan"):
+            msg += (
+                "\n\n---\n"
+                "**How to proceed:**\n"
+                "- ✅ **Go — proceed** if you're satisfied with this plan\n"
+                "- 🔄 **More options** for fresh alternatives\n"
+                "- ✏️ **Change something** to modify details of this plan"
+            )
+        result["agent_message"] = msg
+        result["phase"] = "ask"
+        return result

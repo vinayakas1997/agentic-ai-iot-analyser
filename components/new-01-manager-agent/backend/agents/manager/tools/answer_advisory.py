@@ -50,6 +50,15 @@ async def tool_answer_advisory(state: ManagerState) -> ManagerState:
 
     message = (response.content or "").strip()
 
+    if state.get("analysis_proposals") or state.get("plan"):
+        message += (
+            "\n\n---\n"
+            "**How to proceed:**\n"
+            "- ✅ **Go — proceed** if you're satisfied with this plan\n"
+            "- 🔄 **More options** for fresh alternatives\n"
+            "- ✏️ **Change something** to modify details of this plan"
+        )
+
     return {
         **state,
         "agent_message": message,

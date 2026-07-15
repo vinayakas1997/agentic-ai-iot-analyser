@@ -124,7 +124,19 @@ function chipClass(accent?: "blue" | "amber" | "coral") {
 
 /* ── Internal protocol messages that shouldn't render as a raw chat turn ── */
 function isControlMessage(text: string): boolean {
-  return text === "__confirm__" || /^confirm\s+\d+$/i.test(text);
+  return text === "__confirm__";
+}
+
+function formatUserMessage(turn: Turn): string {
+  const text = (turn.user || "").trim();
+  const match = text.match(/^confirm\s+(\d+)$/i);
+  if (match && turn.ui?.proposals?.length === 1) {
+    const idx = parseInt(match[1]);
+    const proposal = turn.ui.proposals[0] as Record<string, unknown>;
+    const title = (proposal.title as string) || "";
+    return `user selected option ${idx}: ${title}`;
+  }
+  return text;
 }
 
 /* ── Resolve chip accent from dataset role ── */
@@ -374,7 +386,7 @@ export default function ChatSection() {
       </div>
 
       {/* ── Turns ── */}
-      <div className="flex-1 overflow-y-auto min-h-0 pr-1 mb-3">
+      <div ref={scrollContainerRef} className="flex-1 overflow-y-auto min-h-0 pr-1 mb-3">
         {turns.length === 0 && <OnboardingView />}
         {turns.map((turn, i) => {
           if (isControlMessage((turn.user || "").trim())) return null;
@@ -414,7 +426,7 @@ export default function ChatSection() {
                       <IconUser size={13} />
                       You
                     </div>
-                    <p className="text-sm text-text leading-relaxed m-0">{turn.user}</p>
+                    <p className="text-sm text-text leading-relaxed m-0">{formatUserMessage(turn)}</p>
 
                     {(schema?.line ||
                       schema?.datasets_in_scope?.length ||
@@ -575,9 +587,9 @@ export default function ChatSection() {
                             </p>
                             <ul className="m-0 p-0 list-none">
                               {ui.plan.benefits.split("\n").filter(Boolean).map((b, bi) => (
-                                <li
+                                 <li
                                   key={bi}
-                                  className="text-[13px] text-muted leading-relaxed pl-3.5 relative mb-1 before:content-[''] before:absolute before:left-0 before:top-[7px] before:w-1 before:h-1 before:rounded-full before:bg-stage-manager"
+                                  className="text-[15px] text-text/90 leading-relaxed pl-3.5 relative mb-1 before:content-[''] before:absolute before:left-0 before:top-[7px] before:w-1 before:h-1 before:rounded-full before:bg-stage-manager"
                                 >
                                   {b}
                                 </li>
@@ -588,53 +600,6 @@ export default function ChatSection() {
                       </div>
                     )}
 
-                    {/* Single-proposal mode (already-decided, plain prose) */}
-                    {ui?.proposals?.length === 1 && (() => {
-                      const p = ui.proposals[0] as {
-                        title?: string;
-                        feasible?: boolean;
-                        feasibility_reason?: string;
-                        what_you_might_see?: string;
-                        alternative?: string;
-                      };
-                      const bullets = [p.what_you_might_see, p.feasibility_reason].filter(Boolean) as string[];
-                      return (
-                        <div className="text-[13.5px] text-muted leading-relaxed">
-                          <p className="mb-2">
-                            Here's the analysis plan for{" "}
-                            <b className="text-text">{schema?.line || "this line"}</b>:{" "}
-                            <b className="text-text font-medium">{p.title}</b>
-                            {p.feasible !== undefined && (
-                              <span className={`ml-1.5 text-[11px] font-semibold ${p.feasible ? "text-green-300" : "text-red-300"}`}>
-                                ({p.feasible ? "Doable" : "Not doable"})
-                              </span>
-                            )}
-                          </p>
-                          {bullets.length > 0 && (
-                            <ul className="m-0 p-0 list-none">
-                              {bullets.map((b, bi) => (
-                                <li
-                                  key={bi}
-                                  className="text-[13px] text-muted leading-relaxed pl-3.5 relative mb-1 before:content-[''] before:absolute before:left-0 before:top-[7px] before:w-1 before:h-1 before:rounded-full before:bg-stage-manager"
-                                >
-                                  {b}
-                                </li>
-                              ))}
-                            </ul>
-                          )}
-                          {p.feasible === false && p.alternative && (
-                            <button
-                              type="button"
-                              className="mt-1.5 text-[11px] font-semibold text-ic-blue hover:text-blue-300 underline underline-offset-2"
-                              onClick={() => sendUserMessage(p.alternative!)}
-                            >
-                              Try instead: {p.alternative}
-                            </button>
-                          )}
-                        </div>
-                      );
-                    })()}
-
                     {/* Waiting for planner */}
                     {ui?.phase === "man" && (
                       <div className="flex items-center gap-2 py-3 text-sm text-muted">
@@ -643,10 +608,10 @@ export default function ChatSection() {
                       </div>
                     )}
 
-                    {/* Proposals mode */}
+                    {/* Proposals cards */}
                     {(ui?.proposals?.length ?? 0) > 1 && (
                       <div>
-                        <p className="text-[13.5px] text-muted mb-3">
+                        <p className="text-base text-text/90 mb-3">
                           Here are {ui.proposals.length} analysis option
                           {ui.proposals.length > 1 ? "s" : ""} for{" "}
                           <b className="text-text">{schema?.line || "this line"}</b>. Select one to
@@ -666,9 +631,9 @@ export default function ChatSection() {
                       </div>
                     )}
 
-                    {/* Fallback markdown */}
-                    {(ui?.plan?.aims?.length ?? 0) === 0 && (ui?.proposals?.length ?? 0) === 0 && (
-                      <div className="text-sm leading-relaxed space-y-1 [&>p]:m-0 [&>ul]:pl-4 [&>ol]:pl-4 [&>li>p]:m-0 [&>pre]:bg-black/40 [&>pre]:p-2 [&>pre]:rounded [&>pre]:overflow-x-auto [&>code]:bg-black/30 [&>code]:px-1 [&>code]:rounded [&>blockquote]:border-l-2 [&>blockquote]:border-blue-500 [&>blockquote]:pl-3 [&>blockquote]:italic [&>blockquote]:text-muted">
+                    {/* Single-proposal / fallback markdown — agent_message is rich markdown */}
+                    {((ui?.proposals?.length ?? 0) === 1 || ((ui?.plan?.aims?.length ?? 0) === 0 && (ui?.proposals?.length ?? 0) === 0)) && turn.agent && (
+                      <div className="text-base leading-relaxed space-y-1 [&>p]:m-0 [&>ul]:pl-4 [&>ol]:pl-4 [&>li>p]:m-0 [&>pre]:bg-black/40 [&>pre]:p-2 [&>pre]:rounded [&>pre]:overflow-x-auto [&>code]:bg-black/30 [&>code]:px-1 [&>code]:rounded [&>blockquote]:border-l-2 [&>blockquote]:border-blue-500 [&>blockquote]:pl-3 [&>blockquote]:italic [&>blockquote]:text-text/80">
                         <ReactMarkdown
                           remarkPlugins={[remarkGfm]}
                           components={{
@@ -801,7 +766,7 @@ export default function ChatSection() {
                 </div>
                 <p className="text-sm text-text leading-relaxed m-0">
                   {activeProposal
-                    ? `Selected Plan ${activeProposal.index + 1}: ${activeProposal.title}`
+                    ? `user selected option ${activeProposal.index + 1}: ${activeProposal.title}`
                     : isControlMessage((pendingTurn.user || "").trim())
                       ? "Confirming…"
                       : pendingTurn.user}

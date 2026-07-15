@@ -3,6 +3,7 @@ import logging
 
 from langchain_core.messages import HumanMessage, SystemMessage
 
+from agents.manager.analyst import _format_columns_natural, _format_join_explanation, _relevant_columns
 from agents.manager.json_parse import parse_json_from_message
 from agents.manager.llm_client import get_llm as get_llm_client
 from agents.manager.prompts import load_prompt
@@ -96,6 +97,10 @@ async def tool_generate_plans(state: ManagerState) -> ManagerState:
                 "alternative": p.get("alternative", ""),
             })
 
+    logger.info("generate_plans: parsed=%d proposals, normalized=%d, raw=%s",
+                 len(proposals), len(normalized),
+                 json.dumps(parsed, indent=2)[:800])
+
     seen = set(state.get("seen_proposal_titles") or [])
     for p in normalized:
         seen.add(p["title"])
@@ -113,22 +118,32 @@ async def tool_generate_plans(state: ManagerState) -> ManagerState:
     )
     if selected_aim:
         selected_norm = selected_aim.strip().lower()
+        # Try exact textual match first (aims + title)
         focused = [
             p for p in normalized
             if any(
                 selected_norm in a.lower() or a.lower() in selected_norm
                 for a in (p.get("aims") or [])
                 if a
-            )
+            ) or selected_norm in (p.get("title") or "").lower()
         ]
+        logger.info("generate_plans: selected_aim=%r normalized=%d focused=%d",
+                     selected_aim, len(normalized), len(focused))
         if not focused and len(normalized) == 1:
-            # The model already narrowed to a single proposal on its own
-            # (per the prompt's "user selected a specific aim" rule) — even
-            # if its phrasing doesn't textually match the registry aim, it's
-            # the only candidate, so keep its real title/benefits instead of
-            # discarding them for the generic placeholder below.
+            logger.info("generate_plans: single proposal fallback — keeping LLM proposal")
             focused = normalized
+        # If still no match but we have proposals, pick the one with most
+        # word overlap — the LLM often rephrases the registry aim creatively.
+        if not focused and normalized:
+            def _score(p):
+                text = (p.get("title") or "") + " " + " ".join(p.get("aims") or [])
+                return sum(1 for w in selected_norm.split() if len(w) > 2 and w in text.lower())
+            best = max(normalized, key=_score)
+            logger.info("generate_plans: word-overlap fallback — picked title=%r score=%d",
+                         best.get("title"), _score(best))
+            focused = [best]
         if not focused:
+            logger.info("generate_plans: PLACEHOLDER used — no proposals from LLM")
             focused = [{
                 "id": 1,
                 "title": selected_aim,
@@ -174,18 +189,43 @@ async def tool_generate_plans(state: ManagerState) -> ManagerState:
         "line": (state.get("slots") or {}).get("line", {}).get("canonical"),
     }
 
-    proposal_msgs = []
-    for p in normalized:
-        aims_str = "; ".join(p.get("aims") or [])
-        proposal_msgs.append(f"  * {p['title']}: {aims_str}")
-    proposals_text = "\n".join(proposal_msgs)
     if len(normalized) == 1:
-        agent_message = (
-            f"I found a focused analysis plan for you:\n\n{proposals_text}\n\n"
-            "Review it above, then reply **confirm 1** to lock it in and see the review card, "
-            "or **more options** to explore fresh alternatives."
+        p = normalized[0]
+        title = p.get("title", "")
+        feasible = p.get("feasible", True)
+        feasibility_tag = "(Doable)" if feasible else "(Not doable)"
+        aims = p.get("aims") or []
+        aims_text = "\n".join(f"- {a}" for a in aims[:5])
+        benefits_raw = p.get("what_you_might_see") or ""
+
+        line_context = state.get("line_context")
+        datasets_full = (line_context or {}).get("datasets_full") or []
+        columns_data = _relevant_columns(datasets_full, aims_text)
+        columns_natural = _format_columns_natural(columns_data)
+        join_text = _format_join_explanation(line_context)
+
+        agent_message = f"Here's the analysis plan for **{line.get('canonical') or ''}**"
+        agent_message += f": {title} {feasibility_tag}" if title else ""
+        agent_message += f"\n\n**What it does:**\n{aims_text}\n"
+        if columns_natural:
+            agent_message += f"\n**Data & columns used:**\n{columns_natural}\n"
+        if join_text:
+            agent_message += f"{join_text}\n"
+        if benefits_raw:
+            agent_message += f"\n**Benefits:**\n- {benefits_raw}\n"
+        agent_message += (
+            "\n---\n"
+            "**How to proceed:**\n"
+            "- ✅ **Go — proceed** if you're satisfied with this plan\n"
+            "- 🔄 **More options** for fresh alternatives\n"
+            "- ✏️ **Change something** to modify details of this plan"
         )
     else:
+        proposal_msgs = []
+        for p in normalized:
+            aims_str = "; ".join(p.get("aims") or [])
+            proposal_msgs.append(f"  * {p['title']}: {aims_str}")
+        proposals_text = "\n".join(proposal_msgs)
         agent_message = (
             f"I generated {len(normalized)} analysis options:\n\n{proposals_text}\n\n"
             "Pick one by replying **confirm 1**, **confirm 2**, etc. to narrow down, "
