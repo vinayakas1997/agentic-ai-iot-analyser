@@ -1,0 +1,8 @@
+packages:
+  - "apps/*"
+  - "packages/*"
+
+# prisma:
+#   generators:
+#     client:
+#       output: ./node_modules/@prisma/client

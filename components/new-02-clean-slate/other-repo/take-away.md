@@ -1,0 +1,2 @@
+Yes, that's the right takeaway. The SQL generation pipeline — schema context injection → prompt building → LLM call → validate → execute — is the only practical pattern from that repo for your case.
+The rest (NestJS, Next.js, BullMQ, MCP JS SDK) doesn't apply to your Python FastAPI stack. You already have the schema context builder and LLM call working in aims.py. If you add SQL execution later, you'd just need validation + read-only execution on top.

@@ -1,0 +1,15 @@
+{
+  "name": "ai-data-analyst",
+  "private": true,
+  "version": "0.0.1",
+  "scripts": {
+    "dev": "turbo run dev --parallel",
+    "build": "turbo run build",
+    "lint": "turbo run lint",
+    "format": "turbo run format"
+  },
+  "devDependencies": {
+    "turbo": "latest"
+  },
+  "packageManager": "pnpm@10.23.0"
+}
