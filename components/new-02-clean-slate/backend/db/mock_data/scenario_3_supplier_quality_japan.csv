@@ -1,0 +1,15 @@
+supplier_id,supplier_name,prefecture,fruit_name,certification_type,quality_score_2025,quality_score_2026,delivery_on_time_pct,contract_price_yen_per_kg,farm_size_hectares,organic_certified,established_year,notes
+SUP-001,Aomori Ringo Farm,Aomori,Apple,JGAP,92.5,94.0,98.5,520.00,45.5,true,1988,Leading apple producer in Tohoku
+SUP-002,Yamanashi Grape Growers,Yamanashi,Grape,JGAP,88.0,90.5,95.0,950.00,22.0,false,1995,Specializes in Shine Muscat and Kyoho
+SUP-003,Wakayama Mikan Co-op,Wakayama,Mandarin,GlobalGAP,85.5,87.0,93.0,330.00,60.0,false,1980,Largest mikan cooperative in Kansai
+SUP-004,Shizuoka Melon House,Shizuoka,Melon,JGAP,95.0,96.5,99.0,2800.00,5.5,true,2001,Prince melon premium grower
+SUP-005,Nagano Fruit Association,Nagano,Apple,JGAP,90.0,91.5,96.0,490.00,80.0,true,1975,Grows multiple fruit varieties across Nagano
+SUP-006,Tochigi Strawberry Farm,Tochigi,Strawberry,GlobalGAP,91.0,93.0,97.0,1250.00,8.5,true,2005,Tochiotome brand originator
+SUP-007,Fukuoka Amaou Farm,Fukuoka,Strawberry,JGAP,94.0,95.5,98.0,1550.00,6.2,true,2008,Amaou premium strawberry specialist
+SUP-008,Ehime Mikan Delight,Ehime,Mandarin,JGAP,87.5,89.0,94.5,360.00,55.0,false,1990,Mikan exports to Asia
+SUP-009,Hokkaido Melon King,Hokkaido,Melon,GlobalGAP,96.0,97.0,99.5,3200.00,4.8,true,1992,Yubari King award-winning farm
+SUP-010,Okayama Peach Garden,Okayama,Peach,JGAP,93.0,94.5,97.5,1200.00,12.0,true,1985,White peach specialty
+SUP-011,Niigata Pear Orchard,Niigata,Pear,JGAP,89.0,90.0,95.5,680.00,18.5,false,1998,Western-style pear cultivator
+SUP-012,Saga Watermelon Fields,Saga,Watermelon,GlobalGAP,86.0,88.0,92.0,750.00,25.0,false,2003,Kodama watermelon producer
+SUP-013,Yamagata Cherry Orchards,Yamagata,Cherry,JGAP,94.5,96.0,98.5,2100.00,7.0,true,1982,Satonishiki premium cherries
+SUP-014,Shizuoka Tea & Strawberry Co,Shizuoka,Strawberry,JGAP,90.0,91.0,95.0,1400.00,4.2,true,2010,New-generation indoor strawberry farm
