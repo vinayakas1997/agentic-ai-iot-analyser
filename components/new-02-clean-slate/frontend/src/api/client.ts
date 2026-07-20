@@ -125,8 +125,10 @@ export async function executeQuery(sessionId: string, message: string, lineName 
     session_id: string;
     sql: string;
     columns: string[];
+    column_types: string[];
     rows: Record<string, unknown>[];
     row_count: number;
+    chart_suggestions?: { advanced: { chartType: string; xKey: string; yKeys: string[]; reason?: string }[]; basic: { chartType: string; xKey: string; yKeys: string[]; reason?: string }[] };
   }>("/api/v2/execute-query", {
     method: "POST",
     body: JSON.stringify({ session_id: sessionId, message, line_name: lineName, history }),

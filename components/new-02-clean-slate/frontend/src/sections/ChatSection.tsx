@@ -6,6 +6,7 @@ import { listDatasets, executeQuery } from "../api/client";
 import { useDatasetStore } from "../stores/datasetStore";
 import { IconDatabase, IconCheck, IconUser, IconTarget } from "../lib/icons";
 import { QueryResultState } from "./QueryActions";
+import type { AnalysisAction, Turn } from "../types/manager";
 import { DatasetColumns } from "../components/DatasetColumns";
 import { TurnBubble } from "../components/TurnBubble";
 import { AimBar } from "../components/AimBar";
@@ -40,6 +41,8 @@ export default function ChatSection() {
   const pendingTurn = useSessionStore((s) => s.pendingTurn);
   const sendUserMessage = useSessionStore((s) => s.sendUserMessage);
   const aimProposals = useSessionStore((s) => s.aimProposals);
+  const chatQueryResults = useSessionStore((s) => s.chatQueryResults);
+  const updateChatQueryResults = useSessionStore((s) => s.updateChatQueryResults);
 
   const storeSelected = useDatasetStore((s) => s.selected);
   const storeToggle = useDatasetStore((s) => s.toggle);
@@ -60,10 +63,21 @@ export default function ChatSection() {
   const [queryResults, setQueryResults] = useState<Record<string, QueryResultState>>({});
   const [aimResults, setAimResults] = useState<Record<string, QueryResultState>>({});
   const [runningAim, setRunningAim] = useState<string | null>(null);
+  const [runningAction, setRunningAction] = useState<string | null>(null);
+  const [completedActions, setCompletedActions] = useState<Record<string, string>>({});
   const [viewingResult, setViewingResult] = useState<{ aim: string; description?: string; datasets?: string[]; result: QueryResultState } | null>(null);
   const viewingResultRef = useRef(viewingResult);
   viewingResultRef.current = viewingResult;
   const composerRef = useRef<HTMLTextAreaElement>(null);
+  const chatScrollRef = useRef<HTMLDivElement>(null);
+
+  const scrollToBottom = useCallback(() => {
+    const container = chatScrollRef.current;
+    if (!container) return;
+    requestAnimationFrame(() => {
+      container.scrollTo({ top: container.scrollHeight, behavior: "smooth" });
+    });
+  }, []);
 
   const datasetLookup = useMemo(() => {
     const map = new Map<string, DatasetInfo>();
@@ -189,6 +203,84 @@ export default function ChatSection() {
       });
     }
   };
+
+  const handleScrollToTurn = useCallback((turnId: string) => {
+    const el = document.querySelector(`[data-turn-id="${turnId}"]`);
+    if (!el) return;
+    el.scrollIntoView({ behavior: "smooth", block: "center" });
+    el.classList.add("ring-2", "ring-emerald-400", "ring-offset-2", "rounded-xl");
+    setTimeout(() => {
+      el.classList.remove("ring-2", "ring-emerald-400", "ring-offset-2", "rounded-xl");
+    }, 1500);
+  }, []);
+
+  const handleRunAnalysis = async (action: AnalysisAction, turnCreatedAt: string) => {
+    if (!sessionId || runningAction) return;
+    setRunningAction(action.name);
+
+    // Create a new turn showing the action as a user message
+    const now = new Date().toISOString();
+    const newTurn = { created_at: now, user: action.name, agent: "" } as Turn;
+    useSessionStore.setState((s) => ({ turns: [...s.turns, newTurn] }));
+    scrollToBottom();
+
+    try {
+      const parts: string[] = [];
+      const datasets = action.datasets && action.datasets.length > 0 ? action.datasets : storeAttached;
+      for (const dsName of datasets) {
+        const ds = datasetLookup.get(dsName);
+        const table = ds?.table || dsName;
+        const allCols = ds?.column_definitions?.map((c) => c.name) || [];
+        parts.push(`  Dataset: ${dsName} → table \`${table}\`, columns: ${allCols.join(", ")}`);
+      }
+      const sqlMessage = `Generate a SQL query for: ${action.name}\n\n${action.description || ""}\n\nAvailable datasets:\n${parts.join("\n\n")}`;
+      const lineName = datasets.join(",");
+      const res = await executeQuery(sessionId, sqlMessage, lineName);
+      const resultState: QueryResultState = { loading: false, ...res };
+      const summary = `**${action.name}** — results shown below.`;
+      useSessionStore.setState((s) => ({
+        turns: s.turns.map((t) => t.created_at === now ? { ...t, agent: summary } : t),
+      }));
+      scrollToBottom();
+      setQueryResults((prev) => ({ ...prev, [now]: resultState }));
+      updateChatQueryResults({ ...chatQueryResults, [now]: resultState }).catch(() => {});
+      useOutputStore.getState().addResult({
+        aim: action.name,
+        description: action.description,
+        datasets: action.datasets,
+        result: resultState,
+      });
+      setCompletedActions((prev) => ({ ...prev, [action.name]: now }));
+    } catch (e: any) {
+      const msg = e.message || "";
+      let clean = "Failed to generate a working query. Try rephrasing your request.";
+      try { const parsed = JSON.parse(msg); if (parsed.detail) clean = parsed.detail; } catch {}
+      const errorState: QueryResultState = { loading: false, error: clean };
+      const errorMsg = `**${action.name}** — ${clean}`;
+      useSessionStore.setState((s) => ({
+        turns: s.turns.map((t) => t.created_at === now ? { ...t, agent: errorMsg } : t),
+      }));
+      scrollToBottom();
+      setQueryResults((prev) => ({ ...prev, [now]: errorState }));
+      updateChatQueryResults({ ...chatQueryResults, [now]: errorState }).catch(() => {});
+      useOutputStore.getState().addResult({
+        aim: action.name,
+        description: action.description,
+        datasets: action.datasets,
+        result: errorState,
+      });
+      setCompletedActions((prev) => ({ ...prev, [action.name]: now }));
+    } finally {
+      setRunningAction(null);
+    }
+  };
+
+  // Load persisted chat query results on session change
+  useEffect(() => {
+    if (sessionId && Object.keys(chatQueryResults).length > 0) {
+      setQueryResults(chatQueryResults);
+    }
+  }, [sessionId]);
 
   const handleSend = async () => {
     const msg = input.trim() || (selectedAims.length > 0 ? selectedAims.map((a) => a.aim).join(", ") : "");
@@ -360,7 +452,7 @@ export default function ChatSection() {
         )}
       </div>
 
-      <div className="flex-1 overflow-y-auto min-h-0 pr-1">
+      <div ref={chatScrollRef} className="flex-1 overflow-y-auto min-h-0 pr-1">
         {turns.length === 0 && !pendingTurn ? (
           <div className="flex flex-col items-center justify-center h-full text-center px-6">
             <span className="inline-flex items-center justify-center w-12 h-12 rounded-2xl bg-ic-violet-soft text-ic-violet mb-4">
@@ -384,7 +476,11 @@ export default function ChatSection() {
               <TurnBubble
                 key={t.created_at}
                 turn={t}
-                queryResult={queryResults[t.created_at]}
+                queryResult={queryResults[t.created_at ?? ""]}
+                onRunAnalysis={handleRunAnalysis}
+                completedActions={completedActions}
+                runningAction={runningAction}
+                onScrollToTurn={handleScrollToTurn}
               />
             ))}
             {pendingTurn && (

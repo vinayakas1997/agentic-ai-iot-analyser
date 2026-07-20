@@ -24,12 +24,14 @@ Based on the user's question, respond appropriately:
 
 4. **FACTUAL** — If the user asks about specific columns, tables, or relationships, answer directly from the schema metadata.
 
+5. **EDUCATE** — If the user asks about data visualization concepts (e.g., "what is an area chart?", "when should I use a bar vs line chart?", "explain scatter plots"), explain the concept clearly with examples. Relate it back to their data where possible.
+
 ## Rules
 - Only reference columns and datasets listed in the context above
 - Never invent column names, values, or tables
 - If the user selected specific aims (mentioned in their message), prioritize explaining or working with those
 - Use markdown (headings, lists, tables, code blocks) for readability
-- If the question is unrelated to the available data, politely redirect to what the datasets can actually answer"""
+- If the question is unrelated to the available data AND unrelated to data visualization concepts, politely redirect to what the datasets can actually answer"""
 
 
 async def call_llm(prompt: str) -> str:
@@ -293,6 +295,266 @@ async def generate_chat_response(
     except Exception as e:
         logger.exception("generate_chat_response: LLM failed")
         return f"I encountered an error while processing your request. Please try again. ({str(e)[:200]})"
+
+CHART_SELECTION_PROMPT = """You are a data visualization expert. Given the schema and sample data below, recommend charts that each reveal a unique insight.
+
+## Supported Chart Types
+ADVANCED (shown prominently above basic charts — prefer these when data supports multi-dimensional or mixed views):
+- "composed": mixed views — stacked bars with a trend line overlay (needs 2+ numeric yKeys)
+- "stackedArea": volume over time with multiple series stacked (needs 2+ numeric yKeys + time/category xKey)
+- "treemap": proportional breakdown by category (needs 1 category + 1 numeric value)
+- "radialBar": circular multi-metric comparison (needs 1 category + 1+ numeric values)
+- "funnel": conversion or drop-off pipeline (needs 1 stage/label column + 1 numeric value)
+- "sunburst": hierarchical nested categories (needs 2+ category columns + 1 numeric value)
+- "scatter": correlation between two numeric variables (needs 2+ numeric columns)
+- "radar": multi-dimensional comparison profiles (needs 1 label + 2+ numeric metrics)
+
+BASIC (always available):
+- "bar": comparing categories or groups
+- "line": trends over time or ordered sequences
+- "area": volume/magnitude over time (filled line)
+- "pie": proportions of a whole (max 8 slices)
+
+## Decision Guide
+- If data has 2+ numeric columns → MUST include at least one of: composed, stackedArea, scatter, radar
+- If data has 1 category + 1 numeric → consider treemap or funnel or radialBar
+- If data has 2+ category columns + 1 numeric → consider sunburst
+- If data looks like stages/pipeline → consider funnel
+- Always return 1-2 ADVANCED and 2-3 BASIC charts
+
+## Column Schema
+{column_schema}
+
+## Sample Data (first {sample_count} rows)
+{sample_data}
+
+## Rules
+- Return 1-2 ADVANCED chart types if the data supports multi-dimensional or mixed views
+- Return 2-3 BASIC chart types — always include these
+- Each chart must reveal a DIFFERENT perspective on the same data
+- Validate all referenced columns exist in the schema
+- Return ONLY valid JSON — no markdown, no code fences
+
+## Output Format
+{{
+  "advanced": [
+    {{
+      "chartType": "composed|stackedArea|treemap|radialBar|funnel|sunburst|scatter|radar",
+      "xKey": "<column for x-axis>",
+      "yKeys": ["<columns for y-axis>"],
+      "reason": "<1-sentence: what insight this chart reveals>"
+    }}
+  ],
+  "basic": [
+    {{
+      "chartType": "bar|line|area|pie",
+      "xKey": "<column for x-axis>",
+      "yKeys": ["<columns for y-axis>"],
+      "reason": "<1-sentence: what insight this chart reveals>"
+    }}
+  ]
+}}"""
+
+
+CHART_RETRY_PROMPT = """Your previous chart configuration was invalid.
+
+Error: {error_message}
+Column schema: {column_schema}
+Your previous response: {previous_response}
+
+Please fix the issues above and return a valid JSON object with "advanced" and "basic" arrays.
+Common fixes:
+- chartType must be one of: composed, stackedArea, treemap, radialBar, funnel, sunburst, scatter, radar, bar, line, area, pie
+- xKey and yKeys must reference exact column names from the schema
+- Each chart must have a "reason" field explaining the insight
+- advanced and basic must be arrays (use [] if none)"""
+
+
+VALID_CHART_TYPES = {"composed", "stackedArea", "treemap", "radialBar", "funnel", "sunburst", "scatter", "radar",
+                     "bar", "line", "area", "pie"}
+
+
+def _validate_chart_config(cfg: dict, columns: list[str]) -> bool:
+    """Validate a single chart config has valid type and column references."""
+    if not isinstance(cfg, dict):
+        return False
+    if cfg.get("chartType") not in VALID_CHART_TYPES:
+        return False
+    if not cfg.get("xKey") or not isinstance(cfg.get("yKeys"), list):
+        return False
+    if cfg["xKey"] not in columns:
+        return False
+    if not all(yk in columns for yk in cfg["yKeys"]):
+        return False
+    return True
+
+
+def _fallback_chart_configs(columns: list[str], column_types: list[str], rows: list[dict]) -> dict:
+    """Rule-based fallback: generate basic + advanced charts when LLM fails."""
+    numeric_cols = [c for c, t in zip(columns, column_types)
+                    if t in ("integer", "float", "decimal", "numeric", "bigint", "smallint")]
+    date_cols = [c for c, t in zip(columns, column_types)
+                 if t in ("date", "timestamp", "timestamptz")]
+    x_key = date_cols[0] if date_cols else columns[0]
+    y_keys = numeric_cols[:3] if numeric_cols else [columns[-1]]
+
+    basic = [
+        {"chartType": "bar", "xKey": x_key, "yKeys": y_keys, "reason": "Compare values across categories"},
+    ]
+    if date_cols:
+        basic.append({"chartType": "line", "xKey": x_key, "yKeys": y_keys, "reason": "Show trends over time"})
+        basic.append({"chartType": "area", "xKey": x_key, "yKeys": y_keys, "reason": "Show volume over time"})
+    if len(numeric_cols) == 1 and len(columns) >= 2:
+        pie_x = columns[0] if columns[0] != numeric_cols[0] else columns[-1]
+        basic.append({"chartType": "pie", "xKey": pie_x, "yKeys": [numeric_cols[0]], "reason": "Show proportional distribution"})
+
+    advanced = []
+    if len(numeric_cols) >= 2:
+        advanced.append({
+            "chartType": "stackedArea",
+            "xKey": x_key,
+            "yKeys": numeric_cols[:3],
+            "reason": "Compare volume trends across multiple metrics"
+        })
+        if date_cols:
+            advanced.append({
+                "chartType": "composed",
+                "xKey": x_key,
+                "yKeys": numeric_cols[:3],
+                "reason": "Mixed view: stacked bars with trend overlay"
+            })
+    if len(numeric_cols) >= 1 and len(columns) >= 3:
+        cat_cols = [c for c in columns if c not in numeric_cols]
+        if len(cat_cols) >= 2:
+            advanced.append({
+                "chartType": "sunburst",
+                "xKey": cat_cols[0],
+                "yKeys": [numeric_cols[0]],
+                "reason": "Hierarchical breakdown across nested categories"
+            })
+
+    return {"advanced": advanced[:2], "basic": basic}
+
+
+async def suggest_charts(
+    columns: list[str],
+    column_types: list[str],
+    rows: list[dict],
+    max_retries: int = 2,
+) -> dict:
+    """Call LLM to recommend chart types for result data.
+
+    Returns: {"advanced": [...], "basic": [...]}
+    Retries up to max_retries times on invalid output.
+    Falls back to rule-based defaults on persistent failure.
+    """
+    if not columns or not rows:
+        return _fallback_chart_configs(columns, column_types, rows)
+
+    # Build schema string
+    type_lookup = dict(zip(columns, column_types))
+    schema_lines = []
+    for col in columns:
+        t = type_lookup.get(col, "text")
+        schema_lines.append(f"- {col} ({t})")
+    column_schema = "\n".join(schema_lines)
+
+    # Sample first 5 rows
+    sample = rows[:5]
+    sample_str = json.dumps(sample, default=str, indent=2)
+
+    prompt = CHART_SELECTION_PROMPT.format(
+        column_schema=column_schema,
+        sample_count=len(sample),
+        sample_data=sample_str,
+    )
+
+    last_error = None
+    for attempt in range(max_retries + 1):
+        raw = await call_llm(prompt)
+        raw = raw.strip()
+
+        if raw.startswith("```"):
+            raw = raw.split("\n", 1)[-1]
+            raw = raw.rsplit("```", 1)[0].strip()
+
+        try:
+            result = json.loads(raw)
+            if not isinstance(result, dict):
+                raise ValueError("Response is not a JSON object")
+
+            advanced = result.get("advanced", [])
+            basic = result.get("basic", [])
+
+            if not isinstance(advanced, list) or not isinstance(basic, list):
+                raise ValueError("advanced and basic must be arrays")
+
+            valid_advanced = [c for c in advanced if _validate_chart_config(c, columns)]
+            valid_basic = [c for c in basic if _validate_chart_config(c, columns)]
+
+            if len(valid_basic) >= 1:
+                return {"advanced": valid_advanced[:2], "basic": valid_basic[:3]}
+
+            raise ValueError("No valid basic chart configs found")
+
+        except (json.JSONDecodeError, ValueError) as e:
+            last_error = str(e)
+            logger.warning("suggest_charts attempt %d/%d failed: %s", attempt + 1, max_retries + 1, e)
+            if attempt < max_retries:
+                prompt = (
+                    CHART_RETRY_PROMPT.format(
+                        error_message=last_error,
+                        column_schema=column_schema,
+                        previous_response=raw[:1000],
+                    )
+                    + f"\n\n## Column Schema\n{column_schema}\n\n## Sample Data\n{sample_str}"
+                )
+
+    logger.warning("suggest_charts all attempts failed, using fallback: %s", last_error)
+    return _fallback_chart_configs(columns, column_types, rows)
+
+
+EXTRACT_ACTIONS_PROMPT = """Extract exactly 5 interactive analysis actions from the response text below. Return ONLY a JSON array — no markdown, no code fences.
+
+Each object in the array must have:
+- "name": short actionable label (e.g., "Compare quality scores by supplier")
+- "description": what this analysis reveals (1 sentence)
+- "datasets": list of dataset names to use
+
+If no clear actions, return [].
+
+Text:
+{text}"""
+
+
+async def extract_analysis_actions(text: str, dataset_names: list[str]) -> list[dict]:
+    """Extract interactive analysis action proposals from a chat response text."""
+    if not text.strip():
+        return []
+
+    prompt = EXTRACT_ACTIONS_PROMPT.format(text=text[:2000])
+    try:
+        raw = (await call_llm(prompt)).strip()
+        if not raw:
+            return []
+        if raw.startswith("```"):
+            raw = raw.split("\n", 1)[-1]
+            raw = raw.rsplit("```", 1)[0]
+        actions = json.loads(raw)
+        if not isinstance(actions, list):
+            return []
+        for a in actions:
+            if isinstance(a, str):
+                a = {"name": a, "description": "", "datasets": dataset_names}
+            if "datasets" not in a or not a["datasets"]:
+                a["datasets"] = dataset_names
+            if "description" not in a:
+                a["description"] = ""
+        return actions[:5]
+    except (json.JSONDecodeError, Exception) as e:
+        logger.warning(f"extract_analysis_actions: failed — {e}")
+        return []
+
 
 EXTRACT_AIMS_PROMPT = """Extract specific analysis aims from the research text below. Return ONLY a JSON array — no markdown, no code fences.
 

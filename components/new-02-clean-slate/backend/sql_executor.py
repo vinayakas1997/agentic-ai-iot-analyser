@@ -2,6 +2,7 @@
 
 import re
 import logging
+from datetime import datetime, date
 from decimal import Decimal
 
 from sqlalchemy import text
@@ -75,6 +76,35 @@ async def explain_sql(sql: str) -> list[str]:
     return lines
 
 
+def _infer_column_types(columns: list[str], rows: list[dict]) -> list[str]:
+    """Infer column types from actual data values in rows (checks first 10 rows)."""
+    type_map = []
+    for col in columns:
+        detected = "text"
+        for row in rows[:10]:
+            val = row.get(col)
+            if val is None:
+                continue
+            if isinstance(val, bool):
+                detected = "boolean"
+            elif isinstance(val, int):
+                detected = "integer"
+            elif isinstance(val, float):
+                detected = "float"
+            elif isinstance(val, Decimal):
+                detected = "decimal"
+            elif isinstance(val, datetime):
+                detected = "timestamp"
+            elif isinstance(val, date):
+                detected = "date"
+            elif isinstance(val, str):
+                detected = "text"
+            # Use first non-None match
+            break
+        type_map.append(detected)
+    return type_map
+
+
 async def execute_sql(sql: str) -> dict:
     """Execute a validated SELECT query and return results."""
     validated = validate_sql(sql)
@@ -93,9 +123,11 @@ async def execute_sql(sql: str) -> dict:
                 row_dict[col] = val
             data.append(row_dict)
         await db.rollback()
+    column_types = _infer_column_types(columns, data)
     return {
         "sql": validated,
         "columns": columns,
+        "column_types": column_types,
         "rows": data,
         "row_count": len(data),
     }

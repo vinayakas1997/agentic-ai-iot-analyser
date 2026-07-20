@@ -4,6 +4,7 @@ import { generateSessionName } from "../lib/names";
 import type { MessageResponse, SchemaSnapshot, SessionListItem, SessionMeta, Turn, TurnUi } from "../types/manager";
 import { useUiStore } from "./uiStore";
 import { useOutputStore, type CollectedResult } from "./outputStore";
+import type { QueryResultState } from "../sections/QueryActions";
 
 function turnFromResponse(res: MessageResponse, userMessage: string): Turn {
   return {
@@ -16,6 +17,7 @@ function turnFromResponse(res: MessageResponse, userMessage: string): Turn {
     description: res.description || null,
     benefits: res.benefits || null,
     columns: res.columns || null,
+    analysis_actions: res.analysis_actions || undefined,
   };
 }
 
@@ -63,6 +65,7 @@ interface SessionState {
   pendingTurn: PendingTurn | null;
   aimProposals: { aim: string; description: string; datasets: string[] }[];
   outputResults: CollectedResult[];
+  chatQueryResults: Record<string, QueryResultState>;
   bootstrap: () => Promise<void>;
   refreshSessions: () => Promise<SessionListItem[]>;
   switchSession: (id: string) => Promise<void>;
@@ -83,6 +86,7 @@ interface SessionState {
   setPendingTitle: (title: string) => void;
   setOutputResults: (results: CollectedResult[]) => void;
   updateOutputResults: (results: CollectedResult[]) => Promise<void>;
+  updateChatQueryResults: (results: Record<string, QueryResultState>) => Promise<void>;
   startPoller: () => void;
   stopPoller: () => void;
 }
@@ -102,6 +106,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   pendingTurn: null,
   aimProposals: [],
   outputResults: [],
+  chatQueryResults: {},
 
   refreshSessions: async () => {
     const list = await api.listSessions();
@@ -127,6 +132,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
           description: null,
           benefits: null,
           columns: null,
+          analysis_actions: t.analysis_actions || undefined,
         }));
         set({
           sessionMeta,
@@ -135,6 +141,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
           isLocalSession: false,
           aimProposals: detail.state?.aim_proposals || [],
           outputResults: Array.isArray(detail.state?.output_results) ? detail.state.output_results : [],
+          chatQueryResults: detail.state?.chat_query_results || {},
         });
         useUiStore.getState().selectTurn(loadedTurns.length - 1);
         useOutputStore.getState().setResults(Array.isArray(detail.state?.output_results) ? detail.state.output_results : []);
@@ -174,6 +181,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
         description: null,
         benefits: null,
         columns: null,
+        analysis_actions: t.analysis_actions || undefined,
       }));
       set({
         sessionMeta,
@@ -182,6 +190,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
         executionEvents: [],
         aimProposals: detail.state?.aim_proposals || [],
         outputResults: Array.isArray(detail.state?.output_results) ? detail.state.output_results : [],
+        chatQueryResults: detail.state?.chat_query_results || {},
       });
       useUiStore.getState().selectTurn(loadedTurns.length - 1);
       useOutputStore.getState().setResults(Array.isArray(detail.state?.output_results) ? detail.state.output_results : []);
@@ -356,6 +365,15 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       await api.updateSessionState(get().sessionId!, { output_results: results });
       set({ outputResults: results });
       useOutputStore.getState().setResults(results);
+    } catch (e) {
+      set({ error: getErrorMessage(e) });
+    }
+  },
+
+  updateChatQueryResults: async (results) => {
+    try {
+      await api.updateSessionState(get().sessionId!, { chat_query_results: results });
+      set({ chatQueryResults: results });
     } catch (e) {
       set({ error: getErrorMessage(e) });
     }

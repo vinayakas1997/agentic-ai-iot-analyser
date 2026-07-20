@@ -79,6 +79,7 @@ export interface Turn {
   description?: string | null;
   benefits?: string | null;
   columns?: { dataset: string; name: string }[] | null;
+  analysis_actions?: AnalysisAction[];
 }
 
 export interface SessionMeta {
@@ -120,4 +121,23 @@ export interface MessageResponse {
   benefits?: string | null;
   columns?: { dataset: string; name: string }[] | null;
   aim_proposals?: { aim: string; description: string; datasets: string[] }[];
+  analysis_actions?: AnalysisAction[];
+}
+
+export interface AnalysisAction {
+  name: string;
+  description: string;
+  datasets: string[];
+}
+
+export interface ChartConfig {
+  chartType: "composed" | "stackedArea" | "treemap" | "radialBar" | "funnel" | "sunburst" | "scatter" | "radar" | "bar" | "line" | "area" | "pie";
+  xKey: string;
+  yKeys: string[];
+  reason?: string;
+}
+
+export interface ChartSuggestions {
+  advanced: ChartConfig[];
+  basic: ChartConfig[];
 }

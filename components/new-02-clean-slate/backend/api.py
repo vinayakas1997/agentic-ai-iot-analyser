@@ -9,7 +9,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from resolve import resolve_line_lookup, fetch_datasets, save_task_definition
-from aims import generate_chat_response, generate_sql, fix_sql, criticize_sql, extract_aims_from_text
+from aims import generate_chat_response, generate_sql, fix_sql, criticize_sql, extract_aims_from_text, extract_analysis_actions, suggest_charts, _fallback_chart_configs
 from sql_executor import execute_sql
 from db.models import GlobalRegistry, ManagerSession
 from db.session import AsyncSessionLocal
@@ -68,6 +68,11 @@ class AimProposal(BaseModel):
     description: str = ""
     datasets: list[str] = []
 
+class AnalysisAction(BaseModel):
+    name: str
+    description: str = ""
+    datasets: list[str] = []
+
 class MessageResponse(BaseModel):
     session_id: str
     turn_index: int = 0
@@ -81,6 +86,17 @@ class MessageResponse(BaseModel):
     benefits: str | None = None
     columns: list[dict] | None = None
     aim_proposals: list[AimProposal] = []
+    analysis_actions: list[AnalysisAction] = []
+
+class ChartConfig(BaseModel):
+    chartType: str
+    xKey: str
+    yKeys: list[str]
+    reason: str = ""
+
+class ChartSuggestions(BaseModel):
+    advanced: list[ChartConfig] = []
+    basic: list[ChartConfig] = []
 
 class ExecuteQueryRequest(BaseModel):
     session_id: str
@@ -92,8 +108,36 @@ class ExecuteQueryResponse(BaseModel):
     session_id: str
     sql: str
     columns: list[str]
+    column_types: list[str] = []
     rows: list[dict]
     row_count: int
+    chart_suggestions: ChartSuggestions | None = None
+
+# ── Helpers ──
+
+async def _build_chart_suggestions(result: dict) -> ChartSuggestions | None:
+    """Build chart suggestions from SQL result, falling back to rules on failure."""
+    if not result.get("columns") or not result.get("rows"):
+        return None
+    try:
+        suggestions_raw = await suggest_charts(
+            columns=result["columns"],
+            column_types=result.get("column_types", []),
+            rows=result["rows"],
+        )
+        return ChartSuggestions(
+            advanced=[ChartConfig(**c) for c in suggestions_raw.get("advanced", [])],
+            basic=[ChartConfig(**c) for c in suggestions_raw.get("basic", [])],
+        )
+    except Exception as chart_err:
+        logger.warning("Chart suggestion failed: %s", str(chart_err)[:200])
+        fallback = _fallback_chart_configs(
+            result["columns"], result.get("column_types", []), result["rows"]
+        )
+        return ChartSuggestions(
+            advanced=[ChartConfig(**c) for c in fallback.get("advanced", [])],
+            basic=[ChartConfig(**c) for c in fallback.get("basic", [])],
+        )
 
 # ── Routes ──
 
@@ -217,9 +261,11 @@ async def execute_query(req: ExecuteQueryRequest):
             # Critic approved — execute
             try:
                 result = await execute_sql(sql)
+                chart_suggestions = await _build_chart_suggestions(result)
                 return ExecuteQueryResponse(
                     session_id=req.session_id,
                     **result,
+                    chart_suggestions=chart_suggestions,
                 )
             except Exception as e:
                 # Runtime failure (unlikely after critic) — feed back to fix
@@ -254,7 +300,8 @@ async def execute_query(req: ExecuteQueryRequest):
     # Last resort: try executing whatever SQL we have
     try:
         result = await execute_sql(sql)
-        return ExecuteQueryResponse(session_id=req.session_id, **result)
+        chart_suggestions = await _build_chart_suggestions(result)
+        return ExecuteQueryResponse(session_id=req.session_id, **result, chart_suggestions=chart_suggestions)
     except Exception as e:
         raise HTTPException(
             status_code=400,
@@ -423,7 +470,11 @@ async def send_message(req: MessageRequest):
     aim_proposals_raw = await extract_aims_from_text(agent_msg, dataset_names)
     aim_proposals = [AimProposal(**a) for a in aim_proposals_raw if isinstance(a, dict)]
 
-    # Save turn + proposals to session state
+    # Extract interactive analysis actions from the response
+    analysis_actions_raw = await extract_analysis_actions(agent_msg, dataset_names) if dataset_names else []
+    analysis_actions = [AnalysisAction(**a) for a in analysis_actions_raw if isinstance(a, dict)]
+
+    # Save turn + proposals + actions to session state
     async with AsyncSessionLocal() as db:
         from sqlalchemy import select
         row = (await db.execute(
@@ -432,11 +483,14 @@ async def send_message(req: MessageRequest):
         if row:
             state = dict(row.state_json or {})
             turns = list(state.get("turns", []))
-            turns.append({
+            turn_entry = {
                 "user": req.message,
                 "agent": agent_msg,
                 "timestamp": datetime.now(timezone.utc).isoformat(),
-            })
+            }
+            if analysis_actions_raw:
+                turn_entry["analysis_actions"] = analysis_actions_raw
+            turns.append(turn_entry)
             state["turns"] = turns
 
             # Accumulate aim proposals in session state
@@ -465,6 +519,7 @@ async def send_message(req: MessageRequest):
         agent_message=agent_msg,
         phase="chat",
         status="active",
+        analysis_actions=analysis_actions,
         done=True,
         aim_proposals=aim_proposals,
     )
