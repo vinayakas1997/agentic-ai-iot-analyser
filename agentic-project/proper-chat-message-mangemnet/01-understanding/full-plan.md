@@ -136,19 +136,76 @@ class MessageRequest(BaseModel):
     history: list[dict] | None = None  # kept for backward compat, ignored when enrichment_mode is set
 ```
 
-### 2b. AimBar RUN (`ChatSection.tsx` `handleRunAimSql`)
+### 2b. AimBar RUN — unified handler (`ChatSection.tsx` `handleRunAimSql`)
 
-- Turn created client-side with `aims: [aimDef.aim]`, `datasets: aimDef.datasets`, and `result_uuid: crypto.randomUUID()`.
-- Calls `/api/v2/execute-query` as before (no enrichment needed — it's a direct SQL query).
-- On success, persists turn via `persistTurns()` with fields included.
+`handleRunAimSql` is the **single entry point** for running any aim (normal aims AND analysis actions). This eliminates the SQL generation mismatch that would occur with separate handlers.
+
+**Flow:**
+1. Turn created client-side with `aims: [aimDef.aim]`, `datasets: aimDef.datasets`, and `result_uuid: crypto.randomUUID()`.
+2. Calls `/api/v2/execute-query` (no enrichment needed — it's a direct SQL query).
+3. On success, persists turn via `persistTurns()` with fields included.
+4. Result stored in `chatQueryResults` (UUID key).
+5. Stores in `completedActions` as `{ [aimDef.aim]: turnId }` (maps name → turn timestamp for scroll-to-turn).
+
+**SQL generation:** Uses `aimDef.description` in the SQL prompt (line 230-245). Both normal aims and analysis actions carry descriptions, so the same code path works for both.
+
+**Why not two handlers?** `handleRunAnalysis` had identical SQL generation logic to `handleRunAimSql`. The only difference was `completedActions` update. By adding that to `handleRunAimSql`, we eliminate redundancy and the risk of divergent SQL generation.
+
+### 2c. Analysis action — two-step flow (TurnBubble toggle + AimBar RUN)
+
+Analysis actions are now two-step: **attach first, then run**. This prevents auto-execution and gives the user control over enrichment scope.
+
+**Step 1: TurnBubble toggle** (user clicks "Add for analysis"):
+- Action is added to `selectedAims` as `{ aim: action.name, description: action.description, datasets: action.datasets }`.
+- Action's datasets are attached via `storeAddMultiple` / `storeAttachMultiple`.
+- NO execution happens. The action is only staged in the composer.
+
+**Step 2: AimBar RUN** (user clicks "Run" on the AimBar):
+- Calls `handleRunAimSql` with the aim definition.
+- `handleRunAimSql` already handles descriptions in SQL generation (line 230-245).
+- Turn created with `aims: [action.name]`, `datasets: action.datasets`, `result_uuid: crypto.randomUUID()`.
 - Result stored in `chatQueryResults` (UUID key).
-- Also stores in `completedActions` as `{ [aimDef.aim]: turnId }` (maps name → turn timestamp for scroll-to-turn), just like `handleRunAnalysis` does. This ensures AimBar runs appear in the "Analyses:" bar and have scroll-back capability.
+- `completedActions` updated: `{ [action.name]: turnId }`.
 
-### 2c. Analysis action (`ChatSection.tsx` `handleRunAnalysis`)
+**TurnBubble toggle states:**
 
-- Same as AimBar RUN — tags set to `aims: [action.name]`, `datasets: action.datasets`, with its own `result_uuid`.
+| State | Button | Click Action |
+|---|---|---|
+| Not attached | "Add for analysis" | Attaches aim + datasets to composer |
+| Attached | "Added for analysis" (teal) | Detaches aim + unneeded datasets |
+| Completed + attached | "Added ✓" (green) | Detaches aim |
+| Completed + detached | "View" (scroll to result) | Just scrolls (no attach) |
 
-### 2d. Tag persistence
+### 2d. Re-run mechanism
+
+Completed aims can be re-run from two locations:
+
+**From completed actions bar:**
+Each chip shows a small replay icon (↻) next to the scroll button. Clicking:
+1. Re-adds the aim to `selectedAims` (if not already there)
+2. Attaches its datasets
+3. Calls `handleRunAimSql` to generate new SQL and execute
+4. The old result remains in `chatQueryResults` (new result gets its own UUID)
+
+**From OutputPanel result card:**
+Add a "Re-run" button alongside "Show Details". Same behavior as above.
+
+**Implementation:**
+```typescript
+const handleRerunAim = async (aimDef: { aim: string; description?: string; datasets?: string[] }) => {
+  // Re-add to selectedAims if needed
+  if (!selectedAims.find(a => a.aim === aimDef.aim)) {
+    useAim(aimDef);
+  }
+  // Run via the unified handler
+  await handleRunAimSql(aimDef);
+};
+```
+
+**Edge case: re-run same aim 3 times**
+Each run creates a new turn with its own `result_uuid`. `completedActions` updates to point to the latest turn. All 3 results remain in `chatQueryResults`. Enrichment includes all 3 turns (each with its own result via per-turn `result_uuid`).
+
+### 2e. Tag persistence
 
 **`persistTurns()`** (`ChatSection.tsx`) — field naming matches existing backend format (`timestamp` for backward compat with persisted sessions):
 ```typescript
@@ -163,7 +220,7 @@ const currentTurns = sState.turns.map((t) => ({
 }));
 ```
 
-### 2e. Tag restoration
+### 2f. Tag restoration
 
 **`bootstrap()` / `switchSession()`** (`sessionStore.ts`) — reads `t.timestamp` for backward compat with existing persisted sessions (which store the field as `"timestamp"`, not `"created_at"`):
 ```typescript
@@ -183,7 +240,13 @@ const loadedTurns = (detail.turns || []).map((t: any) => ({
 
 ### 3a. Trigger condition (idempotent + debounced)
 
-Frontend tracks turn count per tag. When any tag reaches a multiple of 5 AND those turns aren't already covered by an existing summary, a summary is triggered. Debounced at 2s to prevent rapid-fire on batch sends.
+Frontend tracks turn count. Trigger strategy depends on enrichment mode:
+
+**RESEARCH mode:** Count turns per tag. When any tag reaches a multiple of 5 AND those turns aren't already covered by an existing summary, a summary is triggered.
+
+**SUMMARY mode:** Count ALL turns (not per-tag). When total turns reach a multiple of 5, trigger a single global summary covering all recent turns. This handles untagged turns that have no aim/dataset tags.
+
+Debounced at 2s to prevent rapid-fire on batch sends.
 
 Implementation in `ChatSection.tsx`:
 ```typescript
@@ -192,33 +255,50 @@ const summaryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 useEffect(() => {
   if (summaryTimerRef.current) clearTimeout(summaryTimerRef.current);
 
-  const tagTurnCount: Record<string, string[][]> = {};
-  for (const t of turns) {
-    for (const aim of (t.aims || [])) {
-      const tag = `aim:${aim}`;
-      if (!tagTurnCount[tag]) tagTurnCount[tag] = [];
-      tagTurnCount[tag].push(t.created_at);
-    }
-    for (const ds of (t.datasets || [])) {
-      const tag = `dataset:${ds}`;
-      if (!tagTurnCount[tag]) tagTurnCount[tag] = [];
-      tagTurnCount[tag].push(t.created_at);
-    }
-  }
-
-  for (const [tag, timestamps] of Object.entries(tagTurnCount)) {
-    if (timestamps.length > 0 && timestamps.length % 5 === 0 && !summarizingTags.has(tag)) {
+  if (enrichmentMode === "summary") {
+    // SUMMARY mode: count all turns, trigger global summary
+    const allTimestamps = turns.map(t => t.created_at).filter(Boolean) as string[];
+    if (allTimestamps.length > 0 && allTimestamps.length % 5 === 0) {
+      const tag = "__all__"; // special key for global summary
       const existingSummaries = contextSummaries[tag] || [];
       const alreadyCovered = existingSummaries.some(s =>
-        timestamps.every(ts => s.turn_timestamps.includes(ts))
+        allTimestamps.every(ts => s.turn_timestamps.includes(ts))
       );
-      if (alreadyCovered) continue;
+      if (!alreadyCovered) {
+        const group = allTimestamps.slice(-5);
+        summaryTimerRef.current = setTimeout(() => triggerSummary(tag, group), 2000);
+      }
+    }
+  } else {
+    // RESEARCH mode: count per tag
+    const tagTurnCount: Record<string, string[]> = {};
+    for (const t of turns) {
+      for (const aim of (t.aims || [])) {
+        const tag = `aim:${aim}`;
+        if (!tagTurnCount[tag]) tagTurnCount[tag] = [];
+        tagTurnCount[tag].push(t.created_at);
+      }
+      for (const ds of (t.datasets || [])) {
+        const tag = `dataset:${ds}`;
+        if (!tagTurnCount[tag]) tagTurnCount[tag] = [];
+        tagTurnCount[tag].push(t.created_at);
+      }
+    }
 
-      const group = timestamps.slice(-5); // last 5 for this tag
-      summaryTimerRef.current = setTimeout(() => triggerSummary(tag, group), 2000);
+    for (const [tag, timestamps] of Object.entries(tagTurnCount)) {
+      if (timestamps.length > 0 && timestamps.length % 5 === 0 && !summarizingTags.has(tag)) {
+        const existingSummaries = contextSummaries[tag] || [];
+        const alreadyCovered = existingSummaries.some(s =>
+          timestamps.every(ts => s.turn_timestamps.includes(ts))
+        );
+        if (alreadyCovered) continue;
+
+        const group = timestamps.slice(-5);
+        summaryTimerRef.current = setTimeout(() => triggerSummary(tag, group), 2000);
+      }
     }
   }
-}, [turns]);
+}, [turns, enrichmentMode]);
 ```
 
 ### 3b. Summary generation
@@ -521,13 +601,13 @@ async with AsyncSessionLocal() as db:
 | File | Change |
 |---|---|
 | `types/manager.ts` | Add `aims?: string[]`, `datasets?: string[]`, `result_uuid?: string` fields to `Turn` interface |
-| `ChatSection.tsx` | Add `attached_aims` to `handleSend` payload; tag turns (`aims`, `datasets`, `result_uuid`) in `handleRunAimSql` / `handleRunAnalysis`; add `completedActions` update in `handleRunAimSql` (not just `handleRunAnalysis`); add idempotent + debounced summary trigger logic; add "Summarizing..." UI; send `enrichment_mode` in payload; update `completedActions` to store turn timestamp (not result UUID) |
+| `ChatSection.tsx` | Add `attached_aims` to `handleSend` payload; tag turns (`aims`, `datasets`, `result_uuid`) in `handleRunAimSql`; add `completedActions` update in `handleRunAimSql` (unified handler — `handleRunAnalysis` removed); add `handleRerunAim` function; add idempotent + debounced summary trigger logic (mode-aware: per-tag for RESEARCH, global for SUMMARY); add "Summarizing..." UI; send `enrichment_mode` in payload; update `completedActions` to store turn timestamp (not result UUID) |
 | `sessionStore.ts` | Restore `aims`, `datasets`, `result_uuid`, `context_summaries` in `bootstrap`/`switchSession`; add `enrichment_mode` field (default `"research"`); reset `aimProposals`, `context_summaries`, `enrichment_mode` in `newSession` |
 | `datasetStore.ts` | Keep as-is (already has `clear()`) |
 | `api/client.ts` | Add `summarizeContext()` function; update `sendMessage` type to include `attached_aims` and `enrichment_mode`; add retry logic for 409 responses |
-| `TurnBubble.tsx` | Add "Add for analysis" / "Added for analysis" toggle on each action pill; change scroll target from `completedActions[name]` to turn timestamp |
-| `OutputPanel.tsx` | Add "Add for analysis" / "Added for analysis" toggle on each result card; add expandable context view showing tag-filtered history |
-| `Navbar.tsx` / `ContextSection.tsx` | Add `enrichment_mode` toggle UI (RESEARCH / SUMMARY); show current mode |
+| `TurnBubble.tsx` | Add "Add for analysis" / "Added for analysis" toggle on each action pill; add concurrency feedback (disable + tooltip when another action is running); remove direct `onRunAnalysis` callback (replaced by toggle → AimBar run flow) |
+| `OutputPanel.tsx` | Add "Add for analysis" / "Added for analysis" toggle on each result card; add "Re-run" button on result cards; add expandable context view showing tag-filtered history |
+| `Navbar.tsx` / `ContextSection.tsx` | Add `enrichment_mode` toggle UI (RESEARCH / SUMMARY); show current mode; add remove button (×) on completed action chips for full cleanup |
 
 ### Backend
 
@@ -550,6 +630,7 @@ async with AsyncSessionLocal() as db:
 - Implement optimistic locking with `version` column.
 - **Backward-compat**: `build_enrichment_block` falls back to `created_at` key if `result_uuid` absent.
 - **`newSession()` cleanup**: add `aimProposals: []`, `context_summaries: {}`, `enrichment_mode: "research"` to the state reset.
+- **Unify run path**: add `completedActions` update to `handleRunAimSql`; remove `handleRunAnalysis` (all aims now go through `handleRunAimSql`).
 
 ### Phase 2: Enrichment
 - Implement `build_enrichment_block()` in backend with: token cap (4000), proper dedup (all timestamps), backward-compat key lookup, SQL truncation marker.
@@ -561,11 +642,15 @@ async with AsyncSessionLocal() as db:
 ### Phase 3: Summarization
 - Implement `POST /sessions/{id}/summarize-context` endpoint with idempotency check.
 - Frontend summary trigger logic: idempotent (check existing coverage), debounced (2s), with "Summarizing..." UI and 5s timeout fallback.
+- **Mode-aware trigger**: RESEARCH mode triggers per-tag (every 5 turns per tag); SUMMARY mode triggers globally (every 5 turns total, stored under `__all__` key).
 
-### Phase 4: Mode management
+### Phase 4: Mode management + attachment control
 - `enrichment_mode` toggle UI in composer/navbar.
 - Store mode on session.
 - Adapt UI per mode (show/hide attach area, analysis buttons).
+- **TurnBubble toggle**: "Add for analysis" / "Added for analysis" on action pills (two-step flow).
+- **Re-run mechanism**: "Re-run" button on completed action chips and OutputPanel result cards.
+- **Remove from completed actions**: × button on chips for full cleanup.
 
 ### Phase 5: Prompt engineering
 - Design system prompts for both RESEARCH and SUMMARY modes.
@@ -592,6 +677,11 @@ async with AsyncSessionLocal() as db:
 | Stale client sends full `history` | Backend ignores `history` when `enrichment_mode` is set. Logs warning. No token waste. |
 | SQL string >80 chars | Truncated with `"... [truncated]"` marker. No mid-clause cut. |
 | Enrichment block exceeds 4000 tokens | Stops adding entries. LLM gets partial context but prioritizes summaries over raw turns. |
+| **Re-running a completed aim** | Clicking "Re-run" on a completed action chip or OutputPanel card re-adds the aim to `selectedAims`, attaches datasets, and calls `handleRunAimSql`. Old result remains in `chatQueryResults`; new result gets its own UUID. |
+| **Detaching aim from composer vs completedActions** | Detaching from AimBar removes from `selectedAims` (excludes from enrichment) but keeps in `completedActions` (scroll-back still works). Remove button (×) on chip does full cleanup (removes from both). |
+| **Analysis action two-step: toggle without run** | User clicks "Add for analysis" on TurnBubble but doesn't click Run. Aim is staged in composer. No SQL executed. User can detach or run later. |
+| **SUMMARY mode + untagged turns** | Summary trigger counts ALL turns (not per-tag). Global summary stored under `__all__` key. Enrichment includes all summaries in SUMMARY mode. |
+| **Re-run same aim 3 times** | Each run creates a new turn with its own `result_uuid`. `completedActions` updates to point to latest turn. All 3 results remain in `chatQueryResults`. Enrichment includes all 3 turns (each with its own result). |
 
 ---
 
@@ -607,3 +697,7 @@ async with AsyncSessionLocal() as db:
 8. No duplicate summaries on reload or multi-tab.
 9. SQL truncation never cuts mid-clause without a marker.
 10. RESEARCH mode with no attachments never calls the LLM (saves tokens).
+11. Re-running a completed aim produces a new result without losing the old one.
+12. Analysis actions are two-step: attach first, then run. No auto-execution.
+13. SUMMARY mode summary trigger works for untagged turns (global summary).
+14. Detaching an aim from the composer excludes it from enrichment but keeps scroll-back working.
