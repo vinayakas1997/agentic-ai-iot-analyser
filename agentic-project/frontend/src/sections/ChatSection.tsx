@@ -2,11 +2,11 @@ import { useState, useEffect, useMemo, useRef, useCallback, KeyboardEvent } from
 import { panelClass, btnPrimary } from "../lib/styles";
 import { useSessionStore } from "../stores/sessionStore";
 import { useOutputStore } from "../stores/outputStore";
-import { listDatasets, executeQuery, updateSessionState } from "../api/client";
+import { listDatasets, executeQuery, updateSessionState, summarizeContext } from "../api/client";
 import { useDatasetStore } from "../stores/datasetStore";
 import { IconDatabase, IconCheck, IconUser, IconTarget } from "../lib/icons";
 import { QueryResultState } from "./QueryActions";
-import type { AnalysisAction, Turn } from "../types/manager";
+import type { Turn } from "../types/manager";
 import { DatasetColumns } from "../components/DatasetColumns";
 import { TurnBubble } from "../components/TurnBubble";
 import { AimBar } from "../components/AimBar";
@@ -42,6 +42,9 @@ export default function ChatSection() {
   const sendUserMessage = useSessionStore((s) => s.sendUserMessage);
   const aimProposals = useSessionStore((s) => s.aimProposals);
   const chatQueryResults = useSessionStore((s) => s.chatQueryResults);
+  const enrichmentMode = useSessionStore((s) => s.enrichmentMode);
+  const contextSummaries = useSessionStore((s) => s.contextSummaries);
+  const setEnrichmentMode = useSessionStore((s) => s.setEnrichmentMode);
 
   const storeSelected = useDatasetStore((s) => s.selected);
   const storeToggle = useDatasetStore((s) => s.toggle);
@@ -56,21 +59,21 @@ export default function ChatSection() {
   const [searchQuery, setSearchQuery] = useState("");
   const [input, setInput] = useState("");
   const [previewAim, setPreviewAim] = useState<Aim | null>(null);
-  const storeSelectedAims = useSessionStore((s) => s.selectedAims);
+  const selectedAims = useSessionStore((s) => s.selectedAims);
   const storeCompletedActions = useSessionStore((s) => s.completedActions);
-  const [selectedAims, setSelectedAims] = useState<Aim[]>(storeSelectedAims || []);
   const [expandedDataset, setExpandedDataset] = useState<string | null>(null);
   const [showSearch, setShowSearch] = useState(true);
   const [queryResults, setQueryResults] = useState<Record<string, QueryResultState>>({});
   const [aimResults, setAimResults] = useState<Record<string, QueryResultState>>({});
   const [runningAim, setRunningAim] = useState<string | null>(null);
-  const [runningAction, setRunningAction] = useState<string | null>(null);
   const [completedActions, setCompletedActions] = useState<Record<string, string>>({});
   const [viewingResult, setViewingResult] = useState<{ aim: string; description?: string; datasets?: string[]; result: QueryResultState } | null>(null);
   const viewingResultRef = useRef(viewingResult);
   viewingResultRef.current = viewingResult;
   const composerRef = useRef<HTMLTextAreaElement>(null);
   const chatScrollRef = useRef<HTMLDivElement>(null);
+  const [summarizingTags, setSummarizingTags] = useState<Set<string>>(new Set());
+  const summaryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const scrollToBottom = useCallback(() => {
     const container = chatScrollRef.current;
@@ -144,9 +147,6 @@ export default function ChatSection() {
 
   const useAim = (aim: Aim) => {
     closePreview();
-    if (!selectedAims.find((a) => a.aim === aim.aim)) {
-      setSelectedAims((prev) => [...prev, aim]);
-    }
     useSessionStore.setState((s) => ({
       selectedAims: s.selectedAims.some((a) => a.aim === aim.aim)
         ? s.selectedAims
@@ -163,8 +163,6 @@ export default function ChatSection() {
   const removeAim = (aimText: string) => {
     const aim = selectedAims.find((a) => a.aim === aimText);
     if (!aim) return;
-    
-    setSelectedAims((prev) => prev.filter((a) => a.aim !== aimText));
     
     useSessionStore.setState((s) => ({
       selectedAims: s.selectedAims.filter((a) => a.aim !== aimText),
@@ -185,13 +183,108 @@ export default function ChatSection() {
     }
   };
 
+  const handleToggleAction = (action: { name: string; description: string; datasets?: string[] }) => {
+    if (selectedAims.find((a) => a.aim === action.name)) {
+      removeAim(action.name);
+    } else {
+      useAim({ aim: action.name, description: action.description, datasets: action.datasets });
+    }
+  };
+
+  const handleRerunAim = async (aimDef: { aim: string; description?: string; datasets?: string[] }) => {
+    if (!selectedAims.find((a) => a.aim === aimDef.aim)) {
+      useAim({ aim: aimDef.aim, description: aimDef.description, datasets: aimDef.datasets });
+    }
+    await handleRunAimSql({ aim: aimDef.aim, description: aimDef.description, datasets: aimDef.datasets });
+  };
+
+  const triggerSummary = useCallback(async (tag: string, timestamps: string[]) => {
+    if (!sessionId) return;
+    const timeoutId = setTimeout(() => {
+      setSummarizingTags((prev) => {
+        const next = new Set(prev);
+        next.delete(tag);
+        return next;
+      });
+    }, 5000);
+    setSummarizingTags((prev) => new Set(prev).add(tag));
+    try {
+      const res = await summarizeContext(sessionId, tag, timestamps);
+      clearTimeout(timeoutId);
+      useSessionStore.setState((s) => {
+        const existing = s.contextSummaries[tag] || [];
+        if (!existing.some((e) => e.created_at === res.created_at)) {
+          return { contextSummaries: { ...s.contextSummaries, [tag]: [...existing, { turn_timestamps: timestamps, summary: res.summary, created_at: res.created_at }] } };
+        }
+        return {};
+      });
+    } catch {
+      clearTimeout(timeoutId);
+    } finally {
+      setSummarizingTags((prev) => {
+        const next = new Set(prev);
+        next.delete(tag);
+        return next;
+      });
+    }
+  }, [sessionId]);
+
+  // Debounced summary trigger — mode-aware
+  useEffect(() => {
+    if (summaryTimerRef.current) clearTimeout(summaryTimerRef.current);
+    if (!turns.length) return;
+
+    if (enrichmentMode === "summary") {
+      const allTimestamps = turns.map((t) => t.created_at).filter(Boolean) as string[];
+      if (allTimestamps.length > 0 && allTimestamps.length % 5 === 0) {
+        const tag = "__all__";
+        const existingEntries = contextSummaries[tag] || [];
+        const alreadyCovered = existingEntries.some((e) =>
+          allTimestamps.every((ts) => e.turn_timestamps.includes(ts))
+        );
+        if (!alreadyCovered) {
+          const group = allTimestamps.slice(-5);
+          summaryTimerRef.current = setTimeout(() => triggerSummary(tag, group), 2000);
+        }
+      }
+    } else {
+      const tagTurnCount: Record<string, string[]> = {};
+      for (const t of turns) {
+        for (const aim of (t.aims || [])) {
+          const tag = `aim:${aim}`;
+          if (!tagTurnCount[tag]) tagTurnCount[tag] = [];
+          if (t.created_at) tagTurnCount[tag].push(t.created_at);
+        }
+        for (const ds of (t.datasets || [])) {
+          const tag = `dataset:${ds}`;
+          if (!tagTurnCount[tag]) tagTurnCount[tag] = [];
+          if (t.created_at) tagTurnCount[tag].push(t.created_at);
+        }
+      }
+      for (const [tag, timestamps] of Object.entries(tagTurnCount)) {
+        if (timestamps.length > 0 && timestamps.length % 5 === 0 && !summarizingTags.has(tag)) {
+          const existingEntries = contextSummaries[tag] || [];
+          const alreadyCovered = existingEntries.some((e) =>
+            timestamps.every((ts) => e.turn_timestamps.includes(ts))
+          );
+          if (alreadyCovered) continue;
+          const group = timestamps.slice(-5);
+          summaryTimerRef.current = setTimeout(() => triggerSummary(tag, group), 2000);
+        }
+      }
+    }
+  }, [turns, enrichmentMode, contextSummaries, summarizingTags, triggerSummary]);
+
   const persistTurns = useCallback(() => {
     if (!sessionId) return;
     const sState = useSessionStore.getState();
     const currentTurns = sState.turns.map((t) => ({
       user: t.user,
       agent: t.agent || "",
-      timestamp: t.created_at || new Date().toISOString(),
+      timestamp: t.created_at || crypto.randomUUID(),
+      result_uuid: t.result_uuid,
+      aims: t.aims || [],
+      datasets: t.datasets || [],
       analysis_actions: t.analysis_actions,
     }));
     const payload: Record<string, unknown> = { turns: currentTurns };
@@ -202,16 +295,15 @@ export default function ChatSection() {
     if (outputResults.length > 0) payload.output_results = outputResults;
     if (sState.chatQueryResults && Object.keys(sState.chatQueryResults).length > 0) payload.chat_query_results = sState.chatQueryResults;
     if (sState.completedActions && Object.keys(sState.completedActions).length > 0) payload.completed_actions = sState.completedActions;
+    if (sState.enrichmentMode) payload.enrichment_mode = sState.enrichmentMode;
+    if (sState.contextSummaries && Object.keys(sState.contextSummaries).length > 0) payload.context_summaries = sState.contextSummaries;
     updateSessionState(sessionId, payload).catch((err) => {
       console.warn("[persistTurns] PATCH failed for session", sessionId, err?.message || err);
     });
   }, [sessionId]);
 
-  const handleRunAimSql = async (aimDef: {aim: string; description: string; datasets?: string[]}) => {
+  const handleRunAimSql = async (aimDef: {aim: string; description?: string; datasets?: string[]}) => {
     if (!sessionId) return;
-    if (!selectedAims.find((a) => a.aim === aimDef.aim)) {
-      setSelectedAims((prev) => [...prev, { aim: aimDef.aim, description: aimDef.description, datasets: aimDef.datasets }]);
-    }
     useSessionStore.setState((s) => ({
       selectedAims: s.selectedAims.some((a) => a.aim === aimDef.aim)
         ? s.selectedAims
@@ -226,11 +318,11 @@ export default function ChatSection() {
     setAimResults((prev) => ({ ...prev, [aimName]: { loading: true } }));
 
     // Create a new turn showing the aim as a user message
-    const now = new Date().toISOString();
+    const turnId = crypto.randomUUID();
     const userMsg = aimDef.description
       ? `${aimDef.aim}\n\n${aimDef.description}`
       : aimDef.aim;
-    const newTurn = { created_at: now, user: userMsg, agent: "" } as Turn;
+    const newTurn = { created_at: turnId, user: userMsg, agent: "", result_uuid: turnId, aims: [aimDef.aim], datasets: aimDef.datasets } as Turn;
     useSessionStore.setState((s) => ({ turns: [...s.turns, newTurn] }));
     scrollToBottom();
 
@@ -258,11 +350,13 @@ export default function ChatSection() {
         ? `**${aimDef.aim}** — ${aimDef.description}\n\nResults shown below.`
         : `**${aimDef.aim}** — results shown below.`;
       useSessionStore.setState((s) => ({
-        turns: s.turns.map((t) => t.created_at === now ? { ...t, agent: summary } : t),
-        chatQueryResults: { ...s.chatQueryResults, [now]: resultState },
+        turns: s.turns.map((t) => t.created_at === turnId ? { ...t, agent: summary, result_uuid: turnId, aims: [aimDef.aim], datasets: aimDef.datasets } : t),
+        chatQueryResults: { ...s.chatQueryResults, [turnId]: resultState },
+        completedActions: { ...s.completedActions, [aimDef.aim]: turnId },
       }));
       persistTurns();
-      setQueryResults((prev) => ({ ...prev, [now]: resultState }));
+      setQueryResults((prev) => ({ ...prev, [turnId]: resultState }));
+      setCompletedActions((prev) => ({ ...prev, [aimDef.aim]: turnId }));
     } catch (e: any) {
       const msg = e.message || "";
       let clean = "Failed to generate a working query. Try rephrasing your request.";
@@ -283,11 +377,13 @@ export default function ChatSection() {
         ? `**${aimDef.aim}** — ${aimDef.description}\n\n${clean}`
         : `**${aimDef.aim}** — ${clean}`;
       useSessionStore.setState((s) => ({
-        turns: s.turns.map((t) => t.created_at === now ? { ...t, agent: errorMsg } : t),
-        chatQueryResults: { ...s.chatQueryResults, [now]: errorState },
+        turns: s.turns.map((t) => t.created_at === turnId ? { ...t, agent: errorMsg, result_uuid: turnId, aims: [aimDef.aim], datasets: aimDef.datasets } : t),
+        chatQueryResults: { ...s.chatQueryResults, [turnId]: resultState },
+        completedActions: { ...s.completedActions, [aimDef.aim]: turnId },
       }));
       persistTurns();
-      setQueryResults((prev) => ({ ...prev, [now]: errorState }));
+      setQueryResults((prev) => ({ ...prev, [turnId]: resultState }));
+      setCompletedActions((prev) => ({ ...prev, [aimDef.aim]: turnId }));
     }
   };
 
@@ -301,80 +397,6 @@ export default function ChatSection() {
     }, 1500);
   }, []);
 
-  const handleRunAnalysis = async (action: AnalysisAction, turnCreatedAt: string) => {
-    if (!sessionId || runningAction) return;
-    if (action.datasets && action.datasets.length > 0) {
-      storeAddMultiple(action.datasets);
-      storeAttachMultiple(action.datasets);
-    }
-    setRunningAction(action.name);
-
-    // Create a new turn showing the action as a user message
-    const now = new Date().toISOString();
-    const userMsg = action.description
-      ? `${action.name}\n\n${action.description}`
-      : action.name;
-    const newTurn = { created_at: now, user: userMsg, agent: "" } as Turn;
-    useSessionStore.setState((s) => ({ turns: [...s.turns, newTurn] }));
-    scrollToBottom();
-
-    try {
-      const parts: string[] = [];
-      const datasets = action.datasets && action.datasets.length > 0 ? action.datasets : storeAttached;
-      for (const dsName of datasets) {
-        const ds = datasetLookup.get(dsName);
-        const table = ds?.table || dsName;
-        const allCols = ds?.column_definitions?.map((c) => c.name) || [];
-        parts.push(`  Dataset: ${dsName} → table \`${table}\`, columns: ${allCols.join(", ")}`);
-      }
-      const sqlMessage = `Generate a SQL query for: ${action.name}\n\n${action.description || ""}\n\nAvailable datasets:\n${parts.join("\n\n")}`;
-      const lineName = datasets.join(",");
-      const res = await executeQuery(sessionId, sqlMessage, lineName);
-      const resultState: QueryResultState = { loading: false, ...res };
-      const summary = action.description
-        ? `**${action.name}** — ${action.description}\n\nResults shown below.`
-        : `**${action.name}** — results shown below.`;
-      useOutputStore.getState().addResult({
-        aim: action.name,
-        description: action.description,
-        datasets: action.datasets,
-        result: resultState,
-      });
-      useSessionStore.setState((s) => ({
-        turns: s.turns.map((t) => t.created_at === now ? { ...t, agent: summary } : t),
-        chatQueryResults: { ...s.chatQueryResults, [now]: resultState },
-        completedActions: { ...s.completedActions, [action.name]: now },
-      }));
-      persistTurns();
-      scrollToBottom();
-      setQueryResults((prev) => ({ ...prev, [now]: resultState }));
-      setCompletedActions((prev) => ({ ...prev, [action.name]: now }));
-    } catch (e: any) {
-      const msg = e.message || "";
-      let clean = "Failed to generate a working query. Try rephrasing your request.";
-      try { const parsed = JSON.parse(msg); if (parsed.detail) clean = parsed.detail; } catch {}
-      const errorState: QueryResultState = { loading: false, error: clean };
-      const errorMsg = `**${action.name}** — ${clean}`;
-      useOutputStore.getState().addResult({
-        aim: action.name,
-        description: action.description,
-        datasets: action.datasets,
-        result: errorState,
-      });
-      useSessionStore.setState((s) => ({
-        turns: s.turns.map((t) => t.created_at === now ? { ...t, agent: errorMsg } : t),
-        chatQueryResults: { ...s.chatQueryResults, [now]: errorState },
-        completedActions: { ...s.completedActions, [action.name]: now },
-      }));
-      persistTurns();
-      scrollToBottom();
-      setQueryResults((prev) => ({ ...prev, [now]: errorState }));
-      setCompletedActions((prev) => ({ ...prev, [action.name]: now }));
-    } finally {
-      setRunningAction(null);
-    }
-  };
-
   // Restore persisted results and completed actions on session change
   useEffect(() => {
     if (sessionId) {
@@ -383,17 +405,16 @@ export default function ChatSection() {
     }
   }, [sessionId]);
 
-  // Re-sync selectedAims from session store when session or store changes
+  // Attach datasets for selected aims when session loads
   useEffect(() => {
     if (sessionId) {
-      setSelectedAims(storeSelectedAims);
-      const allDs = storeSelectedAims.flatMap((a) => a.datasets || []);
+      const allDs = selectedAims.flatMap((a) => a.datasets || []);
       if (allDs.length > 0) {
         storeAddMultiple(allDs);
         storeAttachMultiple(allDs);
       }
     }
-  }, [sessionId, storeSelectedAims]);
+  }, [sessionId]);
 
   // Persist selectedAims to backend whenever it changes
   useEffect(() => {
@@ -407,7 +428,8 @@ export default function ChatSection() {
     setInput("");
     setShowSearch(false);
     const lineName = storeAttached.join(",");
-    await sendUserMessage(msg, lineName);
+    const aimNames = selectedAims.map((a) => a.aim);
+    await sendUserMessage(msg, lineName, aimNames, enrichmentMode);
   };
 
   const handleKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
@@ -418,16 +440,16 @@ export default function ChatSection() {
   };
 
   useEffect(() => {
-    const unsub = useOutputStore.subscribe(
-      (state) => state.results,
-      (results) => {
-        const map: Record<string, QueryResultState> = {};
-        for (const r of results) {
-          map[r.aim] = r.result;
-        }
-        setAimResults(map);
+    let prevResults = useOutputStore.getState().results;
+    const unsub = useOutputStore.subscribe((state) => {
+      if (state.results === prevResults) return;
+      prevResults = state.results;
+      const map: Record<string, QueryResultState> = {};
+      for (const r of state.results) {
+        map[r.aim] = r.result;
       }
-    );
+      setAimResults(map);
+    });
     return unsub;
   }, []);
 
@@ -452,6 +474,7 @@ export default function ChatSection() {
 
   return (
     <section className={`${panelClass} order-2 lg:order-none`}>
+      {enrichmentMode === "research" && (
       <div className="rounded-xl border-2 border-border bg-surface-1 p-3 mb-4">
         <button
           type="button"
@@ -570,6 +593,7 @@ export default function ChatSection() {
           </div>
         )}
       </div>
+      )}
 
       <div ref={chatScrollRef} className="flex-1 overflow-y-auto min-h-0 pr-1">
         {turns.length === 0 && !pendingTurn ? (
@@ -595,11 +619,13 @@ export default function ChatSection() {
               <TurnBubble
                 key={t.created_at}
                 turn={t}
-                queryResult={queryResults[t.created_at ?? ""]}
-                onRunAnalysis={handleRunAnalysis}
+                queryResult={queryResults[t.result_uuid ?? ""] || queryResults[t.created_at ?? ""]}
                 completedActions={completedActions}
-                runningAction={runningAction}
+                selectedAims={selectedAims}
+                runningAim={runningAim}
+                onToggleAction={handleToggleAction}
                 onScrollToTurn={handleScrollToTurn}
+                onRerunAim={handleRerunAim}
               />
             ))}
             {pendingTurn && (
@@ -623,9 +649,15 @@ export default function ChatSection() {
             Thinking...
           </div>
         )}
+        {summarizingTags.size > 0 && (
+          <div className="flex items-center gap-2 text-sm text-muted py-1 border-t border-border/30 mt-1">
+            <span className="w-2 h-2 rounded-full bg-ic-teal animate-pulse" />
+            Summarizing{summarizingTags.size > 1 ? ` (${summarizingTags.size} groups)` : ""}...
+          </div>
+        )}
       </div>
 
-      {storeAttached.length > 0 && (
+      {enrichmentMode === "research" && storeAttached.length > 0 && (
         <div className="flex flex-wrap gap-1.5 mb-2 shrink-0">
           {storeAttached.map((ds) => (
             <span
@@ -648,40 +680,69 @@ export default function ChatSection() {
         </div>
       )}
 
+      {/* LLM-proposed aims — only in RESEARCH mode */}
+      {enrichmentMode === "research" && aimProposals.length > 0 && (
+        <div className="rounded-xl border-2 border-border bg-surface-1 p-3 mb-3">
+          <div className="flex items-center gap-1.5 text-[10.5px] font-semibold tracking-wider uppercase text-muted mb-2">
+            <IconTarget size={12} />
+            Suggested by LLM
+          </div>
+          <div className="flex flex-wrap gap-1.5">
+            {aimProposals.filter((p) => !selectedAims.some((a) => a.aim === p.aim)).map((p, i) => (
+              <button
+                key={i}
+                type="button"
+                className="text-[11px] px-2.5 py-1 rounded-full border transition-colors bg-ic-violet-soft/20 text-ic-violet border-ic-violet/20 hover:bg-ic-violet-soft/40"
+                onClick={() => useAim({ aim: p.aim, description: p.description, datasets: p.datasets })}
+              >
+                + {p.aim}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {enrichmentMode === "research" && (
       <AimBar
         selectedAims={selectedAims}
         aimResults={aimResults}
+        completedActions={completedActions}
         runningAim={runningAim}
         onRunSql={handleRunAimSql}
+        onRerun={handleRerunAim}
         onViewResult={setViewingResult}
         onRemove={removeAim}
         onPreview={setPreviewAim}
       />
-
-      {Object.keys(completedActions).length > 0 && (
-        <div className="flex flex-wrap gap-1.5 mb-2">
-          <span className="text-[10.5px] font-semibold tracking-wider uppercase text-muted mr-1 self-center">
-            Analyses:
-          </span>
-          {Object.entries(completedActions).map(([name, timestamp]) => (
-            <button
-              key={name}
-              onClick={() => handleScrollToTurn(timestamp)}
-              className="text-[11px] px-2.5 py-1 rounded-full border flex items-center gap-1.5 bg-emerald-50 text-emerald-600 border-emerald-200 hover:bg-emerald-100 cursor-pointer"
-            >
-              <span className="text-[10px]">✓</span>
-              {name}
-            </button>
-          ))}
-        </div>
       )}
 
-      <div className="shrink-0 mt-3">
+      <div className="shrink-0 mt-3 space-y-2">
+        {/* Mode toggle */}
+        <div className="flex items-center gap-2">
+          <span className="text-[10.5px] font-semibold tracking-wider uppercase text-muted">Mode:</span>
+          <div className="flex rounded-full border-2 border-border overflow-hidden">
+            <button
+              type="button"
+              className={`text-[11px] font-medium px-3 py-1 transition-colors ${enrichmentMode === "research" ? "bg-accent text-white" : "bg-surface-1 text-muted hover:text-text"}`}
+              onClick={() => setEnrichmentMode("research")}
+            >
+              RESEARCH
+            </button>
+            <button
+              type="button"
+              className={`text-[11px] font-medium px-3 py-1 transition-colors ${enrichmentMode === "summary" ? "bg-accent text-white" : "bg-surface-1 text-muted hover:text-text"}`}
+              onClick={() => setEnrichmentMode("summary")}
+            >
+              SUMMARY
+            </button>
+          </div>
+        </div>
+        {/* Composer */}
         <div className="flex gap-2 items-end">
           <textarea
             ref={composerRef}
             className="flex-1 rounded-xl border-2 border-border bg-surface-1 text-text text-sm px-3 py-2.5 resize-none overflow-y-auto focus:outline-none focus:border-accent transition-colors min-h-[42px] max-h-[120px]"
-            placeholder="Ask about your data..."
+            placeholder={enrichmentMode === "research" ? "Ask about your data..." : "Summarize findings, compare analyses, ask about past results..."}
             rows={1}
             value={input}
             onChange={(e) => setInput(e.target.value)}

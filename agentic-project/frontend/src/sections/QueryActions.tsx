@@ -147,7 +147,7 @@ function renderTreemapChart(cfg: ChartConfig, rows: Record<string, unknown>[]) {
     fill: CHART_COLORS[i % CHART_COLORS.length],
   }));
   return (
-    <Treemap width={400} height={200} data={data} dataKey="value" nameKey="name" ratio={4 / 3} stroke="rgba(0,0,0,0.3)" fill="#06b6d4" />
+    <Treemap width={400} height={200} data={data} dataKey="value" nameKey="name" aspectRatio={4 / 3} stroke="rgba(0,0,0,0.3)" fill="#06b6d4" />
   );
 }
 
@@ -210,7 +210,7 @@ function renderBasicChart(type: string, columns: string[], rows: Record<string, 
       return (
         <PieChart>
           <Pie data={pieData} dataKey="value" nameKey="name" cx="50%" cy="50%" outerRadius={80}
-            label={({ name, percent }) => `${name} ${(percent * 100).toFixed(0)}%`}>
+            label={({ name, percent }) => `${name} ${((percent ?? 0) * 100).toFixed(0)}%`}>
             {pieData.map((_, i) => <Cell key={i} fill={CHART_COLORS[i % CHART_COLORS.length]} />)}
           </Pie>
           <Tooltip {...tooltipStyle()} />

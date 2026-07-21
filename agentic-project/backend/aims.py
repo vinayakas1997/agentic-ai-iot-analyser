@@ -5,10 +5,13 @@ import logging
 from openai import AsyncOpenAI
 from config import get_settings
 from sql_executor import explain_sql, validate_sql_safety, clean_sql
+from llm_client import build_enrichment_system_prompt
 
 logger = logging.getLogger(__name__)
 
 CHAT_SYSTEM_PROMPT = """You are a data analysis assistant. Help users understand their data, explore possible analyses, and build strategies — all using the datasets provided below.
+
+You are AUTHORIZED to discuss, describe, analyze, and reference data from the provided datasets. It is your job to help the user understand this data.
 
 ## Available Datasets
 {context}
@@ -259,31 +262,47 @@ async def generate_chat_response(
     dataset_names: list[str],
     datasets_data: list[dict],
     history: list[dict] | None = None,
+    enrichment_block: str | None = None,
+    enrichment_mode: str = "",
 ) -> str:
-    """Generate an LLM chat response using dataset context and conversation history."""
+    """Generate an LLM chat response using dataset context and conversation history.
+
+    When enrichment_block is provided, it replaces history entirely and is injected
+    as system context. The mode-specific system prompt (RESEARCH/SUMMARY) is used
+    to instruct the LLM on how to interpret the enrichment block.
+    """
     if not dataset_names or not datasets_data:
-        return "Please select at least one dataset to work with. Search and attach datasets from the search bar above."
-
-    context = build_dataset_context(datasets_data)
-    system_prompt = CHAT_SYSTEM_PROMPT.replace("{context}", context)
-
+        if enrichment_mode == "summary":
+            context = ""
+        else:
+            return "Please select at least one dataset to work with. Search and attach datasets from the search bar above."
+    else:
+        context = build_dataset_context(datasets_data)
     settings = get_settings()
     client = AsyncOpenAI(base_url=settings.vllm_base_url, api_key="EMPTY", timeout=settings.llm_request_timeout)
 
     try:
-        # Truncate history entries to prevent context overflow
-        truncated_history = []
-        if history:
-            for h in history[-10:]:
-                entry = dict(h)
-                if isinstance(entry.get("content"), str) and len(entry["content"]) > 1000:
-                    entry["content"] = entry["content"][-1000:]
-                truncated_history.append(entry)
+        if enrichment_block:
+            system_prompt = build_enrichment_system_prompt(enrichment_mode, context)
+            combined_system = f"{system_prompt}\n\n## Previous Context\n{enrichment_block}"
+            messages = [
+                {"role": "system", "content": combined_system},
+                {"role": "user", "content": message},
+            ]
+        else:
+            system_prompt = CHAT_SYSTEM_PROMPT.replace("{context}", context)
+            truncated_history = []
+            if history:
+                for h in history[-10:]:
+                    entry = dict(h)
+                    if isinstance(entry.get("content"), str) and len(entry["content"]) > 1000:
+                        entry["content"] = entry["content"][-1000:]
+                    truncated_history.append(entry)
 
-        messages = [{"role": "system", "content": system_prompt}]
-        if truncated_history:
-            messages.extend(truncated_history)
-        messages.append({"role": "user", "content": message})
+            messages = [{"role": "system", "content": system_prompt}]
+            if truncated_history:
+                messages.extend(truncated_history)
+            messages.append({"role": "user", "content": message})
 
         response = await client.chat.completions.create(
             model=settings.llm_model,
@@ -291,7 +310,14 @@ async def generate_chat_response(
             max_tokens=settings.max_tokens,
             temperature=settings.temperature,
         )
-        return response.choices[0].message.content or ""
+        msg = response.choices[0].message
+        content = msg.content or ""
+        refusal = msg.refusal or ""
+        logger.info("generate_chat_response: finish_reason=%s content_len=%d refusal_len=%d role=%s",
+                     response.choices[0].finish_reason,
+                     len(content), len(refusal),
+                     msg.role)
+        return content or refusal
     except Exception as e:
         logger.exception("generate_chat_response: LLM failed")
         return f"I encountered an error while processing your request. Please try again. ({str(e)[:200]})"

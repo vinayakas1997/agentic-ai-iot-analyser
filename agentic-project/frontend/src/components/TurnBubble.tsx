@@ -7,25 +7,28 @@ import type { Turn, AnalysisAction } from "../types/manager";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 
-export function TurnBubble({ turn, queryResult, onRunAnalysis, completedActions, runningAction, onScrollToTurn }: {
+export function TurnBubble({ turn, queryResult, completedActions, selectedAims, runningAim, onToggleAction, onScrollToTurn, onRerunAim }: {
   turn: Turn;
   queryResult?: QueryResultState;
-  onRunAnalysis?: (action: AnalysisAction, turnCreatedAt: string) => void;
   completedActions?: Record<string, string>;
-  runningAction?: string | null;
+  selectedAims?: { aim: string }[];
+  runningAim?: string | null;
+  onToggleAction?: (action: AnalysisAction) => void;
   onScrollToTurn?: (turnId: string) => void;
+  onRerunAim?: (aim: { aim: string; description: string; datasets?: string[] }) => void;
 }) {
   const hasDetail = turn.description || turn.benefits || (turn.columns && turn.columns.length > 0);
   const hasActions = turn.analysis_actions && turn.analysis_actions.length > 0;
 
   const actionsBar = useMemo(() => {
-    if (!hasActions || !onRunAnalysis) return null;
+    if (!hasActions || !onToggleAction) return null;
     return (
       <div className="mt-3 space-y-1">
         {turn.analysis_actions!.map((action, i) => {
           const key = `${turn.created_at}:${action.name}`;
-          const isThisLoading = runningAction === action.name;
+          const isThisLoading = runningAim === action.name;
           const isCompleted = completedActions && completedActions[action.name] !== undefined;
+          const isAttached = selectedAims?.some(a => a.aim === action.name);
 
           if (isThisLoading) {
             return (
@@ -41,15 +44,61 @@ export function TurnBubble({ turn, queryResult, onRunAnalysis, completedActions,
             );
           }
 
+          if (isCompleted && isAttached) {
+            return (
+              <div key={key} className="flex items-center gap-1">
+                <button
+                  type="button"
+                  onClick={() => onToggleAction(action)}
+                  className="text-[11px] px-2.5 py-1 rounded-full border transition-colors flex items-center gap-1.5 bg-emerald-50 text-emerald-600 border-emerald-200 hover:bg-emerald-100 cursor-pointer"
+                  title="Click to detach from composer"
+                >
+                  <span className="text-[10px]">✓</span>
+                  {action.name}
+                </button>
+                {onRerunAim && (
+                  <button
+                    type="button"
+                    onClick={() => onRerunAim({ aim: action.name, description: action.description, datasets: action.datasets })}
+                    className="text-[11px] px-1.5 py-1 rounded-full border border-border/30 text-muted hover:text-text hover:border-border transition-colors"
+                    title="Re-run this analysis"
+                  >
+                    ↻
+                  </button>
+                )}
+              </div>
+            );
+          }
+
           if (isCompleted) {
+            return (
+              <div key={key} className="flex items-center gap-1">
+                <button
+                  type="button"
+                  onClick={() => onScrollToTurn?.(completedActions![action.name])}
+                  className="text-[11px] px-2.5 py-1 rounded-full border transition-colors flex items-center gap-1.5 bg-emerald-50 text-emerald-600 border-emerald-200 hover:bg-emerald-100 cursor-pointer"
+                >
+                  <span className="text-[10px]">✓</span>
+                  {action.name}
+                </button>
+                <span
+                  className="text-[11px] px-1.5 py-1 rounded-full text-muted/60 cursor-default border border-transparent"
+                >
+                  View
+                </span>
+              </div>
+            );
+          }
+
+          if (isAttached) {
             return (
               <button
                 key={key}
                 type="button"
-                onClick={() => onScrollToTurn?.(completedActions![action.name])}
-                className="text-[11px] px-2.5 py-1 rounded-full border transition-colors flex items-center gap-1.5 bg-emerald-50 text-emerald-600 border-emerald-200 hover:bg-emerald-100 cursor-pointer"
+                onClick={() => onToggleAction(action)}
+                className="text-[11px] px-2.5 py-1 rounded-full border transition-colors flex items-center gap-1.5 bg-ic-teal-soft/40 text-ic-teal border-ic-teal/30 hover:bg-ic-teal-soft/60 cursor-pointer"
               >
-                <span className="text-[10px]">✓</span>
+                <span className="text-[10px]">+</span>
                 {action.name}
               </button>
             );
@@ -59,17 +108,17 @@ export function TurnBubble({ turn, queryResult, onRunAnalysis, completedActions,
             <button
               key={key}
               type="button"
-              onClick={() => onRunAnalysis(action, turn.created_at!)}
+              onClick={() => onToggleAction(action)}
               className="text-[11px] px-2.5 py-1 rounded-full border transition-colors flex items-center gap-1.5 bg-ic-violet-soft/20 text-ic-violet border-ic-violet/20 hover:bg-ic-violet-soft/40 cursor-pointer"
             >
-              <span className="text-[10px]">▶</span>
+              <span className="text-[10px]">+</span>
               {action.name}
             </button>
           );
         })}
       </div>
     );
-  }, [hasActions, onRunAnalysis, turn.analysis_actions, turn.created_at, runningAction, completedActions, onScrollToTurn]);
+  }, [hasActions, onToggleAction, turn.analysis_actions, turn.created_at, runningAim, completedActions, selectedAims, onScrollToTurn, onRerunAim]);
 
   const agentContent = (
     <div className="flex-1 min-w-0">

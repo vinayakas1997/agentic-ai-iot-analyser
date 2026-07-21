@@ -7,7 +7,7 @@ import { useOutputStore, type CollectedResult } from "./outputStore";
 import { useDatasetStore } from "./datasetStore";
 import type { QueryResultState } from "../sections/QueryActions";
 
-function turnFromResponse(res: MessageResponse, userMessage: string): Turn {
+function turnFromResponse(res: MessageResponse, userMessage: string, attachedAims?: string[], attachedDatasets?: string[]): Turn {
   return {
     turn_index: res.turn_index ?? 0,
     user: userMessage,
@@ -15,6 +15,9 @@ function turnFromResponse(res: MessageResponse, userMessage: string): Turn {
     ui: res.ui || null,
     schema: res.schema || null,
     created_at: new Date().toISOString(),
+    result_uuid: undefined,
+    aims: attachedAims?.length ? attachedAims : undefined,
+    datasets: attachedDatasets?.length ? attachedDatasets : undefined,
     description: res.description || null,
     benefits: res.benefits || null,
     columns: res.columns || null,
@@ -69,11 +72,13 @@ interface SessionState {
   outputResults: CollectedResult[];
   chatQueryResults: Record<string, QueryResultState>;
   completedActions: Record<string, string>;
+  contextSummaries: Record<string, { turn_timestamps: string[]; summary: string; created_at: string }[]>;
+  enrichmentMode: string;
   bootstrap: () => Promise<void>;
   refreshSessions: () => Promise<SessionListItem[]>;
   switchSession: (id: string) => Promise<void>;
   newSession: () => void;
-  sendUserMessage: (text: string, lineName?: string) => Promise<MessageResponse | undefined>;
+  sendUserMessage: (text: string, lineName?: string, attachedAims?: string[], enrichmentMode?: string) => Promise<MessageResponse | undefined>;
   reopenSession: () => Promise<void>;
   forkSession: () => Promise<void>;
   setError: (error: string | null) => void;
@@ -87,6 +92,7 @@ interface SessionState {
   clearPendingTurn: () => void;
   updateSessionTitle: (sessionId: string, title: string) => Promise<void>;
   setPendingTitle: (title: string) => void;
+  setEnrichmentMode: (mode: string) => void;
   setOutputResults: (results: CollectedResult[]) => void;
   updateOutputResults: (results: CollectedResult[]) => Promise<void>;
   updateChatQueryResults: (results: Record<string, QueryResultState>) => Promise<void>;
@@ -112,6 +118,8 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   outputResults: [],
   chatQueryResults: {},
   completedActions: {},
+  contextSummaries: {},
+  enrichmentMode: "research",
 
   refreshSessions: async () => {
     const list = await api.listSessions();
@@ -133,7 +141,10 @@ export const useSessionStore = create<SessionState>((set, get) => ({
           agent: t.agent || "",
           ui: null as any,
           schema: null as any,
-          created_at: t.timestamp || new Date().toISOString(),
+          created_at: t.created_at || t.timestamp || new Date().toISOString(),
+          result_uuid: t.result_uuid,
+          aims: t.aims || [],
+          datasets: t.datasets || [],
           description: null,
           benefits: null,
           columns: null,
@@ -149,6 +160,8 @@ export const useSessionStore = create<SessionState>((set, get) => ({
           outputResults: Array.isArray(detail.state?.output_results) ? detail.state.output_results : [],
           chatQueryResults: detail.state?.chat_query_results || {},
           completedActions: detail.state?.completed_actions || {},
+          contextSummaries: detail.state?.context_summaries || {},
+          enrichmentMode: detail.state?.enrichment_mode || "research",
         });
         useUiStore.getState().selectTurn(loadedTurns.length - 1);
         useOutputStore.getState().setResults(Array.isArray(detail.state?.output_results) ? detail.state.output_results : []);
@@ -188,7 +201,10 @@ export const useSessionStore = create<SessionState>((set, get) => ({
         agent: t.agent || "",
         ui: null as any,
         schema: null as any,
-        created_at: t.timestamp || new Date().toISOString(),
+        created_at: t.created_at || t.timestamp || new Date().toISOString(),
+        result_uuid: t.result_uuid,
+        aims: t.aims || [],
+        datasets: t.datasets || [],
         description: null,
         benefits: null,
         columns: null,
@@ -204,6 +220,8 @@ export const useSessionStore = create<SessionState>((set, get) => ({
         outputResults: Array.isArray(detail.state?.output_results) ? detail.state.output_results : [],
         chatQueryResults: detail.state?.chat_query_results || {},
         completedActions: detail.state?.completed_actions || {},
+        contextSummaries: detail.state?.context_summaries || {},
+        enrichmentMode: detail.state?.enrichment_mode || "research",
       });
       useUiStore.getState().selectTurn(loadedTurns.length - 1);
       useOutputStore.getState().setResults(Array.isArray(detail.state?.output_results) ? detail.state.output_results : []);
@@ -232,6 +250,9 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       selectedAims: [],
       completedActions: {},
       chatQueryResults: {},
+      aimProposals: [],
+      contextSummaries: {},
+      enrichmentMode: "research",
       executionEvents: [],
       pendingTurn: null,
     });
@@ -240,7 +261,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     useUiStore.getState().selectTurn(-1);
   },
 
-  sendUserMessage: async (text, lineName = "") => {
+  sendUserMessage: async (text, lineName = "", attachedAims: string[] = [], enrichmentMode = "research") => {
     const { sessionId, turns, isLocalSession, pendingTitle, sessionMeta } = get();
     const isDone = turns.length > 0 && Boolean(turns[turns.length - 1]?.ui?.done);
 
@@ -288,16 +309,12 @@ export const useSessionStore = create<SessionState>((set, get) => ({
         }
       }
 
-      const history = turns.slice(-10).flatMap((t) => {
-        const items: { role: "user" | "assistant"; content: string }[] = [{ role: "user", content: t.user }];
-        if (t.agent) items.push({ role: "assistant", content: t.agent });
-        return items;
-      });
-
-      const res = await api.sendMessage(activeSessionId, userText, lineName, history);
+      // Send empty history — enrichment block replaces it (built server-side)
+      const res = await api.sendMessage(activeSessionId, userText, lineName, attachedAims, enrichmentMode, []);
       clearInterval(statusTimer);
       set({ statusMessage: "Response received" });
-      const newTurn = turnFromResponse(res, userText);
+      const datasetNames = lineName.split(",").map((d) => d.trim()).filter(Boolean);
+      const newTurn = turnFromResponse(res, userText, attachedAims, datasetNames);
       const isFirstTurn = turns.length === 0;
       set((state) => ({
         turns: [...state.turns, newTurn],
@@ -415,6 +432,8 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   setStatusMessage: (msg) => set({ statusMessage: msg }),
 
   setPendingTitle: (title) => set({ pendingTitle: title }),
+
+  setEnrichmentMode: (mode) => set({ enrichmentMode: mode }),
 
   pushExecutionEvent: (event) =>
     set((state) => ({

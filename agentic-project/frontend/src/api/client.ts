@@ -1,5 +1,13 @@
 const API = import.meta.env.VITE_API_URL || "http://localhost:7010";
 
+class ApiError extends Error {
+  status: number;
+  constructor(message: string, status: number) {
+    super(message);
+    this.status = status;
+  }
+}
+
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
   const res = await fetch(`${API}${path}`, {
     headers: { "Content-Type": "application/json" },
@@ -7,9 +15,27 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
   });
   if (!res.ok) {
     const body = await res.text();
-    throw new Error(body || res.statusText);
+    throw new ApiError(body || res.statusText, res.status);
   }
   return res.json();
+}
+
+async function withRetry<T>(fn: () => Promise<T>, maxRetries = 3): Promise<T> {
+  let lastErr: unknown;
+  for (let i = 0; i < maxRetries; i++) {
+    try {
+      return await fn();
+    } catch (e) {
+      lastErr = e;
+      if (e instanceof ApiError && e.status === 409) {
+        const delay = 1000 * Math.pow(2, i);
+        await new Promise((r) => setTimeout(r, delay));
+        continue;
+      }
+      throw e;
+    }
+  }
+  throw lastErr;
 }
 
 export async function resolveLine(lineName: string) {
@@ -76,8 +102,9 @@ export async function getSession(sessionId: string) {
   }>(`/api/v2/sessions/${sessionId}`);
 }
 
-export async function sendMessage(sessionId: string, message: string, lineName = "", history?: { role: string; content: string }[]) {
-  return request<{
+export async function sendMessage(sessionId: string, message: string, lineName = "", attachedAims: string[] = [], enrichmentMode = "research", history?: { role: string; content: string }[]) {
+  const body: Record<string, unknown> = { session_id: sessionId, message, line_name: lineName, attached_aims: attachedAims, enrichment_mode: enrichmentMode, history: history ?? [] };
+  return withRetry(() => request<{
     session_id: string;
     turn_index?: number;
     agent_message?: string;
@@ -88,17 +115,18 @@ export async function sendMessage(sessionId: string, message: string, lineName =
     schema?: any;
     done?: boolean;
     aim_proposals?: { aim: string; description: string; datasets: string[] }[];
+    analysis_actions?: { name: string; description: string; datasets: string[] }[];
   }>("/api/v2/messages", {
     method: "POST",
-    body: JSON.stringify({ session_id: sessionId, message, line_name: lineName, history }),
-  });
+    body: JSON.stringify(body),
+  }));
 }
 
 export async function updateSessionState(sessionId: string, state: Record<string, unknown>) {
-  return request<{ session_id: string }>(`/api/v2/sessions/${sessionId}`, {
+  return withRetry(() => request<{ session_id: string }>(`/api/v2/sessions/${sessionId}`, {
     method: "PATCH",
     body: JSON.stringify({ state }),
-  });
+  }));
 }
 
 export async function updateSessionTitle(sessionId: string, title: string) {
@@ -120,19 +148,32 @@ export async function forkSession(sessionId: string) {
   });
 }
 
+import type { ChartConfig } from "../sections/QueryActions";
+
 export async function executeQuery(sessionId: string, message: string, lineName = "", history?: { role: string; content: string }[]) {
-  return request<{
+  return withRetry(() => request<{
     session_id: string;
     sql: string;
     columns: string[];
     column_types: string[];
     rows: Record<string, unknown>[];
     row_count: number;
-    chart_suggestions?: { advanced: { chartType: string; xKey: string; yKeys: string[]; reason?: string }[]; basic: { chartType: string; xKey: string; yKeys: string[]; reason?: string }[] };
+    chart_suggestions?: { advanced: ChartConfig[]; basic: ChartConfig[] };
   }>("/api/v2/execute-query", {
     method: "POST",
     body: JSON.stringify({ session_id: sessionId, message, line_name: lineName, history }),
-  });
+  }));
+}
+
+export async function summarizeContext(sessionId: string, tag: string, turnTimestamps: string[]) {
+  return withRetry(() => request<{
+    tag: string;
+    summary: string;
+    created_at: string;
+  }>(`/api/v2/sessions/${sessionId}/summarize-context`, {
+    method: "POST",
+    body: JSON.stringify({ tag, turn_timestamps: turnTimestamps }),
+  }));
 }
 
 export async function listDatasets() {

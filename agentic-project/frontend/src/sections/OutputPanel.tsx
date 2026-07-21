@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { panelClass, btnSecondary, resultCardClass, resultTagClass, resultBadgeClass, miniTableClass, insightNoteClass } from "../lib/styles";
 import { useOutputStore } from "../stores/outputStore";
+import { useSessionStore } from "../stores/sessionStore";
 import { QueryActions } from "./QueryActions";
 import { IconDatabase, IconTarget, IconClock } from "../lib/icons";
 
@@ -17,7 +18,11 @@ export default function OutputPanel() {
   const results = useOutputStore((s) => s.results);
   const removeResult = useOutputStore((s) => s.removeResult);
   const clearResults = useOutputStore((s) => s.clearResults);
+  const selectedAims = useSessionStore((s) => s.selectedAims);
+  const turns = useSessionStore((s) => s.turns);
+  const contextSummaries = useSessionStore((s) => s.contextSummaries);
   const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [contextExpandedId, setContextExpandedId] = useState<string | null>(null);
   const [, forceUpdate] = useState(0);
 
   useEffect(() => {
@@ -67,24 +72,52 @@ export default function OutputPanel() {
           const rowCount = r.result.row_count ?? 0;
           return (
             <div key={r.id} className={resultCardClass}>
-              <div className="flex items-start justify-between gap-2 mb-1">
-                <div className="flex items-center gap-1.5 min-w-0">
-                  <span className={resultBadgeClass}>
-                    <IconTarget size={12} />
-                  </span>
-                  <span className="font-medium text-text text-sm truncate">{r.aim}</span>
+                <div className="flex items-start justify-between gap-2 mb-1">
+                  <div className="flex items-center gap-1.5 min-w-0">
+                    <span className={resultBadgeClass}>
+                      <IconTarget size={12} />
+                    </span>
+                    <span className="font-medium text-text text-sm truncate">{r.aim}</span>
+                  </div>
+                  <div className="flex items-center gap-1">
+                    <span className="flex items-center">
+                      <button
+                        type="button"
+                        className={`shrink-0 text-[11px] font-medium px-1.5 py-0.5 rounded-full border transition-colors ${
+                          selectedAims.some((a) => a.aim === r.aim)
+                            ? "bg-ic-teal-soft/40 text-ic-teal border-ic-teal/30 hover:bg-ic-teal-soft/60"
+                            : "text-muted border-border/50 hover:text-ic-teal hover:border-ic-teal/30"
+                        }`}
+                        onClick={() => {
+                          if (selectedAims.some((a) => a.aim === r.aim)) {
+                            useSessionStore.setState((s) => ({
+                              selectedAims: s.selectedAims.filter((a) => a.aim !== r.aim),
+                            }));
+                          } else {
+                            useSessionStore.setState((s) => ({
+                              selectedAims: s.selectedAims.some((a) => a.aim === r.aim)
+                                ? s.selectedAims
+                                : [...s.selectedAims, { aim: r.aim, description: r.description, datasets: r.datasets }],
+                            }));
+                          }
+                        }}
+                        title={selectedAims.some((a) => a.aim === r.aim) ? "Added for analysis — click to detach" : "Add for analysis"}
+                      >
+                        {selectedAims.some((a) => a.aim === r.aim) ? "Added" : "+ Add"}
+                      </button>
+                    </span>
+                    <button
+                      type="button"
+                      className="shrink-0 w-6 h-6 flex items-center justify-center rounded hover:bg-white/[0.06] text-muted hover:text-ic-red transition-colors"
+                      onClick={() => removeResult(r.id)}
+                      title="Remove result"
+                    >
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" width="12" height="12" strokeWidth="2.2">
+                        <path d="M3 6h18M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6M8 6V4a2 2 0 012-2h4a2 2 0 012 2v2" />
+                      </svg>
+                    </button>
+                  </div>
                 </div>
-                <button
-                  type="button"
-                  className="shrink-0 w-6 h-6 flex items-center justify-center rounded hover:bg-white/[0.06] text-muted hover:text-ic-red transition-colors"
-                  onClick={() => removeResult(r.id)}
-                  title="Remove result"
-                >
-                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" width="12" height="12" strokeWidth="2.2">
-                    <path d="M3 6h18M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6M8 6V4a2 2 0 012-2h4a2 2 0 012 2v2" />
-                  </svg>
-                </button>
-              </div>
 
               <div className="flex items-center gap-2 mb-2">
                 <span className="text-[11px] text-muted">
@@ -97,13 +130,22 @@ export default function OutputPanel() {
                 </span>
               </div>
 
-              <button
-                type="button"
-                className={`text-[11px] font-medium px-2 py-0.5 rounded-full border transition-colors ${isExpanded ? "bg-accent text-white border-accent" : "text-muted border-border/50 hover:text-text"}`}
-                onClick={() => setExpandedId(isExpanded ? null : r.id)}
-              >
-                {isExpanded ? "▼ Hide Details" : "▶ Show Details"}
-              </button>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  className={`text-[11px] font-medium px-2 py-0.5 rounded-full border transition-colors ${isExpanded ? "bg-accent text-white border-accent" : "text-muted border-border/50 hover:text-text"}`}
+                  onClick={() => setExpandedId(isExpanded ? null : r.id)}
+                >
+                  {isExpanded ? "▼ Hide Details" : "▶ Show Details"}
+                </button>
+                <button
+                  type="button"
+                  className={`text-[11px] font-medium px-2 py-0.5 rounded-full border transition-colors ${contextExpandedId === r.id ? "bg-ic-violet text-white border-ic-violet" : "text-muted border-border/50 hover:text-ic-violet hover:border-ic-violet/30"}`}
+                  onClick={() => setContextExpandedId(contextExpandedId === r.id ? null : r.id)}
+                >
+                  {contextExpandedId === r.id ? "▼ Hide Context" : "ℹ Show Context"}
+                </button>
+              </div>
 
               {isExpanded && (
                 <div className="mt-3 space-y-3">
@@ -129,6 +171,44 @@ export default function OutputPanel() {
                     </div>
                   )}
                   <QueryActions queryResult={r.result} />
+                </div>
+              )}
+
+              {contextExpandedId === r.id && (
+                <div className="mt-3 rounded-xl border border-border/40 bg-surface-2 p-3 space-y-2">
+                  <div className="text-[10.5px] font-semibold tracking-wider uppercase text-tertiary">Enrichment context for "{r.aim}"</div>
+                  {(() => {
+                    const aimTag = `aim:${r.aim}`;
+                    const dsTags = (r.datasets || []).map((d) => `dataset:${d}`);
+                    const allTags = [aimTag, ...dsTags];
+                    const relevantSummaries: { tag: string; summary: string }[] = [];
+                    for (const tag of allTags) {
+                      const entries = contextSummaries[tag] || [];
+                      for (const e of entries) {
+                        relevantSummaries.push({ tag, summary: e.summary });
+                      }
+                    }
+                    const relevantTurns = turns.filter((t) =>
+                      t.aims?.includes(r.aim) || t.datasets?.some((d) => r.datasets?.includes(d))
+                    ).slice(-3);
+                    return (
+                      <>
+                        {relevantSummaries.length === 0 && relevantTurns.length === 0 && (
+                          <p className="text-[11px] text-muted">No prior context for this aim.</p>
+                        )}
+                        {relevantSummaries.map((s, i) => (
+                          <div key={i} className="text-[11px] text-text/80 border-l-2 border-ic-teal pl-2">
+                            <span className="text-[10px] text-muted">[{s.tag}]</span> {s.summary}
+                          </div>
+                        ))}
+                        {relevantTurns.map((t, i) => (
+                          <div key={i} className="text-[11px] text-text/60 border-l-2 border-border pl-2">
+                            <span className="text-[10px] text-muted">[Turn]</span> {(t.user || "").slice(0, 60)}
+                          </div>
+                        ))}
+                      </>
+                    );
+                  })()}
                 </div>
               )}
             </div>

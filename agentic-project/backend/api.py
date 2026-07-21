@@ -10,6 +10,7 @@ from pydantic import BaseModel
 
 from resolve import resolve_line_lookup, fetch_datasets, save_task_definition
 from aims import generate_chat_response, generate_sql, fix_sql, criticize_sql, extract_aims_from_text, extract_analysis_actions, suggest_charts, _fallback_chart_configs
+from llm_client import summarize_turns
 from sql_executor import execute_sql
 from db.models import GlobalRegistry, ManagerSession
 from db.session import AsyncSessionLocal
@@ -61,6 +62,8 @@ class MessageRequest(BaseModel):
     session_id: str
     message: str
     line_name: str = ""
+    attached_aims: list[str] = []
+    enrichment_mode: str = "research"
     history: list[dict] | None = None
 
 class AimProposal(BaseModel):
@@ -72,6 +75,15 @@ class AnalysisAction(BaseModel):
     name: str
     description: str = ""
     datasets: list[str] = []
+
+class SummarizeContextRequest(BaseModel):
+    tag: str
+    turn_timestamps: list[str]
+
+class SummarizeContextResponse(BaseModel):
+    tag: str
+    summary: str
+    created_at: str
 
 class MessageResponse(BaseModel):
     session_id: str
@@ -141,6 +153,94 @@ async def _build_chart_suggestions(result: dict) -> ChartSuggestions | None:
             advanced=[ChartConfig(**c) for c in fallback.get("advanced", [])],
             basic=[ChartConfig(**c) for c in fallback.get("basic", [])],
         )
+
+# ── Enrichment ──
+
+def estimate_tokens(text: str) -> int:
+    """Rough token estimation: ~4 chars per token."""
+    return len(text) // 4 + 1
+
+
+def build_enrichment_block(
+    state: dict,
+    attached_aims: list[str],
+    attached_datasets: list[str],
+    mode: str,
+    max_tokens: int = 4000,
+) -> str:
+    """Build an enrichment block replacing flat history with tagged summaries + relevant turns."""
+    blocks: list[str] = []
+    seen_timestamps: set[str] = set()
+    total_tokens = 0
+
+    if mode == "research":
+        if not attached_aims and not attached_datasets:
+            return ""
+        tags = [f"aim:{a}" for a in attached_aims] + [f"dataset:{d}" for d in attached_datasets]
+    elif mode == "summary":
+        tags = list(state.get("context_summaries", {}).keys())
+    else:
+        return ""
+
+    summaries = state.get("context_summaries", {})
+    turns = state.get("turns", [])
+    chat_results = state.get("chat_query_results", {})
+
+    for tag in tags:
+        tag_summaries = summaries.get(tag, [])
+        covered_ts: set[str] = set()
+        for s in tag_summaries:
+            covered_ts.update(s["turn_timestamps"])
+            if all(ts in seen_timestamps for ts in s["turn_timestamps"]):
+                continue
+            text = f"[Summary: {tag}] {s['summary']}"
+            tokens = estimate_tokens(text)
+            if total_tokens + tokens > max_tokens:
+                break
+            blocks.append(text)
+            total_tokens += tokens
+            seen_timestamps.update(s["turn_timestamps"])
+
+        tag_name = tag.split(":", 1)[1]
+        relevant_turns = [
+            t for t in turns
+            if tag_name in (t.get("aims") or []) or tag_name in (t.get("datasets") or [])
+        ]
+        uncovered = [t for t in relevant_turns if t.get("created_at") not in covered_ts and t.get("timestamp") not in covered_ts]
+
+        for t in uncovered[-5:]:
+            ts = t.get("created_at") or t.get("timestamp")
+            if ts in seen_timestamps:
+                continue
+            result_text = ""
+            result_uuid = t.get("result_uuid")
+            if result_uuid:
+                r = chat_results.get(result_uuid, {})
+                if r:
+                    sql = r.get("sql", "")
+                    sql_display = sql[:80] + " ... [truncated]" if len(sql) > 80 else sql
+                    result_text = f" | SQL: {sql_display} | Rows: {r.get('row_count', 0)}"
+            else:
+                ts_fallback = t.get("created_at") or t.get("timestamp") or ""
+                r = chat_results.get(ts_fallback, {})
+                if r:
+                    sql = r.get("sql", "")
+                    sql_display = sql[:80] + " ... [truncated]" if len(sql) > 80 else sql
+                    result_text = f" | SQL: {sql_display} | Rows: {r.get('row_count', 0)}"
+
+            user_text = (t.get("user") or "")[:80]
+            agent_text = (t.get("agent") or "")[:80]
+            text = f"[Turn] User: {user_text} | Agent: {agent_text}{result_text}"
+            tokens = estimate_tokens(text)
+            if total_tokens + tokens > max_tokens:
+                break
+            blocks.append(text)
+            total_tokens += tokens
+            if ts:
+                seen_timestamps.add(ts)
+
+    return "\n".join(blocks)
+
 
 # ── Routes ──
 
@@ -446,9 +546,14 @@ async def send_message(req: MessageRequest):
     if not session:
         raise HTTPException(status_code=404, detail="Session not found")
 
+    expected_version = session.version
+
     dataset_names = [d.strip() for d in req.line_name.split(",") if d.strip()]
 
-    if not dataset_names:
+    # Guard: RESEARCH mode with no attachments → early return (no LLM call)
+    if req.enrichment_mode == "research" and not req.attached_aims and not dataset_names:
+        agent_msg = "Please attach a dataset or aim, or switch to SUMMARY mode."
+    elif req.enrichment_mode == "research" and not dataset_names:
         agent_msg = "Please select at least one dataset to work with. Search and attach datasets from the search bar above."
     else:
         datasets_data = []
@@ -469,12 +574,35 @@ async def send_message(req: MessageRequest):
                     "suggested_aims": reg.suggested_aims,
                 })
 
-        agent_msg = await generate_chat_response(
-            message=req.message,
-            dataset_names=dataset_names,
-            datasets_data=datasets_data,
-            history=req.history,
-        )
+        # Build enrichment block when mode is set, replacing history
+        enrichment_block = ""
+        if req.enrichment_mode and req.history is not None:
+            enrichment_block = build_enrichment_block(
+                state=dict(session.state_json or {}),
+                attached_aims=req.attached_aims,
+                attached_datasets=dataset_names,
+                mode=req.enrichment_mode,
+            )
+        if enrichment_block:
+            logger.info("Using enrichment block (%d chars) instead of history", len(enrichment_block))
+            if req.history:
+                logger.warning("Ignoring history (len=%d) — enrichment_mode is set", len(req.history))
+            agent_msg = await generate_chat_response(
+                message=req.message,
+                dataset_names=dataset_names,
+                datasets_data=datasets_data,
+                enrichment_block=enrichment_block,
+                enrichment_mode=req.enrichment_mode,
+            )
+        else:
+            history = req.history or []
+            agent_msg = await generate_chat_response(
+                message=req.message,
+                dataset_names=dataset_names,
+                datasets_data=datasets_data,
+                history=history,
+                enrichment_mode=req.enrichment_mode,
+            )
 
     # Extract structured aim proposals from the response
     aim_proposals_raw = await extract_aims_from_text(agent_msg, dataset_names)
@@ -488,8 +616,16 @@ async def send_message(req: MessageRequest):
     async with AsyncSessionLocal() as db:
         from sqlalchemy import select
         row = (await db.execute(
-            select(ManagerSession).where(ManagerSession.session_id == req.session_id)
+            select(ManagerSession).where(
+                ManagerSession.session_id == req.session_id,
+                ManagerSession.version == expected_version
+            )
         )).scalar_one_or_none()
+        if not row:
+            raise HTTPException(
+                status_code=409,
+                detail="Concurrent modification detected. Please retry."
+            )
         if row:
             state = dict(row.state_json or {})
             turns = list(state.get("turns", []))
@@ -497,6 +633,8 @@ async def send_message(req: MessageRequest):
                 "user": req.message,
                 "agent": agent_msg,
                 "timestamp": datetime.now(timezone.utc).isoformat(),
+                "aims": req.attached_aims,
+                "datasets": dataset_names,
             }
             if analysis_actions_raw:
                 turn_entry["analysis_actions"] = analysis_actions_raw
@@ -513,6 +651,7 @@ async def send_message(req: MessageRequest):
             state["aim_proposals"] = existing
 
             row.state_json = state
+            row.version += 1
             row.updated_at = datetime.now(timezone.utc)
 
             # Auto-name on first message
@@ -533,3 +672,86 @@ async def send_message(req: MessageRequest):
         done=True,
         aim_proposals=aim_proposals,
     )
+
+
+@router.post("/sessions/{session_id}/summarize-context", response_model=SummarizeContextResponse)
+async def summarize_context(session_id: str, req: SummarizeContextRequest):
+    """Summarize a set of turns for a given tag. Idempotent — returns existing summary if already covered."""
+    if not req.tag or not req.turn_timestamps:
+        raise HTTPException(status_code=400, detail="tag and turn_timestamps are required")
+
+    async with AsyncSessionLocal() as db:
+        from sqlalchemy import select
+        row = (await db.execute(
+            select(ManagerSession).where(ManagerSession.session_id == session_id)
+        )).scalar_one_or_none()
+
+    if not row:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    expected_version = row.version
+    state = dict(row.state_json or {})
+    timestamp_set = set(req.turn_timestamps)
+
+    # Idempotency check — return existing summary if all timestamps are already covered
+    existing = state.get("context_summaries", {}).get(req.tag, [])
+    for entry in existing:
+        if all(ts in entry.get("turn_timestamps", []) for ts in req.turn_timestamps):
+            return SummarizeContextResponse(
+                tag=req.tag,
+                summary=entry["summary"],
+                created_at=entry["created_at"],
+            )
+
+    # Fetch turns by timestamps
+    turns = state.get("turns", [])
+    relevant_turns = [t for t in turns if (t.get("created_at") or t.get("timestamp")) in timestamp_set]
+    if not relevant_turns:
+        raise HTTPException(status_code=400, detail="No turns found for the given timestamps")
+
+    # Build thread text for LLM
+    thread_lines = []
+    for t in relevant_turns:
+        user_text = (t.get("user") or "")[:200]
+        agent_text = (t.get("agent") or "")[:200]
+        aims = ", ".join(t.get("aims") or [])
+        datasets = ", ".join(t.get("datasets") or [])
+        meta = f"[aims: {aims}] [datasets: {datasets}]" if aims or datasets else ""
+        thread_lines.append(f"User: {user_text}\nAgent: {agent_text} {meta}")
+    thread_text = "\n---\n".join(thread_lines)
+
+    # Call LLM for summary
+    summary = await summarize_turns(thread_text)
+    if not summary:
+        raise HTTPException(status_code=502, detail="Summary generation failed")
+
+    now = datetime.now(timezone.utc).isoformat()
+    summary_entry = {
+        "turn_timestamps": req.turn_timestamps,
+        "summary": summary,
+        "created_at": now,
+    }
+
+    # Save with optimistic locking
+    async with AsyncSessionLocal() as db:
+        row = (await db.execute(
+            select(ManagerSession).where(
+                ManagerSession.session_id == session_id,
+                ManagerSession.version == expected_version
+            )
+        )).scalar_one_or_none()
+        if not row:
+            raise HTTPException(status_code=409, detail="Concurrent modification detected. Please retry.")
+
+        state = dict(row.state_json or {})
+        summaries = dict(state.get("context_summaries", {}))
+        tag_list = list(summaries.get(req.tag, []))
+        tag_list.append(summary_entry)
+        summaries[req.tag] = tag_list
+        state["context_summaries"] = summaries
+        row.state_json = state
+        row.version += 1
+        row.updated_at = datetime.now(timezone.utc)
+        await db.commit()
+
+    return SummarizeContextResponse(tag=req.tag, summary=summary, created_at=now)

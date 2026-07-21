@@ -76,6 +76,9 @@ export interface Turn {
   ui: TurnUi | null;
   schema: SchemaSnapshot | null;
   created_at?: string;
+  result_uuid?: string;
+  aims?: string[];
+  datasets?: string[];
   description?: string | null;
   benefits?: string | null;
   columns?: { dataset: string; name: string }[] | null;
