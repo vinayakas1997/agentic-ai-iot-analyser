@@ -1,0 +1,26 @@
+name: "Full vinayaka flow with time filter"
+description: >
+  User asks about vinayaka, picks an aim, then adds a time filter.
+  Tests that the graph routes through all the expected tool nodes.
+steps:
+  - user: "tell me about the vinayaka"
+    expect:
+      phase: "ask"
+      trace_contains:
+        - event_type: "routing"
+          node: "route_after_analyst"
+          data:
+            target: "tool_answer_advisory"
+
+  - user: "average cost by fruit"
+    expect:
+      phase: "ask"
+
+  - user: "the last month"
+    expect:
+      phase: "ask"
+      trace_contains:
+        - event_type: "routing"
+          node: "route_after_analyst"
+          data:
+            target: "tool_resolve_time"

@@ -1,0 +1,21 @@
+name: "Specific dates auto-resolve"
+description: >
+  After setting up line and aim, user gives an absolute date range. The time
+  should trigger tool_resolve_time to parse dates.
+steps:
+  - user: "tell me about the vinayaka"
+    expect:
+      phase: "ask"
+
+  - user: "average cost by fruit"
+    expect:
+      phase: "ask"
+
+  - user: "from 2026-05-01 to 2026-05-31"
+    expect:
+      phase: "ask"
+      trace_contains:
+        - event_type: "routing"
+          node: "route_after_analyst"
+          data:
+            target: "tool_resolve_time"

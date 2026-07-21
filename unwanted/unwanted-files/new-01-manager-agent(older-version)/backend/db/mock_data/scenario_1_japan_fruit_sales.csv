@@ -1,0 +1,33 @@
+sale_date,prefecture,city,fruit_name,variety,quantity_kg,price_per_kg_yen,total_yen,store_type,season,festival_season
+2026-01-05,Tokyo,Shibuya,Apple,Fuji,45.50,680,30940.00,Supermarket,Winter,true
+2026-01-12,Osaka,Umeda,Mandarin,Unshu,120.00,350,42000.00,Supermarket,Winter,true
+2026-01-20,Aomori,Hirosaki,Apple,Fuji,200.00,550,110000.00,Farmers Market,Winter,false
+2026-02-03,Tokyo,Shinjuku,Strawberry,Tochiotome,15.00,1800,27000.00,Department Store,Winter,false
+2026-02-14,Osaka,Namba,Chocolate-covered Strawberry,Benihoppe,8.00,2500,20000.00,Specialty Store,Winter,true
+2026-03-10,Wakayama,Arida,Mandarin,Dekopon,85.00,420,35700.00,Supermarket,Spring,false
+2026-03-20,Fukuoka,Dazaifu,Strawberry,Amaou,22.00,1600,35200.00,Farmers Market,Spring,false
+2026-04-01,Tokyo,Shibuya,Strawberry,Tochiotome,18.00,1500,27000.00,Supermarket,Spring,false
+2026-04-15,Yamanashi,Koshu,Grape,Shine Muscat,10.00,2200,22000.00,Specialty Store,Spring,false
+2026-04-28,Nagano,Matsumoto,Apple,Shinano Sweet,60.00,600,36000.00,Supermarket,Spring,true
+2026-05-05,Okayama,Kurashiki,Peach,Hakuto,25.00,1400,35000.00,Farmers Market,Spring,true
+2026-05-15,Shizuoka,Numazu,Melon,Yubari King,6.00,3500,21000.00,Department Store,Spring,false
+2026-05-25,Tokyo,Shibuya,Pear,Kosui,30.00,780,23400.00,Supermarket,Spring,false
+2026-06-01,Osaka,Umeda,Cherry,Satonishiki,5.00,2800,14000.00,Department Store,Summer,false
+2026-06-10,Yamagata,Yamagata,Cherry,Satonishiki,12.00,2200,26400.00,Farmers Market,Summer,false
+2026-06-20,Tochigi,Utsunomiya,Strawberry,Tochiotome,20.00,1200,24000.00,Farmers Market,Summer,false
+2026-07-01,Hokkaido,Sapporo,Melon,Yubari King,8.00,4000,32000.00,Department Store,Summer,true
+2026-07-15,Yamanashi,Fuefuki,Grape,Kyoho,35.00,900,31500.00,Supermarket,Summer,false
+2026-07-28,Nagano,Suzaka,Pear,Hosui,40.00,650,26000.00,Supermarket,Summer,false
+2026-08-05,Okayama,Okayama,Peach,Shimizu Hakuto,30.00,1300,39000.00,Farmers Market,Summer,false
+2026-08-15,Hokkaido,Asahikawa,Watermelon,Kodama,15.00,800,12000.00,Supermarket,Summer,true
+2026-09-01,Wakayama,Kinokawa,Mandarin,Iyokan,70.00,380,26600.00,Supermarket,Fall,false
+2026-09-15,Tokyo,Shinjuku,Grape,Shine Muscat,12.00,2000,24000.00,Department Store,Fall,false
+2026-09-25,Shizuoka,Shizuoka,Pear,Niitaka,25.00,700,17500.00,Supermarket,Fall,false
+2026-10-05,Ehime,Matsuyama,Mandarin,Unshu,150.00,320,48000.00,Supermarket,Fall,false
+2026-10-15,Nagano,Nagano,Apple,Fuji,80.00,520,41600.00,Farmers Market,Fall,true
+2026-10-28,Aomori,Aomori,Apple,Orin,90.00,480,43200.00,Supermarket,Fall,true
+2026-11-05,Fukuoka,Chikushino,Strawberry,Amaou,15.00,1700,25500.00,Farmers Market,Fall,false
+2026-11-15,Osaka,Tennoji,Persimmon,Fuyu,40.00,450,18000.00,Supermarket,Fall,false
+2026-12-01,Tokyo,Shibuya,Apple,Fuji,55.00,620,34100.00,Supermarket,Winter,false
+2026-12-15,Hokkaido,Otaru,Melon,Yubari King,4.00,3800,15200.00,Specialty Store,Winter,true
+2026-12-25,Ehime,Imabari,Mandarin,Dekopon,60.00,400,24000.00,Supermarket,Winter,true

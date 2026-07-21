@@ -1,0 +1,21 @@
+name: "Confirm plan flow — phase transitions to man"
+description: >
+  After selecting a line and aim, user presses 'Go — proceed' (__confirm__).
+  Verifies that phase transitions to "man" and tool_confirm_plan is called.
+steps:
+  - user: "tell me about the japan_fruit"
+    expect:
+      phase: "ask"
+
+  - user: "show total fruit sales by prefecture"
+    expect:
+      phase: "ask"
+
+  - user: "__confirm__"
+    expect:
+      phase: "man"
+      trace_contains:
+        - event_type: "routing"
+          node: "route_after_analyst"
+          data:
+            target: "tool_confirm_plan"

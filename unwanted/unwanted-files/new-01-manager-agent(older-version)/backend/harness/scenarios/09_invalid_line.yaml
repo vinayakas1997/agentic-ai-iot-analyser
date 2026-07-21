@@ -1,0 +1,13 @@
+name: "Non-existent line returns error gracefully"
+description: >
+  User asks about a line name that does not exist in the registry.
+  The system should respond with a helpful message and stay in "ask" phase.
+steps:
+  - user: "tell me about the nonexistent_line"
+    expect:
+      phase: "ask"
+      trace_contains:
+        - event_type: "routing"
+          node: "route_after_analyst"
+          data:
+            target: "tool_resolve_line"

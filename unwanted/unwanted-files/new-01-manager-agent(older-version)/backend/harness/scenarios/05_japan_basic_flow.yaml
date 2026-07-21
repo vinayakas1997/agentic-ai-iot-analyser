@@ -1,0 +1,25 @@
+name: "Japan scenarios basic single-table flow"
+description: >
+  User asks about japan_fruit and provides a single-table aim.
+  Verifies the JAPAN_SCENARIOS line resolves correctly.
+steps:
+  - user: "tell me about the japan_fruit"
+    expect:
+      phase: "ask"
+      trace_contains:
+        - event_type: "routing"
+          node: "route_after_analyst"
+          data:
+            target: "tool_answer_advisory"
+      trace_does_not_contain:
+        - event_type: "routing"
+          node: "route_after_analyst"
+          data:
+            target: "tool_generate_plans"
+
+  - user: "show total fruit sales by prefecture"
+    expect:
+      phase: "ask"
+      trace_contains:
+        - event_type: "llm_output"
+          node: "analyst"

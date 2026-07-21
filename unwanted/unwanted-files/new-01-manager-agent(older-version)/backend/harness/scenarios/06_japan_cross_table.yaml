@@ -1,0 +1,24 @@
+name: "Japan cross-table aim: sales + inventory"
+description: >
+  User asks about japan_fruit and gives an aim that spans two datasets:
+  japan_fruit_sales and japan_fruit_inventory.
+steps:
+  - user: "tell me about the japan_fruit"
+    expect:
+      phase: "ask"
+      trace_contains:
+        - event_type: "routing"
+          node: "route_after_analyst"
+          data:
+            target: "tool_answer_advisory"
+      trace_does_not_contain:
+        - event_type: "routing"
+          node: "route_after_analyst"
+          data:
+            target: "tool_generate_plans"
+
+  - user: "compare fruit sales with inventory levels by prefecture"
+    expect:
+      trace_contains:
+        - event_type: "llm_output"
+          node: "analyst"

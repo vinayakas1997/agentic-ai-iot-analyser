@@ -1,0 +1,22 @@
+inventory_date,prefecture,fruit_name,variety,warehouse_id,warehouse_city,stock_quantity_kg,reorder_level_kg,supplier_id,supplier_name,lead_time_days,storage_cost_yen_per_kg,cold_storage
+2026-01-10,Tokyo,Apple,Fuji,WH-TKY-01,Shibuya,500,100,SUP-001,Aomori Ringo Farm,3,15.00,true
+2026-01-15,Osaka,Mandarin,Unshu,WH-OSK-01,Umeda,800,200,SUP-003,Wakayama Mikan Co-op,2,12.00,false
+2026-01-25,Aomori,Apple,Fuji,WH-AOM-01,Hirosaki,1200,300,SUP-001,Aomori Ringo Farm,1,8.00,true
+2026-02-10,Tokyo,Strawberry,Tochiotome,WH-TKY-02,Shinjuku,80,30,SUP-006,Tochigi Strawberry Farm,2,25.00,true
+2026-03-15,Wakayama,Mandarin,Dekopon,WH-WKY-01,Kinokawa,600,150,SUP-008,Ehime Mikan Delight,2,10.00,false
+2026-03-25,Fukuoka,Strawberry,Amaou,WH-FKK-01,Dazaifu,100,25,SUP-007,Fukuoka Amaou Farm,1,22.00,true
+2026-04-10,Yamanashi,Grape,Shine Muscat,WH-YMN-01,Koshu,40,15,SUP-002,Yamanashi Grape Growers,1,30.00,true
+2026-04-20,Nagano,Apple,Shinano Sweet,WH-NGN-01,Matsumoto,350,80,SUP-005,Nagano Fruit Association,2,10.00,true
+2026-05-10,Okayama,Peach,Hakuto,WH-OKY-01,Kurashiki,120,40,SUP-010,Okayama Peach Garden,1,18.00,true
+2026-05-20,Shizuoka,Melon,Yubari King,WH-SZO-01,Numazu,25,10,SUP-009,Hokkaido Melon King,3,35.00,true
+2026-06-05,Yamagata,Cherry,Satonishiki,WH-YMG-01,Yamagata,50,15,SUP-013,Yamagata Cherry Orchards,1,28.00,true
+2026-07-05,Hokkaido,Melon,Yubari King,WH-HKD-01,Sapporo,30,8,SUP-009,Hokkaido Melon King,1,20.00,true
+2026-07-20,Yamanashi,Grape,Kyoho,WH-YMN-02,Fuefuki,200,50,SUP-002,Yamanashi Grape Growers,1,20.00,false
+2026-08-01,Tokyo,Watermelon,Kodama,WH-TKY-01,Shibuya,60,20,SUP-012,Saga Watermelon Fields,3,15.00,false
+2026-09-10,Shizuoka,Pear,Niitaka,WH-SZO-02,Shizuoka,150,40,SUP-011,Niigata Pear Orchard,2,12.00,false
+2026-10-10,Nagano,Apple,Fuji,WH-NGN-02,Nagano,500,120,SUP-005,Nagano Fruit Association,2,9.00,true
+2026-10-20,Aomori,Apple,Orin,WH-AOM-02,Aomori,600,150,SUP-001,Aomori Ringo Farm,1,7.00,true
+2026-11-10,Ehime,Mandarin,Unshu,WH-EHM-01,Matsuyama,900,250,SUP-008,Ehime Mikan Delight,1,9.00,false
+2026-11-25,Osaka,Persimmon,Fuyu,WH-OSK-02,Tennoji,200,60,SUP-005,Nagano Fruit Association,3,11.00,false
+2026-12-10,Hokkaido,Melon,Yubari King,WH-HKD-02,Otaru,15,5,SUP-009,Hokkaido Melon King,1,22.00,true
+2026-12-20,Tokyo,Apple,Fuji,WH-TKY-02,Shinjuku,400,100,SUP-001,Aomori Ringo Farm,2,14.00,true

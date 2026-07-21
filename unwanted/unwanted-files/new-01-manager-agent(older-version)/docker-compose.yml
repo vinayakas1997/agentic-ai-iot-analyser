@@ -1,0 +1,68 @@
+
+services:
+  postgres:
+    image: postgres:16
+    container_name: manager_agent_db
+    environment:
+      POSTGRES_USER: manager_agent
+      POSTGRES_PASSWORD: manager_agent_pass
+      POSTGRES_DB: manager_agent_db
+    ports:
+      - "5432:5432"
+    # no persistent volume — fresh DB state on each rebuild
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U manager_agent -d manager_agent_db"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - manager-agent-net
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: manager_agent_backend
+    ports:
+      - "4002:7009"
+    volumes:
+      - ./backend:/app
+    command: ["uvicorn", "api.server:app", "--host", "0.0.0.0", "--port", "7009", "--reload"]
+    environment:
+      - DB_URL=postgresql+asyncpg://manager_agent:manager_agent_pass@postgres:5432/manager_agent_db
+      - VLLM_BASE_URL=http://host.docker.internal:8009/v1
+      - MANAGER_MODEL=qwen36-35B
+      - PLANNER_MODEL=qwen36-35B
+      - DEFAULT_USER_ID=98765
+      - CORS_ORIGINS=http://localhost:4001
+      - API_PORT=7009
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - manager-agent-net
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: manager_agent_frontend
+    ports:
+      - "4001:7008"
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+    environment:
+      - VITE_API_URL=http://localhost:4002
+      - VITE_WS_URL=ws://localhost:4002
+      - VITE_DEFAULT_USER_ID=98765
+    depends_on:
+      - backend
+    networks:
+      - manager-agent-net
+
+networks:
+  manager-agent-net:
+    driver: bridge

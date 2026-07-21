@@ -1,0 +1,26 @@
+name: "Ambiguous last month gets clarification"
+description: >
+  After setting up line and aim, user says "the last month". The time phrase
+  is ambiguous and should trigger tool_resolve_time.
+steps:
+  - user: "tell me about the vinayaka"
+    expect:
+      phase: "ask"
+
+  - user: "average cost by fruit"
+    expect:
+      phase: "ask"
+
+  - user: "the last month"
+    expect:
+      phase: "ask"
+      trace_contains:
+        - event_type: "routing"
+          node: "route_after_analyst"
+          data:
+            target: "tool_resolve_time"
+      trace_does_not_contain:
+        - event_type: "routing"
+          node: "route_after_analyst"
+          data:
+            target: "tool_confirm_plan"
