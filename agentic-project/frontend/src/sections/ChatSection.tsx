@@ -167,20 +167,7 @@ export default function ChatSection() {
     useSessionStore.setState((s) => ({
       selectedAims: s.selectedAims.filter((a) => a.aim !== aimText),
     }));
-    
-    if (aim.datasets && aim.datasets.length > 0) {
-      const remainingDatasets = new Set<string>();
-      for (const a of selectedAims) {
-        if (a.aim !== aimText && a.datasets) {
-          a.datasets.forEach((ds) => remainingDatasets.add(ds));
-        }
-      }
-      for (const ds of aim.datasets) {
-        if (!remainingDatasets.has(ds)) {
-          storeDetach(ds);
-        }
-      }
-    }
+    // Datasets stay attached — user can manually detach them if no other aim uses them
   };
 
   const handleToggleAction = (action: { name: string; description: string; datasets?: string[] }) => {
@@ -322,7 +309,7 @@ export default function ChatSection() {
     const userMsg = aimDef.description
       ? `${aimDef.aim}\n\n${aimDef.description}`
       : aimDef.aim;
-    const newTurn = { created_at: turnId, user: userMsg, agent: "", result_uuid: turnId, aims: [aimDef.aim], datasets: aimDef.datasets } as Turn;
+    const newTurn = { created_at: new Date().toISOString(), user: userMsg, agent: "", result_uuid: turnId, aims: [aimDef.aim], datasets: aimDef.datasets } as Turn;
     useSessionStore.setState((s) => ({ turns: [...s.turns, newTurn] }));
     scrollToBottom();
 
@@ -350,7 +337,7 @@ export default function ChatSection() {
         ? `**${aimDef.aim}** — ${aimDef.description}\n\nResults shown below.`
         : `**${aimDef.aim}** — results shown below.`;
       useSessionStore.setState((s) => ({
-        turns: s.turns.map((t) => t.created_at === turnId ? { ...t, agent: summary, result_uuid: turnId, aims: [aimDef.aim], datasets: aimDef.datasets } : t),
+        turns: s.turns.map((t) => t.result_uuid === turnId ? { ...t, agent: summary, result_uuid: turnId, aims: [aimDef.aim], datasets: aimDef.datasets } : t),
         chatQueryResults: { ...s.chatQueryResults, [turnId]: resultState },
         completedActions: { ...s.completedActions, [aimDef.aim]: turnId },
       }));
@@ -377,7 +364,7 @@ export default function ChatSection() {
         ? `**${aimDef.aim}** — ${aimDef.description}\n\n${clean}`
         : `**${aimDef.aim}** — ${clean}`;
       useSessionStore.setState((s) => ({
-        turns: s.turns.map((t) => t.created_at === turnId ? { ...t, agent: errorMsg, result_uuid: turnId, aims: [aimDef.aim], datasets: aimDef.datasets } : t),
+        turns: s.turns.map((t) => t.result_uuid === turnId ? { ...t, agent: errorMsg, result_uuid: turnId, aims: [aimDef.aim], datasets: aimDef.datasets } : t),
         chatQueryResults: { ...s.chatQueryResults, [turnId]: resultState },
         completedActions: { ...s.completedActions, [aimDef.aim]: turnId },
       }));
@@ -429,7 +416,13 @@ export default function ChatSection() {
     setShowSearch(false);
     const lineName = storeAttached.join(",");
     const aimNames = selectedAims.map((a) => a.aim);
-    await sendUserMessage(msg, lineName, aimNames, enrichmentMode);
+    const res = await sendUserMessage(msg, lineName, aimNames, enrichmentMode);
+    if (res?.result_uuid && res?.query_result) {
+      setQueryResults((prev) => ({
+        ...prev,
+        [res.result_uuid!]: res.query_result! as QueryResultState,
+      }));
+    }
   };
 
   const handleKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
@@ -623,6 +616,7 @@ export default function ChatSection() {
                 completedActions={completedActions}
                 selectedAims={selectedAims}
                 runningAim={runningAim}
+                loading={loading}
                 onToggleAction={handleToggleAction}
                 onScrollToTurn={handleScrollToTurn}
                 onRerunAim={handleRerunAim}
@@ -668,10 +662,10 @@ export default function ChatSection() {
               {ds}
               <button
                 type="button"
-                className={`transition-colors shrink-0 ${lockedByAims.includes(ds) ? "text-muted/40 cursor-not-allowed" : "hover:text-text"}`}
-                disabled={lockedByAims.includes(ds)}
+                className={`transition-colors shrink-0 ${lockedByAims.includes(ds) || loading ? "text-muted/40 cursor-not-allowed" : "hover:text-text"}`}
+                disabled={lockedByAims.includes(ds) || loading}
                 onClick={() => storeDetach(ds)}
-                title={lockedByAims.includes(ds) ? "Locked by a selected aim — remove the aim first" : undefined}
+                title={lockedByAims.includes(ds) ? "Locked by a selected aim — remove the aim first" : loading ? "Processing... please wait" : undefined}
               >
                 ×
               </button>
@@ -692,8 +686,8 @@ export default function ChatSection() {
               <button
                 key={i}
                 type="button"
-                className="text-[11px] px-2.5 py-1 rounded-full border transition-colors bg-ic-violet-soft/20 text-ic-violet border-ic-violet/20 hover:bg-ic-violet-soft/40"
-                onClick={() => useAim({ aim: p.aim, description: p.description, datasets: p.datasets })}
+                className={`text-[11px] px-2.5 py-1 rounded-full border transition-colors ${loading ? "cursor-not-allowed opacity-50" : "bg-ic-violet-soft/20 text-ic-violet border-ic-violet/20 hover:bg-ic-violet-soft/40"}`}
+                onClick={() => !loading && useAim({ aim: p.aim, description: p.description, datasets: p.datasets })}
               >
                 + {p.aim}
               </button>
@@ -708,6 +702,7 @@ export default function ChatSection() {
         aimResults={aimResults}
         completedActions={completedActions}
         runningAim={runningAim}
+        loading={loading}
         onRunSql={handleRunAimSql}
         onRerun={handleRerunAim}
         onViewResult={setViewingResult}
@@ -721,17 +716,17 @@ export default function ChatSection() {
         <div className="flex items-center gap-2">
           <span className="text-[10.5px] font-semibold tracking-wider uppercase text-muted">Mode:</span>
           <div className="flex rounded-full border-2 border-border overflow-hidden">
+              <button
+                type="button"
+                className={`text-[11px] font-medium px-3 py-1 transition-colors ${loading ? "cursor-not-allowed opacity-50" : ""} ${enrichmentMode === "research" ? "bg-accent text-white" : "bg-surface-1 text-muted hover:text-text"}`}
+                onClick={() => !loading && setEnrichmentMode("research")}
+              >
+                RESEARCH
+              </button>
             <button
               type="button"
-              className={`text-[11px] font-medium px-3 py-1 transition-colors ${enrichmentMode === "research" ? "bg-accent text-white" : "bg-surface-1 text-muted hover:text-text"}`}
-              onClick={() => setEnrichmentMode("research")}
-            >
-              RESEARCH
-            </button>
-            <button
-              type="button"
-              className={`text-[11px] font-medium px-3 py-1 transition-colors ${enrichmentMode === "summary" ? "bg-accent text-white" : "bg-surface-1 text-muted hover:text-text"}`}
-              onClick={() => setEnrichmentMode("summary")}
+              className={`text-[11px] font-medium px-3 py-1 transition-colors ${loading ? "cursor-not-allowed opacity-50" : ""} ${enrichmentMode === "summary" ? "bg-accent text-white" : "bg-surface-1 text-muted hover:text-text"}`}
+              onClick={() => !loading && setEnrichmentMode("summary")}
             >
               SUMMARY
             </button>

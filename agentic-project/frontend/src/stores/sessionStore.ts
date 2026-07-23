@@ -5,6 +5,7 @@ import type { MessageResponse, SchemaSnapshot, SessionListItem, SessionMeta, Tur
 import { useUiStore } from "./uiStore";
 import { useOutputStore, type CollectedResult } from "./outputStore";
 import { useDatasetStore } from "./datasetStore";
+import { useToastStore } from "./toastStore";
 import type { QueryResultState } from "../sections/QueryActions";
 
 function turnFromResponse(res: MessageResponse, userMessage: string, attachedAims?: string[], attachedDatasets?: string[]): Turn {
@@ -15,7 +16,7 @@ function turnFromResponse(res: MessageResponse, userMessage: string, attachedAim
     ui: res.ui || null,
     schema: res.schema || null,
     created_at: new Date().toISOString(),
-    result_uuid: undefined,
+    result_uuid: res.result_uuid || undefined,
     aims: attachedAims?.length ? attachedAims : undefined,
     datasets: attachedDatasets?.length ? attachedDatasets : undefined,
     description: res.description || null,
@@ -264,6 +265,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   sendUserMessage: async (text, lineName = "", attachedAims: string[] = [], enrichmentMode = "research") => {
     const { sessionId, turns, isLocalSession, pendingTitle, sessionMeta } = get();
     const isDone = turns.length > 0 && Boolean(turns[turns.length - 1]?.ui?.done);
+    const origSessionId = sessionId;
 
     if (!sessionId || !text.trim() || isDone) return;
 
@@ -313,6 +315,15 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       const res = await api.sendMessage(activeSessionId, userText, lineName, attachedAims, enrichmentMode, []);
       clearInterval(statusTimer);
       set({ statusMessage: "Response received" });
+
+      // If user switched sessions during loading, show toast instead of updating UI
+      const currentSessionId = get().sessionId;
+      if (currentSessionId !== activeSessionId) {
+        const title = get().sessions.find((s) => s.session_id === activeSessionId)?.title || activeSessionId.slice(0, 8);
+        useToastStore.getState().pushToast("Response received in session", activeSessionId, title);
+        return res;
+      }
+
       const datasetNames = lineName.split(",").map((d) => d.trim()).filter(Boolean);
       const newTurn = turnFromResponse(res, userText, attachedAims, datasetNames);
       const isFirstTurn = turns.length === 0;
@@ -349,7 +360,10 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       return res;
     } catch (e) {
       clearInterval(statusTimer);
-      set({ error: getErrorMessage(e), pendingTurn: null });
+      // Only show error if still on the same session
+      if (get().sessionId === origSessionId || !origSessionId) {
+        set({ error: getErrorMessage(e), pendingTurn: null });
+      }
       throw e;
     } finally {
       clearInterval(statusTimer);

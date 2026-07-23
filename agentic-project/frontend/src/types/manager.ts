@@ -110,6 +110,15 @@ export interface SessionDetail {
   turns: Turn[];
 }
 
+export interface QueryResult {
+  sql: string;
+  columns: string[];
+  column_types?: string[];
+  rows: Record<string, unknown>[];
+  row_count: number;
+  chart_suggestions?: ChartSuggestions | null;
+}
+
 export interface MessageResponse {
   session_id: string;
   turn_index?: number;
@@ -125,6 +134,9 @@ export interface MessageResponse {
   columns?: { dataset: string; name: string }[] | null;
   aim_proposals?: { aim: string; description: string; datasets: string[] }[];
   analysis_actions?: AnalysisAction[];
+  result_uuid?: string;
+  query_result?: QueryResult;
+  route?: string;
 }
 
 export interface AnalysisAction {

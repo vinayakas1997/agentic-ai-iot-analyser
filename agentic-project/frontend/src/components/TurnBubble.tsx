@@ -7,12 +7,13 @@ import type { Turn, AnalysisAction } from "../types/manager";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 
-export function TurnBubble({ turn, queryResult, completedActions, selectedAims, runningAim, onToggleAction, onScrollToTurn, onRerunAim }: {
+export function TurnBubble({ turn, queryResult, completedActions, selectedAims, runningAim, loading, onToggleAction, onScrollToTurn, onRerunAim }: {
   turn: Turn;
   queryResult?: QueryResultState;
   completedActions?: Record<string, string>;
   selectedAims?: { aim: string }[];
   runningAim?: string | null;
+  loading?: boolean;
   onToggleAction?: (action: AnalysisAction) => void;
   onScrollToTurn?: (turnId: string) => void;
   onRerunAim?: (aim: { aim: string; description: string; datasets?: string[] }) => void;
@@ -49,9 +50,10 @@ export function TurnBubble({ turn, queryResult, completedActions, selectedAims, 
               <div key={key} className="flex items-center gap-1">
                 <button
                   type="button"
-                  onClick={() => onToggleAction(action)}
-                  className="text-[11px] px-2.5 py-1 rounded-full border transition-colors flex items-center gap-1.5 bg-emerald-50 text-emerald-600 border-emerald-200 hover:bg-emerald-100 cursor-pointer"
-                  title="Click to detach from composer"
+                  disabled={loading}
+                  onClick={() => !loading && onToggleAction(action)}
+                  className={`text-[11px] px-2.5 py-1 rounded-full border transition-colors flex items-center gap-1.5 bg-emerald-50 text-emerald-600 border-emerald-200 hover:bg-emerald-100 cursor-pointer ${loading ? "opacity-50 cursor-not-allowed" : ""}`}
+                  title={loading ? "Processing... please wait" : "Click to detach from composer"}
                 >
                   <span className="text-[10px]">✓</span>
                   {action.name}
@@ -59,9 +61,10 @@ export function TurnBubble({ turn, queryResult, completedActions, selectedAims, 
                 {onRerunAim && (
                   <button
                     type="button"
-                    onClick={() => onRerunAim({ aim: action.name, description: action.description, datasets: action.datasets })}
-                    className="text-[11px] px-1.5 py-1 rounded-full border border-border/30 text-muted hover:text-text hover:border-border transition-colors"
-                    title="Re-run this analysis"
+                    disabled={loading}
+                    onClick={() => !loading && onRerunAim({ aim: action.name, description: action.description, datasets: action.datasets })}
+                    className={`text-[11px] px-1.5 py-1 rounded-full border transition-colors ${loading ? "text-muted/30 cursor-not-allowed border-border/10" : "text-muted hover:text-text hover:border-border border-border/30"}`}
+                    title={loading ? "Processing... please wait" : "Re-run this analysis"}
                   >
                     ↻
                   </button>
@@ -75,8 +78,9 @@ export function TurnBubble({ turn, queryResult, completedActions, selectedAims, 
               <div key={key} className="flex items-center gap-1">
                 <button
                   type="button"
-                  onClick={() => onScrollToTurn?.(completedActions![action.name])}
-                  className="text-[11px] px-2.5 py-1 rounded-full border transition-colors flex items-center gap-1.5 bg-emerald-50 text-emerald-600 border-emerald-200 hover:bg-emerald-100 cursor-pointer"
+                  disabled={loading}
+                  onClick={() => !loading && onScrollToTurn?.(completedActions![action.name])}
+                  className={`text-[11px] px-2.5 py-1 rounded-full border transition-colors flex items-center gap-1.5 bg-emerald-50 text-emerald-600 border-emerald-200 hover:bg-emerald-100 cursor-pointer ${loading ? "opacity-50 cursor-not-allowed" : ""}`}
                 >
                   <span className="text-[10px]">✓</span>
                   {action.name}
@@ -95,8 +99,9 @@ export function TurnBubble({ turn, queryResult, completedActions, selectedAims, 
               <button
                 key={key}
                 type="button"
-                onClick={() => onToggleAction(action)}
-                className="text-[11px] px-2.5 py-1 rounded-full border transition-colors flex items-center gap-1.5 bg-ic-teal-soft/40 text-ic-teal border-ic-teal/30 hover:bg-ic-teal-soft/60 cursor-pointer"
+                disabled={loading}
+                onClick={() => !loading && onToggleAction(action)}
+                className={`text-[11px] px-2.5 py-1 rounded-full border transition-colors flex items-center gap-1.5 ${loading ? "bg-ic-teal-soft/20 text-ic-teal/50 border-ic-teal/10 cursor-not-allowed" : "bg-ic-teal-soft/40 text-ic-teal border-ic-teal/30 hover:bg-ic-teal-soft/60 cursor-pointer"}`}
               >
                 <span className="text-[10px]">+</span>
                 {action.name}
@@ -108,8 +113,9 @@ export function TurnBubble({ turn, queryResult, completedActions, selectedAims, 
             <button
               key={key}
               type="button"
-              onClick={() => onToggleAction(action)}
-              className="text-[11px] px-2.5 py-1 rounded-full border transition-colors flex items-center gap-1.5 bg-ic-violet-soft/20 text-ic-violet border-ic-violet/20 hover:bg-ic-violet-soft/40 cursor-pointer"
+              disabled={loading}
+              onClick={() => !loading && onToggleAction(action)}
+              className={`text-[11px] px-2.5 py-1 rounded-full border transition-colors flex items-center gap-1.5 ${loading ? "bg-ic-violet-soft/10 text-ic-violet/50 border-ic-violet/10 cursor-not-allowed" : "bg-ic-violet-soft/20 text-ic-violet border-ic-violet/20 hover:bg-ic-violet-soft/40 cursor-pointer"}`}
             >
               <span className="text-[10px]">+</span>
               {action.name}
@@ -118,7 +124,7 @@ export function TurnBubble({ turn, queryResult, completedActions, selectedAims, 
         })}
       </div>
     );
-  }, [hasActions, onToggleAction, turn.analysis_actions, turn.created_at, runningAim, completedActions, selectedAims, onScrollToTurn, onRerunAim]);
+  }, [hasActions, onToggleAction, turn.analysis_actions, turn.created_at, runningAim, completedActions, selectedAims, onScrollToTurn, onRerunAim, loading]);
 
   const agentContent = (
     <div className="flex-1 min-w-0">

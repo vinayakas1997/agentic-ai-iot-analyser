@@ -4,6 +4,7 @@ import { useSessionStore } from "./stores/sessionStore";
 import ContextSection from "./sections/ContextSection";
 import ChatSection from "./sections/ChatSection";
 import OutputPanel from "./sections/OutputPanel";
+import { ToastContainer } from "./components/ToastContainer";
 
 export default function App() {
   const bootstrap = useSessionStore((s) => s.bootstrap);
@@ -24,6 +25,7 @@ export default function App() {
         <ChatSection />
         <OutputPanel />
       </main>
+      <ToastContainer />
     </div>
   );
 }

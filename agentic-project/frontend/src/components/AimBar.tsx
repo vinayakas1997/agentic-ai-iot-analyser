@@ -21,6 +21,7 @@ export function AimBar({
   aimResults,
   completedActions,
   runningAim,
+  loading,
   onRunSql,
   onRerun,
   onViewResult,
@@ -31,6 +32,7 @@ export function AimBar({
   aimResults: Record<string, QueryResultState>;
   completedActions: Record<string, string>;
   runningAim: string | null;
+  loading: boolean;
   onRunSql: (aim: Aim) => void;
   onRerun: (aim: Aim) => void;
   onViewResult: (state: ViewingResultState) => void;
@@ -56,9 +58,10 @@ export function AimBar({
               <span className="hover:brightness-125 transition-all">{a.aim}</span>
               <button
                 type="button"
-                className="ml-1 -mr-1 w-5 h-5 flex items-center justify-center rounded-full hover:bg-ic-red/10 hover:text-ic-red text-muted transition-colors"
-                onClick={(e) => { e.stopPropagation(); onRemove(a.aim); }}
-                title="Remove"
+                className={`ml-1 -mr-1 w-5 h-5 flex items-center justify-center rounded-full transition-colors ${loading ? "cursor-not-allowed text-muted/30" : "hover:bg-ic-red/10 hover:text-ic-red text-muted"}`}
+                onClick={(e) => { e.stopPropagation(); if (!loading) onRemove(a.aim); }}
+                title={loading ? "Processing... please wait" : "Remove"}
+                disabled={loading}
               >
                 ×
               </button>
@@ -107,9 +110,10 @@ export function AimBar({
             ) : (
               <button
                 type="button"
-                className="text-[11px] font-medium px-1.5 py-0.5 rounded-full bg-accent text-white hover:bg-accent/80 transition-colors shrink-0"
-                onClick={() => onRunSql(a)}
-                title="Run SQL for this aim"
+                className={`text-[11px] font-medium px-1.5 py-0.5 rounded-full transition-colors shrink-0 ${loading ? "bg-accent/50 text-white/50 cursor-not-allowed" : "bg-accent text-white hover:bg-accent/80"}`}
+                onClick={() => !loading && onRunSql(a)}
+                title={loading ? "Processing... please wait" : "Run SQL for this aim"}
+                disabled={loading}
               >
                 ▶ Run
               </button>

@@ -37,6 +37,8 @@ services:
       VLLM_BASE_URL: "${VLLM_BASE_URL:-http://host.docker.internal:8009/v1}"
       LLM_MODEL: "${LLM_MODEL:-qwen36-35B}"
       CORS_ORIGINS: "http://localhost:7008,http://localhost"
+      DEBUG: "${DEBUG:-false}"
+      LOG_LEVEL: "${LOG_LEVEL:-0}"
     depends_on:
       db:
         condition: service_healthy

@@ -515,7 +515,7 @@ export function QueryActions({ queryResult }: { queryResult?: QueryResultState }
                 </tbody>
               </table>
             </div>
-            {queryResult.row_count > 50 && (
+            {(queryResult.row_count ?? 0) > 50 && (
               <div className="text-[11px] text-muted">Showing first 50 of {queryResult.row_count} rows</div>
             )}
           </>

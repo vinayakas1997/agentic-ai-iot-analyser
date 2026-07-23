@@ -116,6 +116,16 @@ export async function sendMessage(sessionId: string, message: string, lineName =
     done?: boolean;
     aim_proposals?: { aim: string; description: string; datasets: string[] }[];
     analysis_actions?: { name: string; description: string; datasets: string[] }[];
+    result_uuid?: string;
+    route?: string;
+    query_result?: {
+      sql: string;
+      columns: string[];
+      column_types?: string[];
+      rows: Record<string, unknown>[];
+      row_count: number;
+      chart_suggestions?: any;
+    };
   }>("/api/v2/messages", {
     method: "POST",
     body: JSON.stringify(body),

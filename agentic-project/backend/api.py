@@ -2,6 +2,7 @@
 
 import re
 import uuid
+import time
 import logging
 from datetime import datetime, timezone
 
@@ -10,7 +11,10 @@ from pydantic import BaseModel
 
 from resolve import resolve_line_lookup, fetch_datasets, save_task_definition
 from aims import generate_chat_response, generate_sql, fix_sql, criticize_sql, extract_aims_from_text, extract_analysis_actions, suggest_charts, _fallback_chart_configs
-from llm_client import summarize_turns
+from llm_client import parse_numbered_suggestions
+from logger import log_route, log_llm_call, log_sql, log_aims, log_response, log_full_prompt
+from llm_client import summarize_turns, classify_route, extract_sql, extract_sql_fallback, generate_llm_response, interpret_results, direct_prompt, suggest_prompt, focus_prompt, deep_prompt
+from sql_executor import validate_sql
 from sql_executor import execute_sql
 from db.models import GlobalRegistry, ManagerSession
 from db.session import AsyncSessionLocal
@@ -85,6 +89,27 @@ class SummarizeContextResponse(BaseModel):
     summary: str
     created_at: str
 
+class ChartConfig(BaseModel):
+    chartType: str
+    xKey: str
+    yKeys: list[str]
+    reason: str = ""
+    xLabel: str = ""
+    yLabel: str = ""
+    howToRead: str = ""
+
+class ChartSuggestions(BaseModel):
+    advanced: list[ChartConfig] = []
+    basic: list[ChartConfig] = []
+
+class QueryResult(BaseModel):
+    sql: str
+    columns: list[str]
+    column_types: list[str] = []
+    rows: list[dict]
+    row_count: int
+    chart_suggestions: ChartSuggestions | None = None
+
 class MessageResponse(BaseModel):
     session_id: str
     turn_index: int = 0
@@ -99,19 +124,9 @@ class MessageResponse(BaseModel):
     columns: list[dict] | None = None
     aim_proposals: list[AimProposal] = []
     analysis_actions: list[AnalysisAction] = []
-
-class ChartConfig(BaseModel):
-    chartType: str
-    xKey: str
-    yKeys: list[str]
-    reason: str = ""
-    xLabel: str = ""
-    yLabel: str = ""
-    howToRead: str = ""
-
-class ChartSuggestions(BaseModel):
-    advanced: list[ChartConfig] = []
-    basic: list[ChartConfig] = []
+    result_uuid: str | None = None
+    query_result: QueryResult | None = None
+    route: str = "direct"
 
 class ExecuteQueryRequest(BaseModel):
     session_id: str
@@ -530,9 +545,341 @@ async def list_datasets():
         for r in rows
     ]
 
+# ── Route Handlers ──
+
+def _build_context(
+    dataset_names: list[str],
+    datasets_data: list[dict],
+    attached_aims: list[str],
+) -> str:
+    """Build a context string describing datasets and attached aims."""
+    parts = [f"Available datasets: {', '.join(dataset_names) if dataset_names else 'None'}"]
+    if attached_aims:
+        parts.append(f"Active research aims: {', '.join(attached_aims)}")
+    for ds in datasets_data:
+        cols = ds.get("column_definitions", [])
+        col_str = "; ".join(f"{c.get('name','?')} ({c.get('datatype','?')})" for c in cols[:10])
+        tbl = ds.get("table_name", ds.get("dataset_name", "?"))
+        parts.append(f"Dataset '{ds.get('dataset_name','?')}' (table: {tbl}): {col_str}")
+        if ds.get("description"):
+            parts.append(f"  Description: {ds['description']}")
+        if ds.get("join_hints"):
+            parts.append(f"  Join hints: {ds['join_hints']}")
+    return "\n".join(parts)
+
+
+async def _handle_direct(
+    message: str,
+    dataset_names: list[str],
+    datasets_data: list[dict],
+    attached_aims: list[str],
+    enrichment_block: str = "",
+):
+    """DIRECT route: LLM generates SQL → we validate and execute → LLM interprets results."""
+    context = _build_context(dataset_names, datasets_data, attached_aims)
+    system_prompt = direct_prompt(context=context)
+    if enrichment_block:
+        system_prompt += f"\n\n## Previous Context\n{enrichment_block}"
+    raw = await generate_llm_response(
+        system_prompt=system_prompt,
+        question=message,
+    )
+    sql = extract_sql(raw)
+    if not sql:
+        sql = extract_sql_fallback(raw)
+
+    # Retry with a stricter SQL-only prompt if no SQL generated
+    if not sql:
+        log_sql("retry", "No SQL in first response, retrying with stricter prompt")
+        sql_only_prompt = (
+            f"You are a SQL generator. Given the user question and available datasets below, "
+            f"output ONLY a single SQL query wrapped in ```sql code blocks. "
+            f"Do NOT output any explanation, suggestions, or numbered lists. "
+            f"Just the SQL. Nothing else.\n\n"
+            f"Available datasets:\n{context}\n\n"
+            f"User question: {message}"
+        )
+        raw2 = await generate_llm_response(
+            system_prompt=sql_only_prompt,
+            question=message,
+            max_tokens=1024,
+        )
+        sql = extract_sql(raw2)
+        if not sql:
+            sql = extract_sql_fallback(raw2)
+        if sql:
+            raw = raw2  # Use the retry response for interpretation
+
+    if not sql:
+        proposals = parse_numbered_suggestions(raw)
+        return {
+            "agent_message": raw,
+            "result_uuid": None,
+            "query_result": None,
+            "aim_proposals": proposals,
+        }
+
+    try:
+        sql = validate_sql(sql)
+    except ValueError as e:
+        error_result = {
+            "sql": sql,
+            "columns": [],
+            "column_types": [],
+            "rows": [],
+            "row_count": 0,
+        }
+        return {
+            "agent_message": f"I generated a SQL query but it couldn't be validated:\n\n```sql\n{sql}\n```\n\n**Validation error:** {str(e)}\n\nCould you clarify what you're looking for?",
+            "result_uuid": None,
+            "query_result": error_result,
+        }
+
+    try:
+        result = await execute_sql(sql)
+    except Exception as e:
+        error_msg = str(e)[:300]
+        error_result = {
+            "sql": sql,
+            "columns": [],
+            "column_types": [],
+            "rows": [],
+            "row_count": 0,
+        }
+        interpretation = await generate_llm_response(
+            system_prompt=f"You are a data analyst assistant. The SQL query failed with error: {error_msg}. Explain the error briefly and suggest how to fix it.",
+            question=f"The query was:\n```sql\n{sql}\n```",
+        )
+        return {
+            "agent_message": interpretation,
+            "result_uuid": None,
+            "query_result": error_result,
+        }
+
+    chart_suggestions = await _build_chart_suggestions(result)
+    result_with_charts = {**result, "chart_suggestions": chart_suggestions}
+
+    interpretation = await interpret_results(
+        question=message,
+        sql=result.get("sql", ""),
+        result=result,
+    )
+
+    result_uuid = str(uuid.uuid4())
+    return {
+        "agent_message": interpretation,
+        "result_uuid": result_uuid,
+        "query_result": result_with_charts,
+    }
+
+
+async def _handle_suggest(
+    message: str,
+    dataset_names: list[str],
+    datasets_data: list[dict],
+    attached_aims: list[str],
+    enrichment_block: str = "",
+):
+    """SUGGEST route: LLM proposes 3 exploration ideas (no SQL)."""
+    context = _build_context(dataset_names, datasets_data, attached_aims)
+    system_prompt = suggest_prompt(context=context)
+    if enrichment_block:
+        system_prompt += f"\n\n## Previous Context\n{enrichment_block}"
+    raw = await generate_llm_response(
+        system_prompt=system_prompt,
+        question=message,
+    )
+    proposals = parse_numbered_suggestions(raw)
+    return {
+        "agent_message": raw,
+        "result_uuid": None,
+        "query_result": None,
+        "aim_proposals": proposals,
+    }
+
+
+async def _handle_focus(
+    message: str,
+    dataset_names: list[str],
+    datasets_data: list[dict],
+    attached_aims: list[str],
+    enrichment_block: str = "",
+):
+    """FOCUS route: LLM generates a focused analysis query then interprets results."""
+    context = _build_context(dataset_names, datasets_data, attached_aims)
+    system_prompt = focus_prompt(context=context)
+    if enrichment_block:
+        system_prompt += f"\n\n## Previous Context\n{enrichment_block}"
+    raw = await generate_llm_response(
+        system_prompt=system_prompt,
+        question=message,
+    )
+    sql = extract_sql(raw)
+    if not sql:
+        sql = extract_sql_fallback(raw)
+    if not sql:
+        return {
+            "agent_message": raw,
+            "result_uuid": None,
+            "query_result": None,
+        }
+
+    try:
+        sql = validate_sql(sql)
+    except ValueError as e:
+        error_result = {
+            "sql": sql,
+            "columns": [],
+            "column_types": [],
+            "rows": [],
+            "row_count": 0,
+        }
+        return {
+            "agent_message": f"I generated a deep-dive query but it couldn't be validated:\n\n```sql\n{sql}\n```\n\n**Validation error:** {str(e)}",
+            "result_uuid": None,
+            "query_result": error_result,
+        }
+
+    try:
+        result = await execute_sql(sql)
+    except Exception as e:
+        error_msg = str(e)[:300]
+        error_result = {
+            "sql": sql,
+            "columns": [],
+            "column_types": [],
+            "rows": [],
+            "row_count": 0,
+        }
+        interpretation = await generate_llm_response(
+            system_prompt=f"You are a data analyst assistant. The SQL query failed with error: {error_msg}. Explain the error briefly and suggest how to fix it.",
+            question=f"The query was:\n```sql\n{sql}\n```",
+        )
+        return {
+            "agent_message": interpretation,
+            "result_uuid": None,
+            "query_result": error_result,
+        }
+
+    chart_suggestions = await _build_chart_suggestions(result)
+    result_with_charts = {**result, "chart_suggestions": chart_suggestions}
+
+    interpretation = await interpret_results(
+        question=message,
+        sql=result.get("sql", ""),
+        result=result,
+    )
+
+    result_uuid = str(uuid.uuid4())
+    return {
+        "agent_message": interpretation,
+        "result_uuid": result_uuid,
+        "query_result": result_with_charts,
+    }
+
+
+async def _handle_deep(
+    message: str,
+    dataset_names: list[str],
+    datasets_data: list[dict],
+    attached_aims: list[str],
+    enrichment_block: str = "",
+    max_iterations: int = 3,
+):
+    """DEEP route: multi-iteration research — loop SQL → execute → analyze for N rounds."""
+    all_results = []
+    current_message = message
+    context = _build_context(dataset_names, datasets_data, attached_aims)
+    if enrichment_block:
+        context += f"\n\n## Previous Context\n{enrichment_block}"
+
+    for iteration in range(max_iterations):
+        prev_str = ""
+        if all_results:
+            prev_str = "; ".join(
+                f"Iter {r['iteration']}: {r.get('row_count', 0)} rows"
+                if r.get("result") else f"Iter {r['iteration']}: error/empty"
+                for r in all_results
+            )
+
+        raw = await generate_llm_response(
+            system_prompt=deep_prompt(
+                context=context,
+                previous_results=prev_str,
+            ),
+            question=current_message,
+        )
+
+        if iteration == max_iterations - 1:
+            final_msg = raw
+            break
+
+        sql = extract_sql(raw)
+        if not sql:
+            all_results.append({
+                "iteration": iteration,
+                "response": raw,
+                "sql": None,
+                "result": None,
+            })
+            continue
+
+        try:
+            sql = validate_sql(sql)
+        except ValueError as e:
+            all_results.append({
+                "iteration": iteration,
+                "response": raw,
+                "sql": sql,
+                "error": f"Validation: {str(e)}",
+                "result": None,
+            })
+            continue
+
+        try:
+            result = await execute_sql(sql)
+        except Exception as e:
+            all_results.append({
+                "iteration": iteration,
+                "response": raw,
+                "sql": sql,
+                "error": str(e)[:200],
+                "result": None,
+            })
+            continue
+
+        all_results.append({
+            "iteration": iteration,
+            "response": raw,
+            "sql": sql,
+            "result": result,
+            "row_count": result.get("row_count", 0),
+        })
+
+        current_message = f"My previous analysis found {result.get('row_count', 0)} rows. Given these results, what deeper insight can you uncover? Continue the multi-step research."
+
+    # Final summary using last result
+    last_result = None
+    for r in reversed(all_results):
+        if r.get("result"):
+            last_result = r["result"]
+            break
+
+    if last_result:
+        chart_suggestions = await _build_chart_suggestions(last_result)
+        last_result["chart_suggestions"] = chart_suggestions
+
+    result_uuid = str(uuid.uuid4()) if last_result else None
+    return {
+        "agent_message": final_msg if 'final_msg' in locals() else raw,
+        "result_uuid": result_uuid,
+        "query_result": last_result,
+    }
+
+
 @router.post("/messages", response_model=MessageResponse)
 async def send_message(req: MessageRequest):
-    """Handle a user message — build context from selected datasets and return LLM response."""
+    """Handle a user message — route via LLM classification into DIRECT/SUGGEST/FOCUS/DEEP."""
     if not req.message.strip():
         raise HTTPException(status_code=400, detail="message is required")
 
@@ -552,29 +899,43 @@ async def send_message(req: MessageRequest):
 
     # Guard: RESEARCH mode with no attachments → early return (no LLM call)
     if req.enrichment_mode == "research" and not req.attached_aims and not dataset_names:
-        agent_msg = "Please attach a dataset or aim, or switch to SUMMARY mode."
-    elif req.enrichment_mode == "research" and not dataset_names:
-        agent_msg = "Please select at least one dataset to work with. Search and attach datasets from the search bar above."
-    else:
-        datasets_data = []
-        async with AsyncSessionLocal() as db:
-            from sqlalchemy import select
-            result = await db.execute(
-                select(GlobalRegistry).where(
-                    GlobalRegistry.dataset_name.in_(dataset_names),
-                    GlobalRegistry.status == "active",
-                )
-            )
-            for reg in result.scalars().all():
-                datasets_data.append({
-                    "dataset_name": reg.dataset_name,
-                    "description": reg.description,
-                    "column_definitions": reg.column_definitions,
-                    "join_hints": reg.join_hints,
-                    "suggested_aims": reg.suggested_aims,
-                })
+        return MessageResponse(
+            session_id=req.session_id,
+            agent_message="Please attach a dataset or aim, or switch to SUMMARY mode.",
+            route="direct",
+        )
+    if req.enrichment_mode == "research" and not dataset_names:
+        return MessageResponse(
+            session_id=req.session_id,
+            agent_message="Please select at least one dataset to work with. Search and attach datasets from the search bar above.",
+            route="direct",
+        )
 
-        # Build enrichment block when mode is set, replacing history
+    datasets_data = []
+    async with AsyncSessionLocal() as db:
+        from sqlalchemy import select, or_
+        result = await db.execute(
+            select(GlobalRegistry).where(
+                or_(
+                    GlobalRegistry.dataset_name.in_(dataset_names),
+                    GlobalRegistry.line_name.in_(dataset_names),
+                ),
+                GlobalRegistry.status == "active",
+            )
+        )
+        for reg in result.scalars().all():
+            sc = reg.source_config or {}
+            datasets_data.append({
+                "dataset_name": reg.dataset_name,
+                "description": reg.description,
+                "column_definitions": reg.column_definitions,
+                "join_hints": reg.join_hints,
+                "suggested_aims": reg.suggested_aims,
+                "table_name": sc.get("table", reg.dataset_name),
+            })
+
+    # If SUMMARY mode, skip routing and use existing summarization flow
+    if req.enrichment_mode == "summary":
         enrichment_block = ""
         if req.enrichment_mode and req.history is not None:
             enrichment_block = build_enrichment_block(
@@ -584,9 +945,6 @@ async def send_message(req: MessageRequest):
                 mode=req.enrichment_mode,
             )
         if enrichment_block:
-            logger.info("Using enrichment block (%d chars) instead of history", len(enrichment_block))
-            if req.history:
-                logger.warning("Ignoring history (len=%d) — enrichment_mode is set", len(req.history))
             agent_msg = await generate_chat_response(
                 message=req.message,
                 dataset_names=dataset_names,
@@ -604,29 +962,22 @@ async def send_message(req: MessageRequest):
                 enrichment_mode=req.enrichment_mode,
             )
 
-    # Extract structured aim proposals from the response
-    aim_proposals_raw = await extract_aims_from_text(agent_msg, dataset_names)
-    aim_proposals = [AimProposal(**a) for a in aim_proposals_raw if isinstance(a, dict)]
+        aim_proposals_raw = await extract_aims_from_text(agent_msg, dataset_names)
+        aim_proposals = [AimProposal(**a) for a in aim_proposals_raw if isinstance(a, dict)]
+        analysis_actions_raw = await extract_analysis_actions(agent_msg, dataset_names) if dataset_names else []
+        analysis_actions = [AnalysisAction(**a) for a in analysis_actions_raw if isinstance(a, dict)]
 
-    # Extract interactive analysis actions from the response
-    analysis_actions_raw = await extract_analysis_actions(agent_msg, dataset_names) if dataset_names else []
-    analysis_actions = [AnalysisAction(**a) for a in analysis_actions_raw if isinstance(a, dict)]
-
-    # Save turn + proposals + actions to session state
-    async with AsyncSessionLocal() as db:
-        from sqlalchemy import select
-        row = (await db.execute(
-            select(ManagerSession).where(
-                ManagerSession.session_id == req.session_id,
-                ManagerSession.version == expected_version
-            )
-        )).scalar_one_or_none()
-        if not row:
-            raise HTTPException(
-                status_code=409,
-                detail="Concurrent modification detected. Please retry."
-            )
-        if row:
+        # Save turn
+        async with AsyncSessionLocal() as db:
+            from sqlalchemy import select
+            row = (await db.execute(
+                select(ManagerSession).where(
+                    ManagerSession.session_id == req.session_id,
+                    ManagerSession.version == expected_version
+                )
+            )).scalar_one_or_none()
+            if not row:
+                raise HTTPException(status_code=409, detail="Concurrent modification detected. Please retry.")
             state = dict(row.state_json or {})
             turns = list(state.get("turns", []))
             turn_entry = {
@@ -640,8 +991,6 @@ async def send_message(req: MessageRequest):
                 turn_entry["analysis_actions"] = analysis_actions_raw
             turns.append(turn_entry)
             state["turns"] = turns
-
-            # Accumulate aim proposals in session state
             existing = list(state.get("aim_proposals", []))
             for ap in aim_proposals_raw:
                 if isinstance(ap, dict) and ap.get("aim") and not any(
@@ -649,25 +998,142 @@ async def send_message(req: MessageRequest):
                 ):
                     existing.append(ap)
             state["aim_proposals"] = existing
-
             row.state_json = state
             row.version += 1
             row.updated_at = datetime.now(timezone.utc)
-
-            # Auto-name on first message
             if len(turns) == 1 and re.match(r"^Session [a-f0-9]{8}$", row.title or ""):
                 new_title = req.message.strip()[:50]
                 if new_title:
                     row.title = new_title
-
             await db.commit()
+
+        return MessageResponse(
+            session_id=req.session_id,
+            turn_index=0,
+            agent_message=agent_msg,
+            analysis_actions=analysis_actions,
+            done=True,
+            aim_proposals=aim_proposals,
+            route="summary",
+        )
+
+    # RESEARCH mode: classify route and dispatch
+    route = await classify_route(question=req.message)
+
+    enrichment_block = build_enrichment_block(
+        state=dict(session.state_json or {}),
+        attached_aims=req.attached_aims,
+        attached_datasets=dataset_names,
+        mode=req.enrichment_mode,
+    )
+
+    route_handlers = {
+        "direct": _handle_direct,
+        "suggest": _handle_suggest,
+        "focus": _handle_focus,
+        "deep": _handle_deep,
+    }
+    handler = route_handlers.get(route.lower(), _handle_suggest)
+
+    handler_result = await handler(
+        message=req.message,
+        dataset_names=dataset_names,
+        datasets_data=datasets_data,
+        attached_aims=req.attached_aims,
+        enrichment_block=enrichment_block,
+    )
+
+    agent_msg = handler_result["agent_message"]
+    result_uuid = handler_result.get("result_uuid")
+    query_result_raw = handler_result.get("query_result")
+    handler_proposals = handler_result.get("aim_proposals", [])
+
+    log_response(route, result_uuid or "", len(handler_proposals))
+    log_aims(len(handler_proposals), f"from handler ({route})")
+    if result_uuid:
+        log_sql("executed", f"result_uuid={result_uuid[:8]}")
+
+    query_result_model = None
+    if query_result_raw:
+        cs_model = query_result_raw.get("chart_suggestions")
+        if isinstance(cs_model, dict):
+            cs_model = ChartSuggestions(
+                advanced=[ChartConfig(**c) for c in cs_model.get("advanced", [])],
+                basic=[ChartConfig(**c) for c in cs_model.get("basic", [])],
+            )
+        query_result_model = QueryResult(
+            sql=query_result_raw.get("sql", ""),
+            columns=query_result_raw.get("columns", []),
+            column_types=query_result_raw.get("column_types", []),
+            rows=query_result_raw.get("rows", []),
+            row_count=query_result_raw.get("row_count", 0),
+            chart_suggestions=cs_model,
+        )
+
+    # Extract proposals/actions from agent message for DIRECT route backward compat
+    aim_proposals_raw = await extract_aims_from_text(agent_msg, dataset_names) if route in ("direct",) else []
+    if handler_proposals:
+        aim_proposals_raw = list(aim_proposals_raw) + list(handler_proposals)
+    aim_proposals = [AimProposal(**a) for a in aim_proposals_raw if isinstance(a, dict)]
+    analysis_actions_raw = await extract_analysis_actions(agent_msg, dataset_names) if dataset_names and route in ("direct",) else []
+    analysis_actions = [AnalysisAction(**a) for a in analysis_actions_raw if isinstance(a, dict)]
+
+    # Save turn
+    async with AsyncSessionLocal() as db:
+        from sqlalchemy import select
+        row = (await db.execute(
+            select(ManagerSession).where(
+                ManagerSession.session_id == req.session_id,
+                ManagerSession.version == expected_version
+            )
+        )).scalar_one_or_none()
+        if not row:
+            raise HTTPException(status_code=409, detail="Concurrent modification detected. Please retry.")
+        state = dict(row.state_json or {})
+        turns = list(state.get("turns", []))
+        turn_entry = {
+            "user": req.message,
+            "agent": agent_msg,
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "aims": req.attached_aims,
+            "datasets": dataset_names,
+            "route": route,
+        }
+        if result_uuid:
+            turn_entry["result_uuid"] = result_uuid
+        if query_result_raw:
+            turn_entry["query_result"] = {
+                "sql": query_result_raw.get("sql", ""),
+                "columns": query_result_raw.get("columns", []),
+                "row_count": query_result_raw.get("row_count", 0),
+            }
+        if analysis_actions_raw:
+            turn_entry["analysis_actions"] = analysis_actions_raw
+        turns.append(turn_entry)
+        state["turns"] = turns
+        existing = list(state.get("aim_proposals", []))
+        for ap in aim_proposals_raw:
+            if isinstance(ap, dict) and ap.get("aim") and not any(
+                e.get("aim") == ap["aim"] for e in existing
+            ):
+                existing.append(ap)
+        state["aim_proposals"] = existing
+        row.state_json = state
+        row.version += 1
+        row.updated_at = datetime.now(timezone.utc)
+        if len(turns) == 1 and re.match(r"^Session [a-f0-9]{8}$", row.title or ""):
+            new_title = req.message.strip()[:50]
+            if new_title:
+                row.title = new_title
+        await db.commit()
 
     return MessageResponse(
         session_id=req.session_id,
         turn_index=0,
         agent_message=agent_msg,
-        phase="chat",
-        status="active",
+        route=route,
+        result_uuid=result_uuid,
+        query_result=query_result_model,
         analysis_actions=analysis_actions,
         done=True,
         aim_proposals=aim_proposals,
