@@ -2,7 +2,7 @@ import { useState, useEffect, useMemo, useRef, useCallback, KeyboardEvent } from
 import { panelClass, btnPrimary } from "../lib/styles";
 import { useSessionStore } from "../stores/sessionStore";
 import { useOutputStore } from "../stores/outputStore";
-import { listDatasets, executeQuery, updateSessionState, summarizeContext } from "../api/client";
+import { listDatasets, updateSessionState, summarizeContext } from "../api/client";
 import { useDatasetStore } from "../stores/datasetStore";
 import { IconDatabase, IconCheck, IconUser, IconTarget } from "../lib/icons";
 import { QueryResultState } from "./QueryActions";
@@ -13,18 +13,7 @@ import { AimBar } from "../components/AimBar";
 import { PreviewModal } from "../components/PreviewModal";
 import { ViewingResultModal } from "../components/ViewingResultModal";
 import { datasetColor } from "../lib/datasetColors";
-
-interface DatasetInfo {
-  line_name: string;
-  dataset_name: string;
-  description: string | null;
-  table: string | null;
-  column_definitions: { name: string; datatype: string; meaning?: string }[];
-  role: string | null;
-  join_hints: any;
-  suggested_aims: any;
-  synonyms: string[] | null;
-}
+import type { DatasetInfo } from "../types";
 
 interface Aim {
   aim: string;
@@ -92,7 +81,7 @@ export default function ChatSection() {
   }, [datasets]);
 
   useEffect(() => {
-    listDatasets().then(setDatasets).catch(() => {});
+    listDatasets().then(setDatasets).catch((err) => console.error("Failed to load datasets:", err));
   }, []);
 
   const filtered = useMemo(() => {
@@ -170,11 +159,20 @@ export default function ChatSection() {
     // Datasets stay attached — user can manually detach them if no other aim uses them
   };
 
-  const handleToggleAction = (action: { name: string; description: string; datasets?: string[] }) => {
+  const handleToggleAction = async (action: { name: string; description: string; datasets?: string[] }) => {
     if (selectedAims.find((a) => a.aim === action.name)) {
       removeAim(action.name);
     } else {
       useAim({ aim: action.name, description: action.description, datasets: action.datasets });
+      const msg = `Run analysis: ${action.description || action.name}`;
+      const lineName = useDatasetStore.getState().attached.join(",");
+      const res = await sendUserMessage(msg, lineName, [action.name], enrichmentMode, "focus");
+      if (res?.result_uuid && res?.query_result) {
+        setQueryResults((prev) => ({
+          ...prev,
+          [res.result_uuid!]: res.query_result! as QueryResultState,
+        }));
+      }
     }
   };
 
@@ -300,77 +298,21 @@ export default function ChatSection() {
       storeAddMultiple(aimDef.datasets);
       storeAttachMultiple(aimDef.datasets);
     }
-    const aimName = aimDef.aim;
-    setRunningAim(aimName);
-    setAimResults((prev) => ({ ...prev, [aimName]: { loading: true } }));
-
-    // Create a new turn showing the aim as a user message
-    const turnId = crypto.randomUUID();
-    const userMsg = aimDef.description
-      ? `${aimDef.aim}\n\n${aimDef.description}`
-      : aimDef.aim;
-    const newTurn = { created_at: new Date().toISOString(), user: userMsg, agent: "", result_uuid: turnId, aims: [aimDef.aim], datasets: aimDef.datasets } as Turn;
-    useSessionStore.setState((s) => ({ turns: [...s.turns, newTurn] }));
-    scrollToBottom();
-
-    try {
-      const parts: string[] = [];
-      for (const dsName of (aimDef.datasets && aimDef.datasets.length > 0 ? aimDef.datasets : storeAttached)) {
-        const ds = datasetLookup.get(dsName);
-        const table = ds?.table || dsName;
-        const allCols = ds?.column_definitions?.map((c) => c.name) || [];
-        parts.push(`  Dataset: ${dsName} → table \`${table}\`, columns: ${allCols.join(", ")}`);
-      }
-      const sqlMessage = `Generate a SQL query for: ${aimDef.aim}\n\n${aimDef.description || ""}\n\nAvailable datasets:\n${parts.join("\n\n")}`;
-      const lineName = storeAttached.join(",");
-      const res = await executeQuery(sessionId, sqlMessage, lineName);
-      const resultState: QueryResultState = { loading: false, ...res };
-      setRunningAim(null);
-      setAimResults((prev) => ({ ...prev, [aimName]: resultState }));
+    const msg = `Run analysis: ${aimDef.description || aimDef.aim}`;
+    const lineName = useDatasetStore.getState().attached.join(",");
+    const res = await sendUserMessage(msg, lineName, [aimDef.aim], enrichmentMode, "deep");
+    if (res?.result_uuid && res?.query_result) {
+      const resultState: QueryResultState = { loading: false, ...res.query_result } as QueryResultState;
       useOutputStore.getState().addResult({
         aim: aimDef.aim,
         description: aimDef.description,
         datasets: aimDef.datasets,
         result: resultState,
       });
-      const summary = aimDef.description
-        ? `**${aimDef.aim}** — ${aimDef.description}\n\nResults shown below.`
-        : `**${aimDef.aim}** — results shown below.`;
       useSessionStore.setState((s) => ({
-        turns: s.turns.map((t) => t.result_uuid === turnId ? { ...t, agent: summary, result_uuid: turnId, aims: [aimDef.aim], datasets: aimDef.datasets } : t),
-        chatQueryResults: { ...s.chatQueryResults, [turnId]: resultState },
-        completedActions: { ...s.completedActions, [aimDef.aim]: turnId },
+        completedActions: { ...s.completedActions, [aimDef.aim]: res.result_uuid },
       }));
-      persistTurns();
-      setQueryResults((prev) => ({ ...prev, [turnId]: resultState }));
-      setCompletedActions((prev) => ({ ...prev, [aimDef.aim]: turnId }));
-    } catch (e: any) {
-      const msg = e.message || "";
-      let clean = "Failed to generate a working query. Try rephrasing your request.";
-      try {
-        const parsed = JSON.parse(msg);
-        if (parsed.detail) clean = parsed.detail;
-      } catch {}
-      const resultState: QueryResultState = { loading: false, error: clean };
-      setRunningAim(null);
-      setAimResults((prev) => ({ ...prev, [aimName]: resultState }));
-      useOutputStore.getState().addResult({
-        aim: aimDef.aim,
-        description: aimDef.description,
-        datasets: aimDef.datasets,
-        result: resultState,
-      });
-      const errorMsg = aimDef.description
-        ? `**${aimDef.aim}** — ${aimDef.description}\n\n${clean}`
-        : `**${aimDef.aim}** — ${clean}`;
-      useSessionStore.setState((s) => ({
-        turns: s.turns.map((t) => t.result_uuid === turnId ? { ...t, agent: errorMsg, result_uuid: turnId, aims: [aimDef.aim], datasets: aimDef.datasets } : t),
-        chatQueryResults: { ...s.chatQueryResults, [turnId]: resultState },
-        completedActions: { ...s.completedActions, [aimDef.aim]: turnId },
-      }));
-      persistTurns();
-      setQueryResults((prev) => ({ ...prev, [turnId]: resultState }));
-      setCompletedActions((prev) => ({ ...prev, [aimDef.aim]: turnId }));
+      setCompletedActions((prev) => ({ ...prev, [aimDef.aim]: res.result_uuid! }));
     }
   };
 
@@ -406,7 +348,7 @@ export default function ChatSection() {
   // Persist selectedAims to backend whenever it changes
   useEffect(() => {
     if (!sessionId) return;
-    updateSessionState(sessionId, { selected_aims: selectedAims }).catch(() => {});
+    updateSessionState(sessionId, { selected_aims: selectedAims }).catch((err) => console.error("Failed to persist selected aims:", err));
   }, [selectedAims, sessionId]);
 
   const handleSend = async () => {
@@ -414,7 +356,7 @@ export default function ChatSection() {
     if (!msg || !sessionId) return;
     setInput("");
     setShowSearch(false);
-    const lineName = storeAttached.join(",");
+    const lineName = useDatasetStore.getState().attached.join(",");
     const aimNames = selectedAims.map((a) => a.aim);
     const res = await sendUserMessage(msg, lineName, aimNames, enrichmentMode);
     if (res?.result_uuid && res?.query_result) {

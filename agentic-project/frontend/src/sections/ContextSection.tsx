@@ -6,18 +6,7 @@ import { panelClass, monoClass } from "../lib/styles";
 import { IconDatabase, IconEdit } from "../lib/icons";
 import { listDatasets } from "../api/client";
 import { DatasetColumns } from "../components/DatasetColumns";
-
-interface DatasetInfo {
-  line_name: string;
-  dataset_name: string;
-  description: string | null;
-  table: string | null;
-  column_definitions: { name: string; datatype: string; meaning?: string }[];
-  role: string | null;
-  join_hints: any;
-  suggested_aims: any;
-  synonyms: string[] | null;
-}
+import type { DatasetInfo } from "../types";
 
 export default function ContextSection() {
   const sessionMeta = useSessionStore((s) => s.sessionMeta);
@@ -42,7 +31,7 @@ export default function ContextSection() {
   const titleInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
-    listDatasets().then(setDatasets).catch(() => {});
+    listDatasets().then(setDatasets).catch((err) => console.error("Failed to load datasets:", err));
   }, []);
 
   useEffect(() => {

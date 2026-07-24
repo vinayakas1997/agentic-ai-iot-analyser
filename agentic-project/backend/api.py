@@ -10,7 +10,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from resolve import resolve_line_lookup, fetch_datasets, save_task_definition
-from aims import generate_chat_response, generate_sql, fix_sql, criticize_sql, extract_aims_from_text, extract_analysis_actions, suggest_charts, _fallback_chart_configs
+from aims import generate_chat_response, generate_sql, fix_sql, criticize_sql, extract_aims_from_text, extract_analysis_actions, suggest_charts, _fallback_chart_configs, generate_aim
 from llm_client import parse_numbered_suggestions
 from logger import log_route, log_llm_call, log_sql, log_aims, log_response, log_full_prompt
 from llm_client import summarize_turns, classify_route, extract_sql, extract_sql_fallback, generate_llm_response, interpret_results, direct_prompt, suggest_prompt, focus_prompt, deep_prompt
@@ -69,6 +69,7 @@ class MessageRequest(BaseModel):
     attached_aims: list[str] = []
     enrichment_mode: str = "research"
     history: list[dict] | None = None
+    route_override: str = ""
 
 class AimProposal(BaseModel):
     aim: str
@@ -127,6 +128,7 @@ class MessageResponse(BaseModel):
     result_uuid: str | None = None
     query_result: QueryResult | None = None
     route: str = "direct"
+    deep_iterations: list = []
 
 class ExecuteQueryRequest(BaseModel):
     session_id: str
@@ -255,6 +257,18 @@ def build_enrichment_block(
                 seen_timestamps.add(ts)
 
     return "\n".join(blocks)
+
+
+def build_conversation_history(turns: list[dict], max_turns: int = 5) -> str:
+    """Build a conversation history block from stored turns."""
+    history_blocks = []
+    for t in turns[-max_turns:]:
+        user_text = (t.get("user") or "")[:200]
+        agent_text = (t.get("agent") or "")[:200]
+        history_blocks.append(f"User: {user_text}\nAssistant: {agent_text}")
+    if history_blocks:
+        return "\n\n".join(history_blocks)
+    return ""
 
 
 # ── Routes ──
@@ -559,8 +573,7 @@ def _build_context(
     for ds in datasets_data:
         cols = ds.get("column_definitions", [])
         col_str = "; ".join(f"{c.get('name','?')} ({c.get('datatype','?')})" for c in cols[:10])
-        tbl = ds.get("table_name", ds.get("dataset_name", "?"))
-        parts.append(f"Dataset '{ds.get('dataset_name','?')}' (table: {tbl}): {col_str}")
+        parts.append(f"Dataset '{ds.get('dataset_name','?')}': {col_str}")
         if ds.get("description"):
             parts.append(f"  Description: {ds['description']}")
         if ds.get("join_hints"):
@@ -611,7 +624,7 @@ async def _handle_direct(
             raw = raw2  # Use the retry response for interpretation
 
     if not sql:
-        proposals = parse_numbered_suggestions(raw)
+        proposals = parse_numbered_suggestions(raw, known_datasets=dataset_names)
         return {
             "agent_message": raw,
             "result_uuid": None,
@@ -689,7 +702,10 @@ async def _handle_suggest(
         system_prompt=system_prompt,
         question=message,
     )
-    proposals = parse_numbered_suggestions(raw)
+    # Include table names alongside user-facing dataset names for proposal validation
+    table_names = [ds.get("table", "") for ds in datasets_data if ds.get("table")]
+    known_datasets = list(set(dataset_names + table_names))
+    proposals = parse_numbered_suggestions(raw, known_datasets=known_datasets)
     return {
         "agent_message": raw,
         "result_uuid": None,
@@ -714,12 +730,18 @@ async def _handle_focus(
         system_prompt=system_prompt,
         question=message,
     )
-    sql = extract_sql(raw)
+
+    # Parse chart decision from LLM response
+    chart_decision = re.search(r'\[CHART_DECISION:\s*(yes|no)\]', raw, re.IGNORECASE)
+    chart_needed = chart_decision and chart_decision.group(1).lower() == "yes"
+    clean_raw = re.sub(r'\s*\[CHART_DECISION:\s*(yes|no)\]\s*', ' ', raw).strip()
+
+    sql = extract_sql(clean_raw)
     if not sql:
-        sql = extract_sql_fallback(raw)
+        sql = extract_sql_fallback(clean_raw)
     if not sql:
         return {
-            "agent_message": raw,
+            "agent_message": clean_raw,
             "result_uuid": None,
             "query_result": None,
         }
@@ -761,7 +783,9 @@ async def _handle_focus(
             "query_result": error_result,
         }
 
-    chart_suggestions = await _build_chart_suggestions(result)
+    chart_suggestions = None
+    if chart_needed:
+        chart_suggestions = await _build_chart_suggestions(result)
     result_with_charts = {**result, "chart_suggestions": chart_suggestions}
 
     interpretation = await interpret_results(
@@ -790,6 +814,9 @@ async def _handle_deep(
     all_results = []
     current_message = message
     context = _build_context(dataset_names, datasets_data, attached_aims)
+    final_msg = ""
+    last_clean = ""
+    deep_iterations = []
     if enrichment_block:
         context += f"\n\n## Previous Context\n{enrichment_block}"
 
@@ -810,15 +837,24 @@ async def _handle_deep(
             question=current_message,
         )
 
-        if iteration == max_iterations - 1:
-            final_msg = raw
+        chart_match = re.search(r'\[CHART_DECISION:\s*(yes|no)\]', raw, re.IGNORECASE)
+        chart_decision = chart_match.group(1).lower() if chart_match else "no"
+        clean = re.sub(r'\s*\[CHART_DECISION:\s*(yes|no)\]\s*', ' ', raw).strip()
+        last_clean = clean
+
+        if "**DONE**" in clean:
+            final_msg = clean
             break
 
-        sql = extract_sql(raw)
+        if iteration == max_iterations - 1:
+            final_msg = clean
+            break
+
+        sql = extract_sql(clean)
         if not sql:
             all_results.append({
                 "iteration": iteration,
-                "response": raw,
+                "response": clean,
                 "sql": None,
                 "result": None,
             })
@@ -829,7 +865,7 @@ async def _handle_deep(
         except ValueError as e:
             all_results.append({
                 "iteration": iteration,
-                "response": raw,
+                "response": clean,
                 "sql": sql,
                 "error": f"Validation: {str(e)}",
                 "result": None,
@@ -841,7 +877,7 @@ async def _handle_deep(
         except Exception as e:
             all_results.append({
                 "iteration": iteration,
-                "response": raw,
+                "response": clean,
                 "sql": sql,
                 "error": str(e)[:200],
                 "result": None,
@@ -850,30 +886,38 @@ async def _handle_deep(
 
         all_results.append({
             "iteration": iteration,
-            "response": raw,
+            "response": clean,
             "sql": sql,
             "result": result,
             "row_count": result.get("row_count", 0),
         })
 
+        # Build iteration block for frontend
+        chart_suggestions = None
+        if chart_decision == "yes" and result:
+            chart_suggestions = await _build_chart_suggestions(result)
+            if chart_suggestions:
+                chart_suggestions = chart_suggestions.model_dump() if hasattr(chart_suggestions, "model_dump") else chart_suggestions
+
+        deep_iterations.append({
+            "iteration": iteration,
+            "explanation": clean,
+            "sql": sql,
+            "columns": result.get("columns", []),
+            "column_types": result.get("column_types", []),
+            "rows": result.get("rows", []),
+            "row_count": result.get("row_count", 0),
+            "chart_suggestions": chart_suggestions,
+        })
+
         current_message = f"My previous analysis found {result.get('row_count', 0)} rows. Given these results, what deeper insight can you uncover? Continue the multi-step research."
 
-    # Final summary using last result
-    last_result = None
-    for r in reversed(all_results):
-        if r.get("result"):
-            last_result = r["result"]
-            break
-
-    if last_result:
-        chart_suggestions = await _build_chart_suggestions(last_result)
-        last_result["chart_suggestions"] = chart_suggestions
-
-    result_uuid = str(uuid.uuid4()) if last_result else None
+    result_uuid = str(uuid.uuid4()) if deep_iterations else None
     return {
-        "agent_message": final_msg if 'final_msg' in locals() else raw,
+        "agent_message": final_msg or last_clean,
         "result_uuid": result_uuid,
-        "query_result": last_result,
+        "query_result": None,
+        "deep_iterations": deep_iterations,
     }
 
 
@@ -907,7 +951,7 @@ async def send_message(req: MessageRequest):
     if req.enrichment_mode == "research" and not dataset_names:
         return MessageResponse(
             session_id=req.session_id,
-            agent_message="Please select at least one dataset to work with. Search and attach datasets from the search bar above.",
+            agent_message="Please select at least one dataset to work with. Search and attach datasets from the search bar above. (Aims are attached but need datasets to execute.)",
             route="direct",
         )
 
@@ -931,7 +975,7 @@ async def send_message(req: MessageRequest):
                 "column_definitions": reg.column_definitions,
                 "join_hints": reg.join_hints,
                 "suggested_aims": reg.suggested_aims,
-                "table_name": sc.get("table", reg.dataset_name),
+                "table": sc.get("table", reg.dataset_name),
             })
 
     # If SUMMARY mode, skip routing and use existing summarization flow
@@ -944,6 +988,14 @@ async def send_message(req: MessageRequest):
                 attached_datasets=dataset_names,
                 mode=req.enrichment_mode,
             )
+        # Always append conversation history from stored turns
+        turns = (session.state_json or {}).get("turns", [])
+        conv_history = build_conversation_history(turns)
+        if conv_history:
+            if enrichment_block:
+                enrichment_block += "\n\n## Conversation History\n" + conv_history
+            else:
+                enrichment_block = "## Conversation History\n" + conv_history
         if enrichment_block:
             agent_msg = await generate_chat_response(
                 message=req.message,
@@ -1018,7 +1070,10 @@ async def send_message(req: MessageRequest):
         )
 
     # RESEARCH mode: classify route and dispatch
-    route = await classify_route(question=req.message)
+    if req.route_override:
+        route = req.route_override.lower()
+    else:
+        route = await classify_route(question=req.message)
 
     enrichment_block = build_enrichment_block(
         state=dict(session.state_json or {}),
@@ -1026,6 +1081,15 @@ async def send_message(req: MessageRequest):
         attached_datasets=dataset_names,
         mode=req.enrichment_mode,
     )
+
+    # Append conversation history from stored turns (not covered by enrichment tags)
+    turns = (session.state_json or {}).get("turns", [])
+    conv_history = build_conversation_history(turns)
+    if conv_history:
+        if enrichment_block:
+            enrichment_block += "\n\n## Conversation History\n" + conv_history
+        else:
+            enrichment_block = "## Conversation History\n" + conv_history
 
     route_handlers = {
         "direct": _handle_direct,
@@ -1047,6 +1111,7 @@ async def send_message(req: MessageRequest):
     result_uuid = handler_result.get("result_uuid")
     query_result_raw = handler_result.get("query_result")
     handler_proposals = handler_result.get("aim_proposals", [])
+    deep_iterations_raw = handler_result.get("deep_iterations", [])
 
     log_response(route, result_uuid or "", len(handler_proposals))
     log_aims(len(handler_proposals), f"from handler ({route})")
@@ -1075,7 +1140,25 @@ async def send_message(req: MessageRequest):
     if handler_proposals:
         aim_proposals_raw = list(aim_proposals_raw) + list(handler_proposals)
     aim_proposals = [AimProposal(**a) for a in aim_proposals_raw if isinstance(a, dict)]
-    analysis_actions_raw = await extract_analysis_actions(agent_msg, dataset_names) if dataset_names and route in ("direct",) else []
+    # Filter out garbled proposals — must have a real aim name and valid datasets
+    known_set = set(dataset_names)
+    aim_proposals = [
+        p for p in aim_proposals
+        if len(p.aim) > 3
+        and p.datasets
+        and any(ds in known_set for ds in p.datasets)
+    ]
+    # DIRECT route: extract actions from agent response text via secondary LLM call
+    analysis_actions_raw = []
+    if dataset_names and route in ("direct",):
+        analysis_actions_raw = await extract_analysis_actions(agent_msg, dataset_names)
+    # SUGGEST route: map parsed proposals directly to analysis_actions (no extra LLM call)
+    elif route.lower() == "suggest" and handler_proposals:
+        analysis_actions_raw = [
+            {"name": p["aim"], "description": p.get("description", ""), "datasets": p.get("datasets", [])}
+            for p in handler_proposals
+            if isinstance(p, dict) and p.get("aim")
+        ]
     analysis_actions = [AnalysisAction(**a) for a in analysis_actions_raw if isinstance(a, dict)]
 
     # Save turn
@@ -1102,11 +1185,17 @@ async def send_message(req: MessageRequest):
         if result_uuid:
             turn_entry["result_uuid"] = result_uuid
         if query_result_raw:
-            turn_entry["query_result"] = {
+            query_result_save = {
                 "sql": query_result_raw.get("sql", ""),
                 "columns": query_result_raw.get("columns", []),
                 "row_count": query_result_raw.get("row_count", 0),
             }
+            if query_result_raw.get("chart_suggestions") is not None:
+                cs = query_result_raw["chart_suggestions"]
+                query_result_save["chart_suggestions"] = cs.model_dump() if hasattr(cs, "model_dump") else cs
+            turn_entry["query_result"] = query_result_save
+        if deep_iterations_raw:
+            turn_entry["deep_iterations"] = deep_iterations_raw
         if analysis_actions_raw:
             turn_entry["analysis_actions"] = analysis_actions_raw
         turns.append(turn_entry)
@@ -1137,6 +1226,7 @@ async def send_message(req: MessageRequest):
         analysis_actions=analysis_actions,
         done=True,
         aim_proposals=aim_proposals,
+        deep_iterations=deep_iterations_raw,
     )
 
 

@@ -126,11 +126,48 @@ export function TurnBubble({ turn, queryResult, completedActions, selectedAims, 
     );
   }, [hasActions, onToggleAction, turn.analysis_actions, turn.created_at, runningAim, completedActions, selectedAims, onScrollToTurn, onRerunAim, loading]);
 
+  const deepIterationBlocks = useMemo(() => {
+    if (!turn.deep_iterations?.length) return null;
+    return (
+      <div className="mt-4 space-y-4">
+        <div className="text-[11px] font-semibold tracking-wider uppercase text-stage-manager/70 mb-1">
+          Research Steps ({turn.deep_iterations.length})
+        </div>
+        {turn.deep_iterations.map((iter, idx) => {
+          const iterResult: QueryResultState = {
+            loading: false,
+            sql: iter.sql,
+            columns: iter.columns,
+            column_types: iter.column_types,
+            rows: iter.rows,
+            row_count: iter.row_count,
+            chart_suggestions: iter.chart_suggestions ?? null,
+          };
+          return (
+            <div key={idx} className="pt-3 border-t border-border/10">
+              <div className="text-[10.5px] font-semibold text-stage-manager mb-2 flex items-center gap-1.5">
+                <span className="inline-flex items-center justify-center w-5 h-5 rounded-full bg-stage-manager/10 text-stage-manager text-[10px] font-bold">
+                  {idx + 1}
+                </span>
+                Iteration {idx + 1}
+              </div>
+              <div className="prose-custom text-sm text-text/90 mb-3">
+                <ReactMarkdown remarkPlugins={[remarkGfm]}>{iter.explanation}</ReactMarkdown>
+              </div>
+              <QueryActions queryResult={iterResult} />
+            </div>
+          );
+        })}
+      </div>
+    );
+  }, [turn.deep_iterations]);
+
   const agentContent = (
     <div className="flex-1 min-w-0">
       <div className="prose-custom text-sm text-text/90">
         <ReactMarkdown remarkPlugins={[remarkGfm]}>{turn.agent}</ReactMarkdown>
       </div>
+      {deepIterationBlocks}
       {turn.description && (
         <div className="rounded-xl border-l-3 border-l-ic-blue bg-ic-blue-soft/10 border border-border/40 p-3 mb-3">
           <div className="flex items-center gap-1.5 text-[10.5px] font-semibold tracking-wider uppercase text-ic-blue mb-1">
@@ -161,7 +198,7 @@ export function TurnBubble({ turn, queryResult, completedActions, selectedAims, 
         </div>
       )}
       {hasActions && actionsBar}
-      <QueryActions queryResult={queryResult} />
+      {!turn.deep_iterations?.length && <QueryActions queryResult={queryResult} />}
     </div>
   );
 

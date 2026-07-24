@@ -12,12 +12,15 @@ export interface AimItem {
 }
 
 export interface DatasetInfo {
+  line_name: string;
   dataset_name: string;
-  description?: string;
-  role?: string;
-  columns: { name: string; datatype?: string; meaning?: string }[];
-  suggested_aims: AimItem[] | string[];
-  join_hints?: any;
+  description: string | null;
+  table: string | null;
+  column_definitions: { name: string; datatype: string; meaning?: string }[];
+  role: string | null;
+  join_hints: any;
+  suggested_aims: any;
+  synonyms: string[] | null;
 }
 
 export interface ResolvedLine {

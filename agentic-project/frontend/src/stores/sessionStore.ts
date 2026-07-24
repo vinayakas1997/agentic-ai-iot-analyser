@@ -23,6 +23,7 @@ function turnFromResponse(res: MessageResponse, userMessage: string, attachedAim
     benefits: res.benefits || null,
     columns: res.columns || null,
     analysis_actions: res.analysis_actions || undefined,
+    deep_iterations: res.deep_iterations || undefined,
   };
 }
 
@@ -49,12 +50,6 @@ interface PendingTurn {
   loading: boolean;
 }
 
-interface ExecutionEvent {
-  topic: string;
-  payload: Record<string, unknown>;
-  timestamp: number;
-}
-
 interface SessionState {
   sessionId: string | null;
   isLocalSession: boolean;
@@ -65,8 +60,6 @@ interface SessionState {
   loading: boolean;
   statusMessage: string | null;
   error: string | null;
-  executionEvents: ExecutionEvent[];
-  wsStatus: "connecting" | "connected" | "disconnected";
   pendingTurn: PendingTurn | null;
   aimProposals: { aim: string; description: string; datasets: string[] }[];
   selectedAims: { aim: string; description?: string; datasets?: string[] }[];
@@ -79,14 +72,9 @@ interface SessionState {
   refreshSessions: () => Promise<SessionListItem[]>;
   switchSession: (id: string) => Promise<void>;
   newSession: () => void;
-  sendUserMessage: (text: string, lineName?: string, attachedAims?: string[], enrichmentMode?: string) => Promise<MessageResponse | undefined>;
-  reopenSession: () => Promise<void>;
-  forkSession: () => Promise<void>;
+  sendUserMessage: (text: string, lineName?: string, attachedAims?: string[], enrichmentMode?: string, routeOverride?: string) => Promise<MessageResponse | undefined>;
   setError: (error: string | null) => void;
   setStatusMessage: (msg: string | null) => void;
-  pushExecutionEvent: (event: ExecutionEvent) => void;
-  clearExecutionEvents: () => void;
-  setWsStatus: (status: "connecting" | "connected" | "disconnected") => void;
   setPendingTurn: (user: string) => void;
   updatePendingSchema: (update: Partial<SchemaSnapshot>) => void;
   updatePendingUi: (update: Partial<TurnUi>) => void;
@@ -111,8 +99,6 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   loading: false,
   statusMessage: null,
   error: null,
-  executionEvents: [],
-  wsStatus: "connecting",
   pendingTurn: null,
   aimProposals: [],
   selectedAims: [],
@@ -124,7 +110,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
 
   refreshSessions: async () => {
     const list = await api.listSessions();
-    const withMode = list.map((s) => ({ ...s, mode: (s as any).mode || "ask" }));
+    const withMode = list.map((s) => ({ ...s, mode: s.mode || "ask" }));
     set({ sessions: withMode });
     return withMode;
   },
@@ -135,8 +121,9 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       const list = await get().refreshSessions();
       if (list.length > 0) {
         const detail = await api.getSession(list[0].session_id);
-        const sessionMeta = { session_id: detail.session_id, title: detail.title, phase: detail.phase || "lines", status: detail.status || "active", mode: (detail as any).mode || "ask" };
-        const loadedTurns = (detail.turns || []).map((t: any) => ({
+        const sessionMeta = { session_id: detail.session_id, title: detail.title, phase: detail.phase || "lines", status: detail.status || "active", mode: detail.mode || "ask" };
+        const apiTurns = detail.turns || [];
+        const loadedTurns: Turn[] = apiTurns.map((t) => ({
           turn_index: 0,
           user: t.user,
           agent: t.agent || "",
@@ -215,7 +202,6 @@ export const useSessionStore = create<SessionState>((set, get) => ({
         sessionMeta,
         turns: loadedTurns,
         sessionId: detail.session_id || id,
-        executionEvents: [],
         aimProposals: detail.state?.aim_proposals || [],
         selectedAims: Array.isArray(detail.state?.selected_aims) ? detail.state.selected_aims : [],
         outputResults: Array.isArray(detail.state?.output_results) ? detail.state.output_results : [],
@@ -254,7 +240,6 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       aimProposals: [],
       contextSummaries: {},
       enrichmentMode: "research",
-      executionEvents: [],
       pendingTurn: null,
     });
     useOutputStore.getState().clearResults();
@@ -262,7 +247,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     useUiStore.getState().selectTurn(-1);
   },
 
-  sendUserMessage: async (text, lineName = "", attachedAims: string[] = [], enrichmentMode = "research") => {
+  sendUserMessage: async (text, lineName = "", attachedAims: string[] = [], enrichmentMode = "research", routeOverride?: string) => {
     const { sessionId, turns, isLocalSession, pendingTitle, sessionMeta } = get();
     const isDone = turns.length > 0 && Boolean(turns[turns.length - 1]?.ui?.done);
     const origSessionId = sessionId;
@@ -270,7 +255,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     if (!sessionId || !text.trim() || isDone) return;
 
     const userText = text.trim();
-    set({ error: null, loading: true, statusMessage: "Analyzing your request...", executionEvents: [], pendingTurn: null });
+    set({ error: null, loading: true, statusMessage: "Analyzing your request...", pendingTurn: null });
     get().setPendingTurn(userText);
 
     const statusSteps = [
@@ -307,12 +292,12 @@ export const useSessionStore = create<SessionState>((set, get) => ({
         const attached = useDatasetStore.getState().attached;
         if (attached.length > 0) prePayload.attached_datasets = attached;
         if (Object.keys(prePayload).length > 0) {
-          api.updateSessionState(activeSessionId, prePayload).catch(() => {});
+          api.updateSessionState(activeSessionId, prePayload).catch((err) => console.error("Failed to persist pre-existing state:", err));
         }
       }
 
-      // Send empty history — enrichment block replaces it (built server-side)
-      const res = await api.sendMessage(activeSessionId, userText, lineName, attachedAims, enrichmentMode, []);
+      // History built server-side from stored turns (via enrichment block + conv history)
+      const res = await api.sendMessage(activeSessionId, userText, lineName, attachedAims, enrichmentMode, [], routeOverride);
       clearInterval(statusTimer);
       set({ statusMessage: "Response received" });
 
@@ -340,12 +325,23 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       if (isFirstTurn) {
         const name = userText.slice(0, 50).trim();
         if (name) {
-          api.updateSessionTitle(activeSessionId, name).catch(() => {});
+          api.updateSessionTitle(activeSessionId, name).catch((err) => console.error("Failed to auto-name session:", err));
           set((s) => ({
             sessionMeta: s.sessionMeta ? { ...s.sessionMeta, title: name } : s.sessionMeta,
           }));
         }
       }
+      // Store inline query result for persistence across reloads
+      if (res.result_uuid && res.query_result) {
+        const updatedResults = {
+          ...get().chatQueryResults,
+          [res.result_uuid!]: res.query_result as QueryResultState,
+        };
+        set({ chatQueryResults: updatedResults });
+        // Persist to backend so results survive page reload
+        api.updateSessionState(activeSessionId, { chat_query_results: updatedResults }).catch((err) => console.error("Failed to persist chat query results:", err));
+      }
+
       // Store aim proposals from response
       if (res.aim_proposals?.length) {
         set((state) => {
@@ -368,36 +364,6 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     } finally {
       clearInterval(statusTimer);
       set({ loading: false, statusMessage: null });
-    }
-  },
-
-  reopenSession: async () => {
-    const { sessionId } = get();
-    if (!sessionId) return;
-    set({ error: null, loading: true });
-    try {
-      await api.reopenSession(sessionId);
-      set({ executionEvents: [] });
-      await get().switchSession(sessionId);
-    } catch (e) {
-      set({ error: getErrorMessage(e) });
-    } finally {
-      set({ loading: false });
-    }
-  },
-
-  forkSession: async () => {
-    const { sessionId } = get();
-    if (!sessionId) return;
-    set({ error: null, loading: true });
-    try {
-      const { session_id } = await api.forkSession(sessionId);
-      await get().switchSession(session_id);
-      await get().refreshSessions();
-    } catch (e) {
-      set({ error: getErrorMessage(e) });
-    } finally {
-      set({ loading: false });
     }
   },
 
@@ -448,15 +414,6 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   setPendingTitle: (title) => set({ pendingTitle: title }),
 
   setEnrichmentMode: (mode) => set({ enrichmentMode: mode }),
-
-  pushExecutionEvent: (event) =>
-    set((state) => ({
-      executionEvents: [...state.executionEvents.slice(-49), event],
-    })),
-
-  clearExecutionEvents: () => set({ executionEvents: [] }),
-
-  setWsStatus: (status) => set({ wsStatus: status }),
 
   setPendingTurn: (user) => {
     set({

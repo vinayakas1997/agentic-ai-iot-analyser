@@ -83,6 +83,7 @@ export interface Turn {
   benefits?: string | null;
   columns?: { dataset: string; name: string }[] | null;
   analysis_actions?: AnalysisAction[];
+  deep_iterations?: DeepIteration[];
 }
 
 export interface SessionMeta {
@@ -105,20 +106,6 @@ export interface SessionListItem {
   status?: string;
 }
 
-export interface SessionDetail {
-  session: SessionMeta;
-  turns: Turn[];
-}
-
-export interface QueryResult {
-  sql: string;
-  columns: string[];
-  column_types?: string[];
-  rows: Record<string, unknown>[];
-  row_count: number;
-  chart_suggestions?: ChartSuggestions | null;
-}
-
 export interface MessageResponse {
   session_id: string;
   turn_index?: number;
@@ -135,8 +122,15 @@ export interface MessageResponse {
   aim_proposals?: { aim: string; description: string; datasets: string[] }[];
   analysis_actions?: AnalysisAction[];
   result_uuid?: string;
-  query_result?: QueryResult;
+  query_result?: {
+    sql: string;
+    columns: string[];
+    column_types?: string[];
+    rows: Record<string, unknown>[];
+    row_count: number;
+  };
   route?: string;
+  deep_iterations?: DeepIteration[];
 }
 
 export interface AnalysisAction {
@@ -145,17 +139,24 @@ export interface AnalysisAction {
   datasets: string[];
 }
 
-export interface ChartConfig {
-  chartType: "composed" | "stackedArea" | "treemap" | "radialBar" | "funnel" | "sunburst" | "scatter" | "radar" | "bar" | "line" | "area" | "pie";
-  xKey: string;
-  yKeys: string[];
-  reason?: string;
-  xLabel?: string;
-  yLabel?: string;
-  howToRead?: string;
+export interface DeepIteration {
+  iteration: number;
+  explanation: string;
+  sql: string;
+  columns: string[];
+  column_types?: string[];
+  rows: Record<string, unknown>[];
+  row_count: number;
+  chart_suggestions?: { advanced: ChartConfig[]; basic: ChartConfig[] };
 }
 
-export interface ChartSuggestions {
-  advanced: ChartConfig[];
-  basic: ChartConfig[];
+export interface ChartConfig {
+  chartType: string;
+  xKey: string;
+  yKeys: string[];
+  reason: string;
+  xLabel: string;
+  yLabel: string;
+  howToRead: string;
 }
+

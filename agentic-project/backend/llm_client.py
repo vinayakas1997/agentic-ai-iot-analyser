@@ -3,8 +3,7 @@
 import logging
 import re
 import time
-from openai import AsyncOpenAI
-from config import get_settings
+from config import get_settings, get_llm_client
 from logger import log_route, log_llm_call, log_sql, log_full_prompt
 
 logger = logging.getLogger(__name__)
@@ -31,7 +30,7 @@ ROUTER_PROMPT = """Classify the user's question into one of these categories:
 
 1. DIRECT — User asks a specific factual question (e.g., "which fruit has the highest sale?", "what is the average cost?", "show me sales by region"). The question can be answered with a single SQL query.
 
-2. SUGGEST — User explores possibilities (e.g., "what can I do?", "what analyses are possible?", "give me ideas"). No specific question, just looking for direction.
+2. SUGGEST — User explores possibilities (e.g., "what can I do?", "what analyses are possible?", "give me ideas", "explain", "describe the data", "tell me about the data"). No specific question, just looking for direction.
 
 3. FOCUS — User wants to deep-dive on one specific analysis topic (e.g., "tell me more about quality impact", "elaborate on sales trends", "go deeper into this analysis").
 
@@ -68,26 +67,45 @@ The user asked a specific factual question. You MUST generate a SQL query to ans
 
 SUGGEST_PROMPT = """You are a data analysis assistant. Current mode: RESEARCH — SUGGEST IDEAS.
 
-The user is exploring what analyses are possible with their data. Suggest concrete, actionable analysis directions.
+The user is exploring what analyses are possible with their data. Start with a brief conversational opening acknowledging their question, then list exactly 3 numbered analysis suggestions.
 
 ## Available Datasets
 {context}
 {enrichment_instruction}
 
 ## Instructions
-1. Suggest 3 specific analysis ideas based on the available data
-2. For each idea include:
-   - **Name**: Short, clear title
-   - **Goal**: What insight this analysis would reveal
-   - **Datasets/Columns**: Which data to use
-   - **Expected Insight**: What we might learn
-3. Do NOT generate SQL — just describe the analysis approach
-4. Make each idea distinct — explore different angles
+Start with 1-2 sentences of conversational text acknowledging the user's question (e.g. "Great question — here are 3 ways to explore your data:"), then output exactly 3 numbered suggestions. Use **bold** around field names and put each field on its own line:
+
+1. **Name**: Short, clear title
+   **Goal**: What insight this analysis would reveal
+   **Datasets**: fruits, fruit_quality
+   **Columns**: fruits_name, quantity, cost
+   **Explanation**: How these columns combine and what the result will tell us (e.g., "Summing quantity grouped by fruits_name reveals top-selling fruits")
+   **Expected Insight**: What we might learn
+
+2. **Name**: Short, clear title
+   **Goal**: What insight this analysis would reveal
+   **Datasets**: fruits, fruit_quality
+   **Columns**: fruits_name, quantity, cost
+   **Explanation**: How these columns combine and what the result will tell us
+   **Expected Insight**: What we might learn
+
+3. **Name**: Short, clear title
+   **Goal**: What insight this analysis would reveal
+   **Datasets**: fruits, fruit_quality
+   **Columns**: fruits_name, quantity, cost
+   **Explanation**: How these columns combine and what the result will tell us
+   **Expected Insight**: What we might learn
 
 ## Rules
+- Start with 1-2 sentences of conversational text acknowledging the user's question
+- Then list exactly 3 numbered suggestions in the format shown above
+- Put each field on its own line
+- Use **bold** around field names for visual highlighting
 - Reference only columns and datasets from the context above
-- Be specific about which columns to use
-- Keep each idea concise (2-3 sentences)
+- Do NOT generate SQL — just describe the analysis approach
+- Keep each suggestion concise (2-3 sentences)
+- Make each idea distinct — explore different angles
 """
 
 FOCUS_PROMPT = """You are a data analysis assistant. Current mode: RESEARCH — FOCUSED ANALYSIS.
@@ -111,6 +129,13 @@ The user wants to deep-dive on one specific analysis topic. Generate a comprehen
 - Always include LIMIT 100
 - Provide detailed, insightful interpretation
 - Suggest natural follow-ups (as questions, not [Action] blocks)
+
+## Chart Decision
+After the SQL code block and before your interpretation, output ONE line:
+[CHART_DECISION: yes] or [CHART_DECISION: no]
+
+- Choose **yes** if the result has 3+ rows AND multiple columns worth comparing — a bar/line/pie chart would add insight
+- Choose **no** if the result is a single number/row, a simple max/min/count/aggregate, or has too few dimensions for a meaningful chart
 """
 
 DEEP_PROMPT = """You are a data analysis assistant. Current mode: RESEARCH — DEEP RESEARCH.
@@ -140,6 +165,24 @@ You are conducting a multi-step research investigation. You have access to previ
 - Maximum 5 iterations total
 - Only use columns and tables from the datasets above
 - When DONE, provide a comprehensive summary of all findings
+
+## Chart Decision
+After the SQL code block and before your interpretation, output ONE line:
+[CHART_DECISION: yes] or [CHART_DECISION: no]
+
+- Choose **[CHART_DECISION: yes]** when the query result has **3+ rows** and **at least 2 numeric columns** that can be compared on a chart — for example:
+  - `sales by month` (x=month, y=sales)
+  - `quantity by region` (x=region, y=quantity)
+  - `price trends over time` (x=date, y=price)
+  - Any multi-row result where a bar, line, or pie chart would reveal patterns at a glance
+
+- Choose **[CHART_DECISION: no]** when the result is:
+  - A single row or single value (e.g. `total sales = 5000`)
+  - A simple count or aggregation with only one meaningful column
+  - A result with only 1-2 rows (not enough data for a chart)
+  - A list of distinct values with no numeric comparison to make
+
+Be decisive — if the result is rich enough to visualize, say **yes**.
 """
 
 INTERPRET_PROMPT = """You are a data analysis assistant. Interpret the SQL query results below.
@@ -268,17 +311,19 @@ def extract_sql_fallback(text: str) -> str | None:
     return None
 
 
-def parse_numbered_suggestions(text: str) -> list[dict]:
+def parse_numbered_suggestions(text: str, known_datasets: list[str] | None = None) -> list[dict]:
     """Parse numbered suggestions from LLM text into structured aim proposals.
 
     Handles formats like:
-    1. **Name**: X  **Goal**: Y  **Datasets/Columns**: Z  **Expected Insight**: W
-    1. Name: X - Goal: Y - Datasets: Z
+    1. **Name**: X  **Goal**: Y  **Datasets**: Z  **Columns**: C  **Explanation**: E  **Expected Insight**: W
+    1. Name: X - Goal: Y - Datasets: Z - Columns: C - Explanation: E - Expected Insight: W
+
+    If known_datasets is provided, parsed dataset names are validated against it.
     """
     proposals = []
+    known_set = set(known_datasets) if known_datasets else None
 
     # Try to match structured suggestion items
-    # Format: number. **Name**: X ... **Goal**: Y ... **Datasets**: Z
     items = re.split(r'(?:^|\n)\s*\d+\.\s*', text)
     items = [i.strip() for i in items if i.strip()]
 
@@ -290,35 +335,70 @@ def parse_numbered_suggestions(text: str) -> list[dict]:
         description = ""
         datasets = []
 
-        # Try various name patterns
+        # Name
         name_match = re.search(r'\*{0,2}(?:Name|Title)\*{0,2}\s*[:\-–]\s*(.+?)(?:\n|$)', item, re.IGNORECASE)
         if not name_match:
             name_match = re.search(r'(?:^|\n)\s*(.+?)(?:\s*[-–]\s*Goal|\n)', item)
         if name_match:
-            name = re.sub(r'\*+', '', name_match.group(1)).strip()
+            name = re.sub(r'\*+', '', name_match.group(1)).strip().replace('<br>', '')
 
-        # If no structured name found, try first line
         if not name:
             first_line = item.split('\n')[0].strip()
             if len(first_line) > 5 and len(first_line) < 100:
-                name = re.sub(r'\*+', '', first_line).rstrip(':')
+                name = re.sub(r'\*+', '', first_line).rstrip(':').replace('<br>', '')
             else:
                 continue
 
-        # Goal / description
+        # Goal
         goal_match = re.search(r'\*{0,2}Goal\*{0,2}\s*[:\-–]\s*(.+?)(?:\n|$)', item, re.IGNORECASE)
         if goal_match:
-            description = goal_match.group(1).strip().rstrip('*')
+            description = goal_match.group(1).strip().rstrip('*').replace('<br>', '')
 
-        # Datasets/Columns
-        ds_match = re.search(r'\*{0,2}(?:Datasets?|Columns?|Data)\*{0,2}\s*[:\-–]\s*(.+?)(?:\n|$)', item, re.IGNORECASE)
+        # Columns
+        cols_match = re.search(r'\*{0,2}Columns?\*{0,2}\s*[:\-–]\s*(.+?)(?:\n|$)', item, re.IGNORECASE)
+        if cols_match:
+            cols_text = cols_match.group(1).strip().rstrip('*').replace('<br>', '')
+            if cols_text:
+                description += f"\nColumns: {cols_text}"
+
+        # Explanation
+        expl_match = re.search(r'\*{0,2}Explanation\*{0,2}\s*[:\-–]\s*(.+?)(?:\n|$)', item, re.IGNORECASE)
+        if expl_match:
+            expl_text = expl_match.group(1).strip().rstrip('*').replace('<br>', '')
+            if expl_text:
+                description += f"\nExplanation: {expl_text}"
+
+        # Expected Insight
+        insight_match = re.search(r'\*{0,2}Expected\s*Insight\*{0,2}\s*[:\-–]\s*(.+?)(?:\n|$)', item, re.IGNORECASE)
+        if insight_match:
+            insight_text = insight_match.group(1).strip().rstrip('*').replace('<br>', '')
+            if insight_text:
+                description += f"\nExpected Insight: {insight_text}"
+
+        # Datasets (no fallback to Columns/Data since Columns is its own field)
+        ds_match = re.search(r'\*{0,2}Datasets?\*{0,2}\s*[:\-–]\s*(.+?)(?:\n|$)', item, re.IGNORECASE)
         if ds_match:
-            raw = ds_match.group(1).strip()
-            datasets = [d.strip() for d in raw.split(',') if d.strip()]
+            raw = ds_match.group(1).strip().replace('<br>', '')
+            for part in raw.split(','):
+                part = part.strip()
+                if not part:
+                    continue
+                base = part.split('(')[0].strip()
+                if base:
+                    datasets.append(base)
+            datasets = list(dict.fromkeys(datasets))
+
+        # Validate datasets against known names if provided
+        if known_set:
+            datasets = [d for d in datasets if d in known_set]
+
+        # Skip proposals with no valid datasets or garbage aim names
+        if not datasets or len(name) < 5:
+            continue
 
         proposals.append({
             "aim": name[:60],
-            "description": description[:200],
+            "description": description[:400],
             "datasets": datasets,
         })
 
@@ -365,7 +445,7 @@ async def classify_route(question: str) -> str:
     t0 = time.time()
     try:
         settings = get_settings()
-        client = AsyncOpenAI(base_url=settings.vllm_base_url, api_key="EMPTY", timeout=settings.llm_request_timeout)
+        client = get_llm_client()
         response = await client.chat.completions.create(
             model=settings.llm_model,
             messages=[
@@ -392,7 +472,7 @@ async def generate_llm_response(system_prompt: str, question: str, max_tokens: i
     """Generate a response from the LLM using the given system prompt."""
     t0 = time.time()
     settings = get_settings()
-    client = AsyncOpenAI(base_url=settings.vllm_base_url, api_key="EMPTY", timeout=settings.llm_request_timeout)
+    client = get_llm_client()
     try:
         response = await client.chat.completions.create(
             model=settings.llm_model,
@@ -430,7 +510,7 @@ async def interpret_results(question: str, sql: str, result: dict) -> str:
     ).replace("{sample_size}", str(len(rows_sample))).replace(
         "{rows_sample}", "\n".join(str(r) for r in rows_sample) if rows_sample else "(no data)"
     )
-    client = AsyncOpenAI(base_url=settings.vllm_base_url, api_key="EMPTY", timeout=settings.llm_request_timeout)
+    client = get_llm_client()
     try:
         response = await client.chat.completions.create(
             model=settings.llm_model,
@@ -450,7 +530,7 @@ async def interpret_results(question: str, sql: str, result: dict) -> str:
 async def summarize_turns(thread_text: str) -> str:
     """Generate a compact summary for a set of turns."""
     settings = get_settings()
-    client = AsyncOpenAI(base_url=settings.vllm_base_url, api_key="EMPTY", timeout=settings.llm_request_timeout)
+    client = get_llm_client()
     try:
         response = await client.chat.completions.create(
             model=settings.llm_model,

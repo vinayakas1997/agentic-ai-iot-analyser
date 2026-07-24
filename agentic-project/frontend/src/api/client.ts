@@ -86,7 +86,7 @@ export async function createSession(title?: string) {
 }
 
 export async function listSessions() {
-  return request<{ session_id: string; title: string; phase: string; status: string }[]>(
+  return request<{ session_id: string; title: string; phase: string; status: string; mode?: string }[]>(
     "/api/v2/sessions"
   );
 }
@@ -97,13 +97,15 @@ export async function getSession(sessionId: string) {
     title: string;
     phase: string;
     status: string;
+    mode?: string;
     state: any;
-    turns: { user: string; agent: string; timestamp: string }[];
+    turns: { user: string; agent: string; timestamp: string; aims?: string[]; datasets?: string[]; analysis_actions?: any; result_uuid?: string }[];
   }>(`/api/v2/sessions/${sessionId}`);
 }
 
-export async function sendMessage(sessionId: string, message: string, lineName = "", attachedAims: string[] = [], enrichmentMode = "research", history?: { role: string; content: string }[]) {
+export async function sendMessage(sessionId: string, message: string, lineName = "", attachedAims: string[] = [], enrichmentMode = "research", history?: { role: string; content: string }[], routeOverride?: string) {
   const body: Record<string, unknown> = { session_id: sessionId, message, line_name: lineName, attached_aims: attachedAims, enrichment_mode: enrichmentMode, history: history ?? [] };
+  if (routeOverride) body.route_override = routeOverride;
   return withRetry(() => request<{
     session_id: string;
     turn_index?: number;
@@ -143,18 +145,6 @@ export async function updateSessionTitle(sessionId: string, title: string) {
   return request<{ session_id: string; title: string | null }>(`/api/v2/sessions/${sessionId}`, {
     method: "PATCH",
     body: JSON.stringify({ title }),
-  });
-}
-
-export async function reopenSession(sessionId: string) {
-  return request<{ session_id: string; turns?: any[] }>(`/api/v2/sessions/${sessionId}/reopen`, {
-    method: "POST",
-  });
-}
-
-export async function forkSession(sessionId: string) {
-  return request<{ session_id: string }>(`/api/v2/sessions/${sessionId}/fork`, {
-    method: "POST",
   });
 }
 

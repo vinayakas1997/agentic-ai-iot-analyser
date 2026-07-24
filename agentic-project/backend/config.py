@@ -1,6 +1,7 @@
 import os
 from functools import lru_cache
 from pydantic_settings import BaseSettings, SettingsConfigDict
+from openai import AsyncOpenAI
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
@@ -17,7 +18,7 @@ class Settings(BaseSettings):
 
     api_host: str = "0.0.0.0"
     api_port: int = 7010
-    cors_origins: str = "http://localhost:7008"
+    cors_origins: str = "http://localhost:7008,http://127.0.0.1:7008,http://localhost:7010"
     default_user_id: str = "98765"
 
     debug: bool = False
@@ -30,3 +31,17 @@ class Settings(BaseSettings):
 @lru_cache
 def get_settings() -> Settings:
     return Settings()
+
+_llm_client: AsyncOpenAI | None = None
+
+def get_llm_client() -> AsyncOpenAI:
+    """Get or create a shared AsyncOpenAI client singleton."""
+    global _llm_client
+    if _llm_client is None:
+        settings = get_settings()
+        _llm_client = AsyncOpenAI(
+            base_url=settings.vllm_base_url,
+            api_key="EMPTY",
+            timeout=settings.llm_request_timeout,
+        )
+    return _llm_client

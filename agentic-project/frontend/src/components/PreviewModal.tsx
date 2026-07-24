@@ -2,6 +2,7 @@ import { btnPrimary, btnSecondary, monoClass } from "../lib/styles";
 import { IconGrid } from "../lib/icons";
 import { datasetColor } from "../lib/datasetColors";
 import { DatasetColumns } from "./DatasetColumns";
+import type { DatasetInfo } from "../types";
 
 interface Aim {
   aim: string;
@@ -9,18 +10,6 @@ interface Aim {
   benefits?: string;
   datasets?: string[];
   columns?: { dataset: string; names: string[] }[];
-}
-
-interface DatasetInfo {
-  line_name: string;
-  dataset_name: string;
-  description: string | null;
-  table: string | null;
-  column_definitions: { name: string; datatype: string; meaning?: string }[];
-  role: string | null;
-  join_hints: any;
-  suggested_aims: any;
-  synonyms: string[] | null;
 }
 
 export function PreviewModal({

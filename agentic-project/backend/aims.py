@@ -2,9 +2,8 @@
 
 import json
 import logging
-from openai import AsyncOpenAI
-from config import get_settings
-from sql_executor import explain_sql, validate_sql_safety, clean_sql
+from config import get_settings, get_llm_client
+from sql_executor import explain_sql, validate_sql, validate_sql_safety, clean_sql
 from llm_client import build_enrichment_system_prompt
 
 logger = logging.getLogger(__name__)
@@ -52,7 +51,7 @@ When multiple datasets are attached, identify cross-dataset analysis opportuniti
 async def call_llm(prompt: str) -> str:
     """Simple LLM call returning text response."""
     settings = get_settings()
-    client = AsyncOpenAI(base_url=settings.vllm_base_url, api_key="EMPTY", timeout=settings.llm_request_timeout)
+    client = get_llm_client()
     try:
         response = await client.chat.completions.create(
             model=settings.llm_model,
@@ -165,14 +164,20 @@ async def criticize_sql(
     """
     cleaned = clean_sql(sql) or sql
 
+    # Add LIMIT if missing (validate_sql does this) before safety check
+    try:
+        validated = validate_sql(cleaned)
+    except ValueError as e:
+        return {"pass": False, "issues": [str(e)[:300]], "suggestions": "Fix the validation error"}
+
     # 1. Syntax check via EXPLAIN
     try:
-        await explain_sql(cleaned)
+        await explain_sql(validated)
     except Exception as e:
         return {"pass": False, "issues": [str(e)[:300]], "suggestions": "Fix the syntax error"}
 
     # 2. Safety checks (forbidden keywords, CROSS JOIN, missing LIMIT, etc.)
-    safety = validate_sql_safety(cleaned)
+    safety = validate_sql_safety(validated)
     if safety:
         return {"pass": False, "issues": safety, "suggestions": "Fix safety violations"}
 
@@ -224,7 +229,7 @@ async def fix_sql(
     )
 
     settings = get_settings()
-    client = AsyncOpenAI(base_url=settings.vllm_base_url, api_key="EMPTY", timeout=settings.llm_request_timeout)
+    client = get_llm_client()
 
     messages = [
         {"role": "system", "content": system_prompt},
@@ -253,7 +258,7 @@ async def generate_sql(
     system_prompt = SQL_GENERATION_PROMPT.replace("{table_context}", context)
 
     settings = get_settings()
-    client = AsyncOpenAI(base_url=settings.vllm_base_url, api_key="EMPTY", timeout=settings.llm_request_timeout)
+    client = get_llm_client()
 
     messages = [{"role": "system", "content": system_prompt}]
     if history:
@@ -291,7 +296,7 @@ async def generate_chat_response(
     else:
         context = build_dataset_context(datasets_data)
     settings = get_settings()
-    client = AsyncOpenAI(base_url=settings.vllm_base_url, api_key="EMPTY", timeout=settings.llm_request_timeout)
+    client = get_llm_client()
 
     try:
         if enrichment_block:
@@ -629,6 +634,54 @@ If no clear aims, return [].
 
 Text:
 {text}"""
+
+
+GENERATE_AIM_PROMPT = """You are a data analysis strategist. Based on the user's request and the available datasets, propose ONE structured analysis aim.
+
+## Available Datasets
+{context}
+
+## User Request
+{user_text}
+
+## Instructions
+Respond with a JSON object (no markdown, no code fences) with these fields:
+- "aim": Short, clear title for the analysis (10 words max)
+- "how_we_will_do_it": Step-by-step description of the analysis approach (2-3 sentences)
+- "datasets_used": List of dataset names that are needed
+- "joins": Description of how datasets are joined, or null if only one dataset is needed
+
+## Rules
+- Only use datasets, tables, and columns from the available datasets above
+- Be specific about which columns and metrics will be analyzed
+- Keep "how_we_will_do_it" actionable and concrete"""
+
+
+async def generate_aim(user_text: str, datasets: list[dict]) -> dict:
+    """LLM generates a structured analysis aim from user text + selected datasets."""
+    context = build_dataset_context(datasets)
+    prompt = GENERATE_AIM_PROMPT.format(context=context, user_text=user_text)
+    raw = await call_llm(prompt)
+    if not raw:
+        return {"aim": "", "how_we_will_do_it": "", "datasets_used": [d.get("dataset_name", "?") for d in datasets], "joins": None}
+    # Strip markdown code fences if present
+    raw = raw.strip()
+    if raw.startswith("```"):
+        raw = raw.split("\n", 1)[-1]
+        raw = raw.rsplit("```", 1)[0]
+    try:
+        result = json.loads(raw)
+        if not isinstance(result, dict):
+            raise ValueError("response is not a dict")
+        return {
+            "aim": str(result.get("aim", ""))[:60],
+            "how_we_will_do_it": str(result.get("how_we_will_do_it", ""))[:500],
+            "datasets_used": result.get("datasets_used", [d.get("dataset_name", "?") for d in datasets]),
+            "joins": result.get("joins"),
+        }
+    except (json.JSONDecodeError, Exception) as e:
+        logger.warning(f"generate_aim: failed to parse LLM response — {e}")
+        return {"aim": "", "how_we_will_do_it": "", "datasets_used": [d.get("dataset_name", "?") for d in datasets], "joins": None}
 
 
 async def extract_aims_from_text(text: str, dataset_names: list[str]) -> list[dict]:
