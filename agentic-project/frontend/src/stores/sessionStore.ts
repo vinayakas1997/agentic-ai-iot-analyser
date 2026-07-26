@@ -72,7 +72,7 @@ interface SessionState {
   refreshSessions: () => Promise<SessionListItem[]>;
   switchSession: (id: string) => Promise<void>;
   newSession: () => void;
-  sendUserMessage: (text: string, lineName?: string, attachedAims?: string[], enrichmentMode?: string, routeOverride?: string) => Promise<MessageResponse | undefined>;
+  sendUserMessage: (text: string, lineName?: string, attachedAims?: string[], enrichmentMode?: string, routeOverride?: string, aimDescriptions?: Record<string, string>) => Promise<MessageResponse | undefined>;
   setError: (error: string | null) => void;
   setStatusMessage: (msg: string | null) => void;
   setPendingTurn: (user: string) => void;
@@ -247,7 +247,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     useUiStore.getState().selectTurn(-1);
   },
 
-  sendUserMessage: async (text, lineName = "", attachedAims: string[] = [], enrichmentMode = "research", routeOverride?: string) => {
+  sendUserMessage: async (text, lineName = "", attachedAims: string[] = [], enrichmentMode = "research", routeOverride?: string, aimDescriptions?: Record<string, string>) => {
     const { sessionId, turns, isLocalSession, pendingTitle, sessionMeta } = get();
     const isDone = turns.length > 0 && Boolean(turns[turns.length - 1]?.ui?.done);
     const origSessionId = sessionId;
@@ -297,7 +297,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       }
 
       // History built server-side from stored turns (via enrichment block + conv history)
-      const res = await api.sendMessage(activeSessionId, userText, lineName, attachedAims, enrichmentMode, [], routeOverride);
+      const res = await api.sendMessage(activeSessionId, userText, lineName, attachedAims, enrichmentMode, [], routeOverride, aimDescriptions);
       clearInterval(statusTimer);
       set({ statusMessage: "Response received" });
 
@@ -340,6 +340,31 @@ export const useSessionStore = create<SessionState>((set, get) => ({
         set({ chatQueryResults: updatedResults });
         // Persist to backend so results survive page reload
         api.updateSessionState(activeSessionId, { chat_query_results: updatedResults }).catch((err) => console.error("Failed to persist chat query results:", err));
+      }
+
+      // Multi-step responses (DEEP route, multi-aim FOCUS) carry one result per
+      // iteration instead of a single query_result — persist each into memory too,
+      // so future enrichment lookups can recall the SQL/rows, not just the summary text.
+      if (res.deep_iterations?.length) {
+        const iterResults: Record<string, QueryResultState> = {};
+        for (const it of res.deep_iterations) {
+          if (it.result_uuid && it.sql) {
+            iterResults[it.result_uuid] = {
+              loading: false,
+              sql: it.sql,
+              columns: it.columns,
+              column_types: it.column_types,
+              rows: it.rows,
+              row_count: it.row_count,
+              chart_suggestions: it.chart_suggestions ?? null,
+            } as QueryResultState;
+          }
+        }
+        if (Object.keys(iterResults).length > 0) {
+          const updatedResults = { ...get().chatQueryResults, ...iterResults };
+          set({ chatQueryResults: updatedResults });
+          api.updateSessionState(activeSessionId, { chat_query_results: updatedResults }).catch((err) => console.error("Failed to persist deep iteration results:", err));
+        }
       }
 
       // Store aim proposals from response

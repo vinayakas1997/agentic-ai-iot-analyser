@@ -141,6 +141,8 @@ export interface AnalysisAction {
 
 export interface DeepIteration {
   iteration: number;
+  result_uuid?: string;
+  aim?: string;
   explanation: string;
   sql: string;
   columns: string[];

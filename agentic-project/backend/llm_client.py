@@ -61,6 +61,7 @@ The user asked a specific factual question. You MUST generate a SQL query to ans
 
 ## SQL Rules
 - Only use columns and tables from the datasets above
+- In the FROM/JOIN clause, use the exact "SQL table name" given in parentheses for each dataset — NOT the dataset's display name if they differ
 - Always include LIMIT 100 unless the user asks for all results
 - Use explicit JOIN conditions when combining datasets
 """
@@ -126,6 +127,7 @@ The user wants to deep-dive on one specific analysis topic. Generate a comprehen
 
 ## Rules
 - Only use columns and tables from the datasets above
+- In the FROM/JOIN clause, use the exact "SQL table name" given in parentheses for each dataset — NOT the dataset's display name if they differ
 - Always include LIMIT 100
 - Provide detailed, insightful interpretation
 - Suggest natural follow-ups (as questions, not [Action] blocks)
@@ -164,6 +166,7 @@ You are conducting a multi-step research investigation. You have access to previ
 - Never repeat a query that was already executed
 - Maximum 5 iterations total
 - Only use columns and tables from the datasets above
+- In the FROM/JOIN clause, use the exact "SQL table name" given in parentheses for each dataset — NOT the dataset's display name if they differ
 - When DONE, provide a comprehensive summary of all findings
 
 ## Chart Decision
@@ -454,6 +457,7 @@ async def classify_route(question: str) -> str:
             ],
             max_tokens=10,
             temperature=0.1,
+            extra_body={"chat_template_kwargs": {"enable_thinking": False}},
         )
         route = response.choices[0].message.content.strip().upper()
         if route in ("DIRECT", "SUGGEST", "FOCUS", "DEEP"):
@@ -482,6 +486,7 @@ async def generate_llm_response(system_prompt: str, question: str, max_tokens: i
             ],
             max_tokens=max_tokens or settings.max_tokens,
             temperature=settings.temperature,
+            extra_body={"chat_template_kwargs": {"enable_thinking": False}},
         )
         content = response.choices[0].message.content or ""
         elapsed = time.time() - t0
@@ -520,6 +525,7 @@ async def interpret_results(question: str, sql: str, result: dict) -> str:
             ],
             max_tokens=settings.max_tokens,
             temperature=settings.temperature,
+            extra_body={"chat_template_kwargs": {"enable_thinking": False}},
         )
         return response.choices[0].message.content or ""
     except Exception as e:
@@ -540,6 +546,7 @@ async def summarize_turns(thread_text: str) -> str:
             ],
             max_tokens=settings.max_tokens,
             temperature=settings.temperature,
+            extra_body={"chat_template_kwargs": {"enable_thinking": False}},
         )
         return response.choices[0].message.content or ""
     except Exception as e:

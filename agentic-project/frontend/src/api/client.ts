@@ -103,9 +103,10 @@ export async function getSession(sessionId: string) {
   }>(`/api/v2/sessions/${sessionId}`);
 }
 
-export async function sendMessage(sessionId: string, message: string, lineName = "", attachedAims: string[] = [], enrichmentMode = "research", history?: { role: string; content: string }[], routeOverride?: string) {
+export async function sendMessage(sessionId: string, message: string, lineName = "", attachedAims: string[] = [], enrichmentMode = "research", history?: { role: string; content: string }[], routeOverride?: string, aimDescriptions?: Record<string, string>) {
   const body: Record<string, unknown> = { session_id: sessionId, message, line_name: lineName, attached_aims: attachedAims, enrichment_mode: enrichmentMode, history: history ?? [] };
   if (routeOverride) body.route_override = routeOverride;
+  if (aimDescriptions && Object.keys(aimDescriptions).length > 0) body.aim_descriptions = aimDescriptions;
   return withRetry(() => request<{
     session_id: string;
     turn_index?: number;
@@ -128,6 +129,18 @@ export async function sendMessage(sessionId: string, message: string, lineName =
       row_count: number;
       chart_suggestions?: any;
     };
+    deep_iterations?: {
+      iteration: number;
+      result_uuid?: string;
+      aim?: string;
+      explanation: string;
+      sql: string;
+      columns: string[];
+      column_types?: string[];
+      rows: Record<string, unknown>[];
+      row_count: number;
+      chart_suggestions?: any;
+    }[];
   }>("/api/v2/messages", {
     method: "POST",
     body: JSON.stringify(body),

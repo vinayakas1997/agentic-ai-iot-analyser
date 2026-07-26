@@ -6,8 +6,12 @@ import { QueryActions, QueryResultState } from "../sections/QueryActions";
 import type { Turn, AnalysisAction } from "../types/manager";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import remarkBreaks from "remark-breaks";
+import { parseSuggestions } from "../lib/parseSuggestions";
+import { SuggestionCard } from "./SuggestionCard";
+import type { DatasetInfo } from "../types";
 
-export function TurnBubble({ turn, queryResult, completedActions, selectedAims, runningAim, loading, onToggleAction, onScrollToTurn, onRerunAim }: {
+export function TurnBubble({ turn, queryResult, completedActions, selectedAims, runningAim, loading, onToggleAction, onScrollToTurn, onRerunAim, datasets }: {
   turn: Turn;
   queryResult?: QueryResultState;
   completedActions?: Record<string, string>;
@@ -17,6 +21,7 @@ export function TurnBubble({ turn, queryResult, completedActions, selectedAims, 
   onToggleAction?: (action: AnalysisAction) => void;
   onScrollToTurn?: (turnId: string) => void;
   onRerunAim?: (aim: { aim: string; description: string; datasets?: string[] }) => void;
+  datasets?: DatasetInfo[];
 }) {
   const hasDetail = turn.description || turn.benefits || (turn.columns && turn.columns.length > 0);
   const hasActions = turn.analysis_actions && turn.analysis_actions.length > 0;
@@ -152,7 +157,7 @@ export function TurnBubble({ turn, queryResult, completedActions, selectedAims, 
                 Iteration {idx + 1}
               </div>
               <div className="prose-custom text-sm text-text/90 mb-3">
-                <ReactMarkdown remarkPlugins={[remarkGfm]}>{iter.explanation}</ReactMarkdown>
+                <ReactMarkdown remarkPlugins={[remarkGfm, remarkBreaks]}>{iter.explanation}</ReactMarkdown>
               </div>
               <QueryActions queryResult={iterResult} />
             </div>
@@ -162,10 +167,25 @@ export function TurnBubble({ turn, queryResult, completedActions, selectedAims, 
     );
   }, [turn.deep_iterations]);
 
+  const parsedSuggestions = useMemo(() => parseSuggestions(turn.agent), [turn.agent]);
+
   const agentContent = (
     <div className="flex-1 min-w-0">
       <div className="prose-custom text-sm text-text/90">
-        <ReactMarkdown remarkPlugins={[remarkGfm]}>{turn.agent}</ReactMarkdown>
+        {parsedSuggestions ? (
+          <>
+            {parsedSuggestions.intro && (
+              <ReactMarkdown remarkPlugins={[remarkGfm, remarkBreaks]}>{parsedSuggestions.intro}</ReactMarkdown>
+            )}
+            <div className="mt-2">
+              {parsedSuggestions.suggestions.map((s, i) => (
+                <SuggestionCard key={i} suggestion={s} index={i} datasets={datasets} />
+              ))}
+            </div>
+          </>
+        ) : (
+          <ReactMarkdown remarkPlugins={[remarkGfm, remarkBreaks]}>{turn.agent}</ReactMarkdown>
+        )}
       </div>
       {deepIterationBlocks}
       {turn.description && (

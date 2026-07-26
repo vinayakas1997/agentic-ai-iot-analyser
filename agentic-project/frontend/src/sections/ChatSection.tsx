@@ -166,12 +166,24 @@ export default function ChatSection() {
       useAim({ aim: action.name, description: action.description, datasets: action.datasets });
       const msg = `Run analysis: ${action.description || action.name}`;
       const lineName = useDatasetStore.getState().attached.join(",");
-      const res = await sendUserMessage(msg, lineName, [action.name], enrichmentMode, "focus");
+      const res = await sendUserMessage(msg, lineName, [action.name], enrichmentMode, "focus", { [action.name]: action.description });
       if (res?.result_uuid && res?.query_result) {
+        const resultState: QueryResultState = { loading: false, ...res.query_result } as QueryResultState;
         setQueryResults((prev) => ({
           ...prev,
-          [res.result_uuid!]: res.query_result! as QueryResultState,
+          [res.result_uuid!]: resultState,
         }));
+        useOutputStore.getState().addResult({
+          aim: action.name,
+          description: action.description,
+          datasets: action.datasets,
+          result: resultState,
+        });
+        useSessionStore.setState((s) => ({
+          completedActions: { ...s.completedActions, [action.name]: res.result_uuid! },
+        }));
+        setCompletedActions((prev) => ({ ...prev, [action.name]: res.result_uuid! }));
+        persistTurns();
       }
     }
   };
@@ -300,7 +312,7 @@ export default function ChatSection() {
     }
     const msg = `Run analysis: ${aimDef.description || aimDef.aim}`;
     const lineName = useDatasetStore.getState().attached.join(",");
-    const res = await sendUserMessage(msg, lineName, [aimDef.aim], enrichmentMode, "deep");
+    const res = await sendUserMessage(msg, lineName, [aimDef.aim], enrichmentMode, "deep", aimDef.description ? { [aimDef.aim]: aimDef.description } : undefined);
     if (res?.result_uuid && res?.query_result) {
       const resultState: QueryResultState = { loading: false, ...res.query_result } as QueryResultState;
       useOutputStore.getState().addResult({
@@ -313,6 +325,36 @@ export default function ChatSection() {
         completedActions: { ...s.completedActions, [aimDef.aim]: res.result_uuid },
       }));
       setCompletedActions((prev) => ({ ...prev, [aimDef.aim]: res.result_uuid! }));
+      persistTurns();
+    } else if (res?.deep_iterations?.length) {
+      // DEEP route: multiple refinement steps for this one aim — add each as its own card.
+      let lastUuid: string | undefined;
+      for (const it of res.deep_iterations) {
+        if (!it.result_uuid) continue;
+        const resultState: QueryResultState = {
+          loading: false,
+          sql: it.sql,
+          columns: it.columns,
+          column_types: it.column_types,
+          rows: it.rows,
+          row_count: it.row_count,
+          chart_suggestions: it.chart_suggestions ?? null,
+        } as QueryResultState;
+        useOutputStore.getState().addResult({
+          aim: aimDef.aim,
+          description: aimDef.description,
+          datasets: aimDef.datasets,
+          result: resultState,
+        });
+        lastUuid = it.result_uuid;
+      }
+      if (lastUuid) {
+        useSessionStore.setState((s) => ({
+          completedActions: { ...s.completedActions, [aimDef.aim]: lastUuid! },
+        }));
+        setCompletedActions((prev) => ({ ...prev, [aimDef.aim]: lastUuid! }));
+      }
+      persistTurns();
     }
   };
 
@@ -358,12 +400,43 @@ export default function ChatSection() {
     setShowSearch(false);
     const lineName = useDatasetStore.getState().attached.join(",");
     const aimNames = selectedAims.map((a) => a.aim);
-    const res = await sendUserMessage(msg, lineName, aimNames, enrichmentMode);
+    const aimDescriptions = Object.fromEntries(selectedAims.filter((a) => a.description).map((a) => [a.aim, a.description!]));
+    const res = await sendUserMessage(msg, lineName, aimNames, enrichmentMode, undefined, aimDescriptions);
     if (res?.result_uuid && res?.query_result) {
       setQueryResults((prev) => ({
         ...prev,
         [res.result_uuid!]: res.query_result! as QueryResultState,
       }));
+    } else if (res?.deep_iterations?.length) {
+      // Multi-aim FOCUS: one result per attached aim — add each as its own Output panel card.
+      const newCompleted: Record<string, string> = {};
+      for (const it of res.deep_iterations) {
+        if (!it.result_uuid) continue;
+        const resultState: QueryResultState = {
+          loading: false,
+          sql: it.sql,
+          columns: it.columns,
+          column_types: it.column_types,
+          rows: it.rows,
+          row_count: it.row_count,
+          chart_suggestions: it.chart_suggestions ?? null,
+        } as QueryResultState;
+        const aimEntry = it.aim ? selectedAims.find((a) => a.aim === it.aim) : undefined;
+        useOutputStore.getState().addResult({
+          aim: it.aim || `Analysis ${it.iteration + 1}`,
+          description: aimEntry?.description,
+          datasets: aimEntry?.datasets,
+          result: resultState,
+        });
+        if (it.aim) newCompleted[it.aim] = it.result_uuid;
+      }
+      if (Object.keys(newCompleted).length > 0) {
+        useSessionStore.setState((s) => ({
+          completedActions: { ...s.completedActions, ...newCompleted },
+        }));
+        setCompletedActions((prev) => ({ ...prev, ...newCompleted }));
+      }
+      persistTurns();
     }
   };
 
@@ -562,6 +635,7 @@ export default function ChatSection() {
                 onToggleAction={handleToggleAction}
                 onScrollToTurn={handleScrollToTurn}
                 onRerunAim={handleRerunAim}
+                datasets={datasets}
               />
             ))}
             {pendingTurn && (

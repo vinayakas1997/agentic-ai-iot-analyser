@@ -67,6 +67,7 @@ class MessageRequest(BaseModel):
     message: str
     line_name: str = ""
     attached_aims: list[str] = []
+    aim_descriptions: dict[str, str] = {}
     enrichment_mode: str = "research"
     history: list[dict] | None = None
     route_override: str = ""
@@ -565,15 +566,22 @@ def _build_context(
     dataset_names: list[str],
     datasets_data: list[dict],
     attached_aims: list[str],
+    aim_descriptions: dict[str, str] | None = None,
 ) -> str:
     """Build a context string describing datasets and attached aims."""
     parts = [f"Available datasets: {', '.join(dataset_names) if dataset_names else 'None'}"]
     if attached_aims:
-        parts.append(f"Active research aims: {', '.join(attached_aims)}")
+        aim_descriptions = aim_descriptions or {}
+        aim_lines = [
+            f"{aim} — {aim_descriptions[aim]}" if aim_descriptions.get(aim) else aim
+            for aim in attached_aims
+        ]
+        parts.append(f"Active research aims:\n" + "\n".join(f"- {line}" for line in aim_lines))
     for ds in datasets_data:
         cols = ds.get("column_definitions", [])
         col_str = "; ".join(f"{c.get('name','?')} ({c.get('datatype','?')})" for c in cols[:10])
-        parts.append(f"Dataset '{ds.get('dataset_name','?')}': {col_str}")
+        table = ds.get("table") or ds.get("dataset_name", "?")
+        parts.append(f"Dataset '{ds.get('dataset_name','?')}' (SQL table name: `{table}`): {col_str}")
         if ds.get("description"):
             parts.append(f"  Description: {ds['description']}")
         if ds.get("join_hints"):
@@ -587,9 +595,10 @@ async def _handle_direct(
     datasets_data: list[dict],
     attached_aims: list[str],
     enrichment_block: str = "",
+    aim_descriptions: dict[str, str] | None = None,
 ):
     """DIRECT route: LLM generates SQL → we validate and execute → LLM interprets results."""
-    context = _build_context(dataset_names, datasets_data, attached_aims)
+    context = _build_context(dataset_names, datasets_data, attached_aims, aim_descriptions)
     system_prompt = direct_prompt(context=context)
     if enrichment_block:
         system_prompt += f"\n\n## Previous Context\n{enrichment_block}"
@@ -692,10 +701,19 @@ async def _handle_suggest(
     datasets_data: list[dict],
     attached_aims: list[str],
     enrichment_block: str = "",
+    aim_descriptions: dict[str, str] | None = None,
 ):
     """SUGGEST route: LLM proposes 3 exploration ideas (no SQL)."""
-    context = _build_context(dataset_names, datasets_data, attached_aims)
+    context = _build_context(dataset_names, datasets_data, attached_aims, aim_descriptions)
     system_prompt = suggest_prompt(context=context)
+    real_dataset_names = [ds.get("dataset_name", "?") for ds in datasets_data]
+    if len(real_dataset_names) > 1:
+        system_prompt += (
+            f"\n\n## Multi-Dataset Note\n"
+            f"Multiple datasets are attached ({', '.join(real_dataset_names)}). Make sure at least one "
+            f"of the 3 suggestions combines two or more of these datasets (using the join hints above) "
+            f"and explains in its Explanation field exactly how they connect."
+        )
     if enrichment_block:
         system_prompt += f"\n\n## Previous Context\n{enrichment_block}"
     raw = await generate_llm_response(
@@ -706,11 +724,106 @@ async def _handle_suggest(
     table_names = [ds.get("table", "") for ds in datasets_data if ds.get("table")]
     known_datasets = list(set(dataset_names + table_names))
     proposals = parse_numbered_suggestions(raw, known_datasets=known_datasets)
+
+    # Build the "what each dataset offers" preamble deterministically — the LLM
+    # reliably ignores a prompt-only ask for this, so we render it ourselves.
+    if len(real_dataset_names) > 1:
+        prop_lines = []
+        for ds in datasets_data:
+            cols = ds.get("column_definitions", [])
+            col_names = [c.get("name", "") for c in cols if c.get("name")][:5]
+            role = ds.get("role") or ""
+            label = f"{ds.get('dataset_name', '?')}" + (f" ({role})" if role else "")
+            prop_lines.append(f"- **{label}**: {', '.join(col_names)}")
+        properties_block = "**Dataset Properties**\n" + "\n".join(prop_lines)
+        raw = f"{properties_block}\n\n{raw}"
+
     return {
         "agent_message": raw,
         "result_uuid": None,
         "query_result": None,
         "aim_proposals": proposals,
+    }
+
+
+async def _handle_focus_multi(
+    message: str,
+    dataset_names: list[str],
+    datasets_data: list[dict],
+    attached_aims: list[str],
+    enrichment_block: str = "",
+    aim_descriptions: dict[str, str] | None = None,
+):
+    """Multiple aims attached: run one focused query per aim, then synthesize a combined view."""
+    deep_iterations = []
+    per_aim_summaries = []
+
+    aim_descriptions = aim_descriptions or {}
+    for aim in attached_aims:
+        context = _build_context(dataset_names, datasets_data, [aim], aim_descriptions)
+        system_prompt = focus_prompt(context=context)
+        if enrichment_block:
+            system_prompt += f"\n\n## Previous Context\n{enrichment_block}"
+        desc = aim_descriptions.get(aim, "")
+        aim_question = f"{message}\n\nFocus specifically on this aim: {aim}" + (f" — {desc}" if desc else "")
+        raw = await generate_llm_response(system_prompt=system_prompt, question=aim_question)
+
+        chart_decision = re.search(r'\[CHART_DECISION:\s*(yes|no)\]', raw, re.IGNORECASE)
+        chart_needed = chart_decision and chart_decision.group(1).lower() == "yes"
+        clean_raw = re.sub(r'\s*\[CHART_DECISION:\s*(yes|no)\]\s*', ' ', raw).strip()
+
+        sql = extract_sql(clean_raw) or extract_sql_fallback(clean_raw)
+        if not sql:
+            per_aim_summaries.append(f"### {aim}\n{clean_raw}")
+            continue
+
+        try:
+            sql = validate_sql(sql)
+            result = await execute_sql(sql)
+        except Exception as e:
+            per_aim_summaries.append(f"### {aim}\nCould not complete this analysis: {str(e)[:200]}")
+            continue
+
+        chart_suggestions = None
+        if chart_needed:
+            cs = await _build_chart_suggestions(result)
+            chart_suggestions = cs.model_dump() if hasattr(cs, "model_dump") else cs
+
+        interpretation = await interpret_results(
+            question=aim_question, sql=result.get("sql", ""), result=result
+        )
+        deep_iterations.append({
+            "iteration": len(deep_iterations),
+            "aim": aim,
+            "result_uuid": str(uuid.uuid4()),
+            "explanation": f"**{aim}**\n\n{interpretation}",
+            "sql": result.get("sql", ""),
+            "columns": result.get("columns", []),
+            "column_types": result.get("column_types", []),
+            "rows": result.get("rows", []),
+            "row_count": result.get("row_count", 0),
+            "chart_suggestions": chart_suggestions,
+        })
+        per_aim_summaries.append(f"### {aim}\n{interpretation}")
+
+    combined_prompt = (
+        "You analyzed multiple research aims on the same datasets. Below are the individual findings.\n\n"
+        + "\n\n".join(per_aim_summaries)
+        + "\n\nWrite a short combined synthesis (3-5 sentences): how do these aims relate to each other, "
+        "what does looking at them together reveal that looking at each alone would not, and suggest one "
+        "new combined analysis idea that connects them."
+    )
+    combined_msg = await generate_llm_response(
+        system_prompt="You are a data analyst assistant synthesizing multiple related analyses into one combined narrative.",
+        question=combined_prompt,
+    )
+
+    result_uuid = str(uuid.uuid4()) if deep_iterations else None
+    return {
+        "agent_message": combined_msg,
+        "result_uuid": result_uuid,
+        "query_result": None,
+        "deep_iterations": deep_iterations,
     }
 
 
@@ -720,9 +833,19 @@ async def _handle_focus(
     datasets_data: list[dict],
     attached_aims: list[str],
     enrichment_block: str = "",
+    aim_descriptions: dict[str, str] | None = None,
 ):
     """FOCUS route: LLM generates a focused analysis query then interprets results."""
-    context = _build_context(dataset_names, datasets_data, attached_aims)
+    if len(attached_aims) > 1:
+        return await _handle_focus_multi(
+            message=message,
+            dataset_names=dataset_names,
+            datasets_data=datasets_data,
+            attached_aims=attached_aims,
+            enrichment_block=enrichment_block,
+            aim_descriptions=aim_descriptions,
+        )
+    context = _build_context(dataset_names, datasets_data, attached_aims, aim_descriptions)
     system_prompt = focus_prompt(context=context)
     if enrichment_block:
         system_prompt += f"\n\n## Previous Context\n{enrichment_block}"
@@ -809,11 +932,12 @@ async def _handle_deep(
     attached_aims: list[str],
     enrichment_block: str = "",
     max_iterations: int = 3,
+    aim_descriptions: dict[str, str] | None = None,
 ):
     """DEEP route: multi-iteration research — loop SQL → execute → analyze for N rounds."""
     all_results = []
     current_message = message
-    context = _build_context(dataset_names, datasets_data, attached_aims)
+    context = _build_context(dataset_names, datasets_data, attached_aims, aim_descriptions)
     final_msg = ""
     last_clean = ""
     deep_iterations = []
@@ -901,6 +1025,7 @@ async def _handle_deep(
 
         deep_iterations.append({
             "iteration": iteration,
+            "result_uuid": str(uuid.uuid4()),
             "explanation": clean,
             "sql": sql,
             "columns": result.get("columns", []),
@@ -1072,6 +1197,10 @@ async def send_message(req: MessageRequest):
     # RESEARCH mode: classify route and dispatch
     if req.route_override:
         route = req.route_override.lower()
+    elif req.attached_aims:
+        # An aim is pinned — the user wants a focused deep-dive on it, not generic
+        # suggestions or a plain factual lookup. Skip the text classifier entirely.
+        route = "focus"
     else:
         route = await classify_route(question=req.message)
 
@@ -1105,6 +1234,7 @@ async def send_message(req: MessageRequest):
         datasets_data=datasets_data,
         attached_aims=req.attached_aims,
         enrichment_block=enrichment_block,
+        aim_descriptions=req.aim_descriptions,
     )
 
     agent_msg = handler_result["agent_message"]

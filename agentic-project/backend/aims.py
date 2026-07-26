@@ -61,6 +61,7 @@ async def call_llm(prompt: str) -> str:
             ],
             max_tokens=settings.max_tokens,
             temperature=settings.temperature,
+            extra_body={"chat_template_kwargs": {"enable_thinking": False}},
         )
         return response.choices[0].message.content or ""
     except Exception as e:
@@ -241,6 +242,7 @@ async def fix_sql(
         messages=messages,
         max_tokens=settings.max_tokens,
         temperature=settings.temperature,
+        extra_body={"chat_template_kwargs": {"enable_thinking": False}},
     )
     return response.choices[0].message.content or ""
 
@@ -270,6 +272,7 @@ async def generate_sql(
         messages=messages,
         max_tokens=settings.max_tokens,
         temperature=settings.temperature,
+        extra_body={"chat_template_kwargs": {"enable_thinking": False}},
     )
     return response.choices[0].message.content or ""
 
@@ -326,6 +329,7 @@ async def generate_chat_response(
             messages=messages,
             max_tokens=settings.max_tokens,
             temperature=settings.temperature,
+            extra_body={"chat_template_kwargs": {"enable_thinking": False}},
         )
         msg = response.choices[0].message
         content = msg.content or ""
