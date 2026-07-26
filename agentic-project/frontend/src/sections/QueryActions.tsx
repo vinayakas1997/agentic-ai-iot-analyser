@@ -1,6 +1,7 @@
 import { useState, useRef, useMemo, useEffect } from "react";
 import { monoClass } from "../lib/styles";
 import { IconGrid, IconChart } from "../lib/icons";
+import { useT, tCount } from "../lib/i18n";
 import {
   BarChart, Bar, LineChart, Line, AreaChart, Area,
   PieChart, Pie, Cell, ComposedChart, ScatterChart, Scatter,
@@ -266,6 +267,7 @@ function ChartView({ columns, rows, chart_suggestions }: {
   rows: Record<string, unknown>[];
   chart_suggestions?: ChartSuggestions | null;
 }) {
+  const t = useT();
   const [activeBasic, setActiveBasic] = useState<"bar" | "line" | "area" | "pie">("bar");
   const [renderError, setRenderError] = useState<string | null>(null);
   const chartRef = useRef<HTMLDivElement>(null);
@@ -307,8 +309,8 @@ function ChartView({ columns, rows, chart_suggestions }: {
   if (renderError) {
     return (
       <div className="mt-3 text-xs text-ic-red bg-ic-red/5 border border-ic-red/10 rounded-lg px-3 py-2 flex items-center gap-2">
-        <span>Chart error: {renderError}</span>
-        <button onClick={() => setRenderError(null)} className="underline hover:text-text transition-colors">Retry</button>
+        <span>{t("query.chartError", { message: renderError })}</span>
+        <button onClick={() => setRenderError(null)} className="underline hover:text-text transition-colors">{t("common.retry")}</button>
       </div>
     );
   }
@@ -318,12 +320,12 @@ function ChartView({ columns, rows, chart_suggestions }: {
       type="button"
       className="text-[10px] font-medium px-1.5 py-0.5 rounded-full border border-border/50 text-muted hover:text-text transition-colors flex items-center gap-1 ml-auto"
       onClick={handleDownloadPng}
-      title="Download PNG"
+      title={t("query.downloadPng")}
     >
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" width="9" height="9" strokeWidth="2.2">
         <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4" /><polyline points="7 10 12 15 17 10" /><line x1="12" y1="15" x2="12" y2="3" />
       </svg>
-      PNG
+      {t("query.png")}
     </button>
   );
 
@@ -404,6 +406,7 @@ function ChartView({ columns, rows, chart_suggestions }: {
 // ── QueryActions (outer wrapper) ──
 
 export function QueryActions({ queryResult }: { queryResult?: QueryResultState }) {
+  const t = useT();
   const [showChart, setShowChart] = useState(false);
 
   const handleDownloadCsv = () => {
@@ -424,7 +427,7 @@ export function QueryActions({ queryResult }: { queryResult?: QueryResultState }
     return (
       <div className="flex items-center gap-2 mt-3 text-xs text-muted">
         <span className="w-2 h-2 rounded-full bg-yellow-400 animate-pulse" />
-        Generating query...
+        {t("query.generating")}
       </div>
     );
   }
@@ -442,14 +445,14 @@ export function QueryActions({ queryResult }: { queryResult?: QueryResultState }
       <div className="mt-3 space-y-2">
         {queryResult.sql && (
           <details className="text-xs">
-            <summary className="text-muted cursor-pointer hover:text-text transition-colors bg-black/[0.08] px-2.5 py-1 rounded-lg">SQL query</summary>
+            <summary className="text-muted cursor-pointer hover:text-text transition-colors bg-black/[0.08] px-2.5 py-1 rounded-lg">{t("query.sqlQuery")}</summary>
             <div className="relative mt-1">
               <pre className={`${monoClass} p-2 rounded-lg bg-black/30 border border-border/50 text-text/80 text-[11px] overflow-x-auto`}>{queryResult.sql}</pre>
               <button
                 type="button"
                 className="absolute top-2 right-2 w-6 h-6 flex items-center justify-center rounded hover:bg-white/[0.08] text-muted hover:text-text transition-colors"
                 onClick={() => navigator.clipboard.writeText(queryResult.sql || "")}
-                title="Copy SQL"
+                title={t("query.copySql")}
               >
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" width="12" height="12" strokeWidth="2.2">
                   <rect x="9" y="9" width="13" height="13" rx="2" ry="2"/>
@@ -460,17 +463,17 @@ export function QueryActions({ queryResult }: { queryResult?: QueryResultState }
           </details>
         )}
         <div className="flex items-center gap-2">
-          <div className="text-[11px] text-muted">{queryResult.row_count} row{queryResult.row_count !== 1 ? "s" : ""} returned</div>
+          <div className="text-[11px] text-muted">{tCount(t, "query.rowsReturned", queryResult.row_count ?? 0)}</div>
           <button
             type="button"
             className="text-[11px] font-medium px-1.5 py-0.5 rounded-full border bg-ic-teal-soft/40 text-ic-teal border-ic-teal/30 hover:bg-ic-teal-soft/60 transition-colors flex items-center gap-1"
             onClick={handleDownloadCsv}
-            title="Download CSV"
+            title={t("query.downloadCsv")}
           >
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" width="10" height="10" strokeWidth="2.2">
               <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>
             </svg>
-            CSV
+            {t("query.csv")}
           </button>
           <div className="flex gap-1.5 ml-auto">
             <button
@@ -479,7 +482,7 @@ export function QueryActions({ queryResult }: { queryResult?: QueryResultState }
               onClick={() => setShowChart(false)}
             >
               <IconGrid size={10} className="inline-block" />
-              Table
+              {t("query.table")}
             </button>
             <button
               type="button"
@@ -487,7 +490,7 @@ export function QueryActions({ queryResult }: { queryResult?: QueryResultState }
               onClick={() => setShowChart(true)}
             >
               <IconChart size={10} className="inline-block" />
-              Chart
+              {t("query.chart")}
             </button>
           </div>
         </div>
@@ -516,7 +519,7 @@ export function QueryActions({ queryResult }: { queryResult?: QueryResultState }
               </table>
             </div>
             {(queryResult.row_count ?? 0) > 50 && (
-              <div className="text-[11px] text-muted">Showing first 50 of {queryResult.row_count} rows</div>
+              <div className="text-[11px] text-muted">{t("query.showingFirst50", { count: queryResult.row_count ?? 0 })}</div>
             )}
           </>
         )}

@@ -4,17 +4,19 @@ import { useOutputStore } from "../stores/outputStore";
 import { useSessionStore } from "../stores/sessionStore";
 import { QueryActions } from "./QueryActions";
 import { IconDatabase, IconTarget, IconClock } from "../lib/icons";
+import { t, useT, tCount } from "../lib/i18n";
 
 function relativeTime(timestamp: number): string {
   const diff = Math.floor((Date.now() - timestamp) / 1000);
-  if (diff < 5) return "just now";
-  if (diff < 60) return `${diff} sec ago`;
-  if (diff < 3600) return `${Math.floor(diff / 60)} min ago`;
-  if (diff < 86400) return `${Math.floor(diff / 3600)} hr ago`;
-  return `${Math.floor(diff / 86400)} days ago`;
+  if (diff < 5) return t("output.justNow");
+  if (diff < 60) return t("output.secAgo", { count: diff });
+  if (diff < 3600) return t("output.minAgo", { count: Math.floor(diff / 60) });
+  if (diff < 86400) return t("output.hrAgo", { count: Math.floor(diff / 3600) });
+  return t("output.daysAgo", { count: Math.floor(diff / 86400) });
 }
 
 export default function OutputPanel() {
+  const t = useT();
   const results = useOutputStore((s) => s.results);
   const removeResult = useOutputStore((s) => s.removeResult);
   const clearResults = useOutputStore((s) => s.clearResults);
@@ -39,9 +41,9 @@ export default function OutputPanel() {
           <span className="inline-flex items-center justify-center w-12 h-12 rounded-2xl bg-stage-execution-soft text-stage-execution mb-4">
             <IconDatabase size={22} />
           </span>
-          <h3 className="text-base font-semibold text-text mb-1">No results yet</h3>
+          <h3 className="text-base font-semibold text-text mb-1">{t("output.noResults")}</h3>
           <p className="text-sm text-muted max-w-xs">
-            Run an aim from the chat to collect analysis results here
+            {t("output.noResultsHint")}
           </p>
         </div>
       </section>
@@ -52,7 +54,7 @@ export default function OutputPanel() {
     <section className={`${panelClass} order-3 lg:order-none text-sm`}>
       <div className="flex items-center justify-between mb-3">
         <div className="flex items-center gap-2">
-          <h2 className="font-display text-xs font-semibold tracking-wider uppercase text-muted">Analysis Results</h2>
+          <h2 className="font-display text-xs font-semibold tracking-wider uppercase text-muted">{t("output.title")}</h2>
           <span className="text-[11px] font-medium px-2 py-0.5 rounded-full bg-surface-2 text-text border border-border/50">
             {resultCount}
           </span>
@@ -62,7 +64,7 @@ export default function OutputPanel() {
           className="text-[11px] font-medium px-2 py-1 rounded-full border border-border/50 text-muted hover:text-ic-red hover:border-ic-red/30 transition-colors"
           onClick={clearResults}
         >
-          Clear all
+          {t("output.clearAll")}
         </button>
       </div>
 
@@ -101,16 +103,16 @@ export default function OutputPanel() {
                             }));
                           }
                         }}
-                        title={selectedAims.some((a) => a.aim === r.aim) ? "Added for analysis — click to detach" : "Add for analysis"}
+                        title={selectedAims.some((a) => a.aim === r.aim) ? t("output.addedTooltip") : t("output.addTooltip")}
                       >
-                        {selectedAims.some((a) => a.aim === r.aim) ? "Added" : "+ Add"}
+                        {selectedAims.some((a) => a.aim === r.aim) ? t("output.added") : t("output.addLabel")}
                       </button>
                     </span>
                     <button
                       type="button"
                       className="shrink-0 w-6 h-6 flex items-center justify-center rounded hover:bg-white/[0.06] text-muted hover:text-ic-red transition-colors"
                       onClick={() => removeResult(r.id)}
-                      title="Remove result"
+                      title={t("output.removeResult")}
                     >
                       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" width="12" height="12" strokeWidth="2.2">
                         <path d="M3 6h18M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6M8 6V4a2 2 0 012-2h4a2 2 0 012 2v2" />
@@ -121,7 +123,7 @@ export default function OutputPanel() {
 
               <div className="flex items-center gap-2 mb-2">
                 <span className="text-[11px] text-muted">
-                  {rowCount} row{rowCount !== 1 ? "s" : ""}
+                  {tCount(t, "common.rowCount", rowCount)}
                 </span>
                 <span className="text-border">·</span>
                 <span className="text-[11px] text-tertiary flex items-center gap-1">
@@ -136,14 +138,14 @@ export default function OutputPanel() {
                   className={`text-[11px] font-medium px-2 py-0.5 rounded-full border transition-colors ${isExpanded ? "bg-accent text-white border-accent" : "text-muted border-border/50 hover:text-text"}`}
                   onClick={() => setExpandedId(isExpanded ? null : r.id)}
                 >
-                  {isExpanded ? "▼ Hide Details" : "▶ Show Details"}
+                  {isExpanded ? t("output.hideDetails") : t("output.showDetails")}
                 </button>
                 <button
                   type="button"
                   className={`text-[11px] font-medium px-2 py-0.5 rounded-full border transition-colors ${contextExpandedId === r.id ? "bg-ic-violet text-white border-ic-violet" : "text-muted border-border/50 hover:text-ic-violet hover:border-ic-violet/30"}`}
                   onClick={() => setContextExpandedId(contextExpandedId === r.id ? null : r.id)}
                 >
-                  {contextExpandedId === r.id ? "▼ Hide Context" : "ℹ Show Context"}
+                  {contextExpandedId === r.id ? t("output.hideContext") : t("output.showContext")}
                 </button>
               </div>
 
@@ -153,14 +155,14 @@ export default function OutputPanel() {
                     <div className="rounded-xl border-l-3 border-l-ic-blue bg-ic-blue-soft/10 border border-border/40 p-3">
                       <div className="flex items-center gap-1.5 text-[10.5px] font-semibold tracking-wider uppercase text-ic-blue mb-1">
                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" width="12" height="12" strokeWidth="2.2"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg>
-                        Description
+                        {t("common.description")}
                       </div>
                       <p className="text-sm text-text leading-relaxed">{r.description}</p>
                     </div>
                   )}
                   {r.datasets && r.datasets.length > 0 && (
                     <div>
-                      <div className="text-[10.5px] font-semibold tracking-wider uppercase text-tertiary mb-1.5">Datasets</div>
+                      <div className="text-[10.5px] font-semibold tracking-wider uppercase text-tertiary mb-1.5">{t("common.datasets")}</div>
                       <div className="flex flex-wrap gap-1">
                         {r.datasets.map((ds) => (
                           <span key={ds} className="inline-flex items-center gap-1 text-[11px] font-medium px-2 py-0.5 rounded-full border bg-ic-amber-soft/20 text-ic-amber border-ic-amber/20">
@@ -176,7 +178,7 @@ export default function OutputPanel() {
 
               {contextExpandedId === r.id && (
                 <div className="mt-3 rounded-xl border border-border/40 bg-surface-2 p-3 space-y-2">
-                  <div className="text-[10.5px] font-semibold tracking-wider uppercase text-tertiary">Enrichment context for "{r.aim}"</div>
+                  <div className="text-[10.5px] font-semibold tracking-wider uppercase text-tertiary">{t("output.enrichmentContextFor", { aim: r.aim })}</div>
                   {(() => {
                     const aimTag = `aim:${r.aim}`;
                     const dsTags = (r.datasets || []).map((d) => `dataset:${d}`);
@@ -194,7 +196,7 @@ export default function OutputPanel() {
                     return (
                       <>
                         {relevantSummaries.length === 0 && relevantTurns.length === 0 && (
-                          <p className="text-[11px] text-muted">No prior context for this aim.</p>
+                          <p className="text-[11px] text-muted">{t("output.noPriorContext")}</p>
                         )}
                         {relevantSummaries.map((s, i) => (
                           <div key={i} className="text-[11px] text-text/80 border-l-2 border-ic-teal pl-2">

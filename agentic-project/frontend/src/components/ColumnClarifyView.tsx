@@ -4,9 +4,11 @@ import { useDatasetStore } from "../stores/datasetStore";
 import { confirmUploadDataset } from "../api/client";
 import { IconDatabase, IconCheck } from "../lib/icons";
 import { btnPrimary, btnSecondary } from "../lib/styles";
+import { useT } from "../lib/i18n";
 import type { ColumnDraft } from "../types";
 
 export default function ColumnClarifyView() {
+  const t = useT();
   const pendingDrafts = useUploadStore((s) => s.pendingDrafts);
   const failures = useUploadStore((s) => s.failures);
   const closeClarify = useUploadStore((s) => s.closeClarify);
@@ -26,7 +28,7 @@ export default function ColumnClarifyView() {
     return (
       <div className="fixed inset-0 z-50 bg-bg-deep/90 flex items-center justify-center p-6">
         <div className="rounded-2xl border-2 border-border bg-surface-1 p-6 max-w-lg w-full">
-          <div className="text-sm font-semibold text-text mb-3">Upload failed</div>
+          <div className="text-sm font-semibold text-text mb-3">{t("clarify.uploadFailed")}</div>
           {failures.map((f) => (
             <div key={f.filename} className="mb-3">
               <div className="text-[13px] font-medium text-text">{f.filename}</div>
@@ -36,7 +38,7 @@ export default function ColumnClarifyView() {
             </div>
           ))}
           <button type="button" className={`${btnPrimary} w-full mt-2`} onClick={closeClarify}>
-            Close
+            {t("common.close")}
           </button>
         </div>
       </div>
@@ -81,14 +83,14 @@ export default function ColumnClarifyView() {
           <span className="inline-flex items-center justify-center w-[26px] h-[26px] rounded-[8px] bg-ic-amber-soft text-ic-amber">
             <IconDatabase size={14} />
           </span>
-          <div className="text-base font-semibold text-text">Review column meanings</div>
+          <div className="text-base font-semibold text-text">{t("clarify.title")}</div>
         </div>
         <div className="text-[12px] text-tertiary mb-1">
           {current.filename} · table <span className="font-mono">{current.table_name}</span> · {current.row_count} rows
         </div>
         {pendingDrafts.length > 1 && (
           <div className="text-[11px] text-muted mb-4">
-            File {index + 1} of {pendingDrafts.length}
+            {t("clarify.fileOf", { current: index + 1, total: pendingDrafts.length })}
           </div>
         )}
         {current.warnings.length > 0 && (
@@ -98,7 +100,7 @@ export default function ColumnClarifyView() {
         )}
 
         <div className="text-[11px] text-muted mb-3">
-          The AI drafted a meaning for each column from the data. Edit anything it got wrong, then click "All set".
+          {t("clarify.instructions")}
         </div>
 
         <div className="rounded-xl border border-border overflow-hidden mb-4">
@@ -109,8 +111,8 @@ export default function ColumnClarifyView() {
             </colgroup>
             <thead>
               <tr className="bg-surface-2 text-[11px] uppercase tracking-wider text-muted">
-                <th className="text-left px-3 py-2 font-medium">Column</th>
-                <th className="text-left px-3 py-2 font-medium">Meaning</th>
+                <th className="text-left px-3 py-2 font-medium">{t("clarify.column")}</th>
+                <th className="text-left px-3 py-2 font-medium">{t("clarify.meaning")}</th>
               </tr>
             </thead>
             <tbody>
@@ -147,11 +149,11 @@ export default function ColumnClarifyView() {
             }}
             disabled={saving}
           >
-            Cancel remaining
+            {t("clarify.cancelRemaining")}
           </button>
           <button type="button" className={`${btnPrimary} inline-flex items-center gap-1.5`} onClick={handleAllSet} disabled={saving}>
             <IconCheck size={13} />
-            {saving ? "Saving..." : isLast ? "All set" : "All set — next file"}
+            {saving ? t("clarify.saving") : isLast ? t("clarify.allSet") : t("clarify.allSetNext")}
           </button>
         </div>
       </div>

@@ -49,9 +49,9 @@
   --color-ic-lime: #94d82d;
   --color-ic-lime-soft: rgba(148,216,45,0.14);
 
-  --font-display: "Space Grotesk", sans-serif;
-  --font-body: "Inter", sans-serif;
-  --font-mono: "JetBrains Mono", monospace;
+  --font-display: "Space Grotesk", "Noto Sans JP", sans-serif;
+  --font-body: "Inter", "Noto Sans JP", sans-serif;
+  --font-mono: "JetBrains Mono", "Noto Sans JP", monospace;
 }
 
 * { box-sizing: border-box; }

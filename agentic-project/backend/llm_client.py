@@ -24,6 +24,22 @@ IMPORTANT: The context is filtered — it only shows what's relevant to your cur
 aims and datasets. If you need information about something not shown, attach it first.
 """
 
+LANGUAGE_INSTRUCTIONS: dict[str, str] = {
+    "en": "",
+    "ja": (
+        "\n## Language\n"
+        "Respond in Japanese (日本語で回答してください).\n"
+        "Keep SQL, table names, column names, and dataset names in English exactly as given "
+        "in the context above — do not translate identifiers, only the surrounding natural-language text.\n"
+    ),
+}
+
+
+def language_instruction(language: str) -> str:
+    """One-line-or-so instruction appended to a system prompt to make the LLM reply in the
+    given language while keeping SQL/table/column/dataset identifiers in English."""
+    return LANGUAGE_INSTRUCTIONS.get(language, "")
+
 # ── Route Prompts ──
 
 ROUTER_PROMPT = """Classify the user's question into one of these categories:
@@ -47,6 +63,7 @@ The user asked a specific factual question. You MUST generate a SQL query to ans
 ## Available Datasets
 {context}
 {enrichment_instruction}
+{language_instruction}
 
 ## Instructions
 1. Write a SQL query that directly answers the user's question
@@ -73,6 +90,7 @@ The user is exploring what analyses are possible with their data. Start with a b
 ## Available Datasets
 {context}
 {enrichment_instruction}
+{language_instruction}
 
 ## Instructions
 Start with 1-2 sentences of conversational text acknowledging the user's question (e.g. "Great question — here are 3 ways to explore your data:"), then output exactly 3 numbered suggestions. Use **bold** around field names and put each field on its own line:
@@ -116,6 +134,7 @@ The user wants to deep-dive on one specific analysis topic. Generate a comprehen
 ## Available Datasets
 {context}
 {enrichment_instruction}
+{language_instruction}
 
 ## Instructions
 1. Generate ONE SQL query that explores the specific analysis in depth
@@ -147,6 +166,7 @@ You are conducting a multi-step research investigation. You have access to previ
 ## Available Datasets
 {context}
 {enrichment_instruction}
+{language_instruction}
 
 ## Previous Iterations
 {previous_results}
@@ -212,6 +232,7 @@ Write a concise answer to the user's question based on these results. Include:
 - Only reference data that appears in the results
 - Be specific (use actual numbers/values from the data)
 - Keep it concise (3-5 sentences)
+{language_instruction}
 """
 
 # ── Legacy Prompts (kept for backward compatibility) ──
@@ -278,10 +299,12 @@ new analysis actions. Focus on:
 
 # ── Helpers ──
 
-def build_enrichment_system_prompt(mode: str, dataset_context: str) -> str:
+def build_enrichment_system_prompt(mode: str, dataset_context: str, language: str = "en") -> str:
     """Build the mode-specific system prompt with dataset context and enrichment instructions."""
     template = RESEARCH_SYSTEM_PROMPT if mode == "research" else SUMMARY_SYSTEM_PROMPT
-    return template.replace("{context}", dataset_context).replace("{enrichment_instruction}", ENRICHMENT_INSTRUCTION)
+    return template.replace("{context}", dataset_context).replace(
+        "{enrichment_instruction}", ENRICHMENT_INSTRUCTION
+    ) + language_instruction(language)
 
 
 def extract_sql(text: str) -> str | None:
@@ -413,32 +436,34 @@ def route_prompt(question: str) -> str:
     return ROUTER_PROMPT.replace("{question}", question)
 
 
-def deep_prompt(context: str, previous_results: str) -> str:
+def deep_prompt(context: str, previous_results: str, language: str = "en") -> str:
     """Build the DEEP prompt with context and previous results."""
     return DEEP_PROMPT.replace("{context}", context).replace(
         "{enrichment_instruction}", ENRICHMENT_INSTRUCTION
-    ).replace("{previous_results}", previous_results)
+    ).replace("{previous_results}", previous_results).replace(
+        "{language_instruction}", language_instruction(language)
+    )
 
 
-def direct_prompt(context: str) -> str:
+def direct_prompt(context: str, language: str = "en") -> str:
     """Build the DIRECT prompt with dataset context."""
     return DIRECT_PROMPT.replace("{context}", context).replace(
         "{enrichment_instruction}", ENRICHMENT_INSTRUCTION
-    )
+    ).replace("{language_instruction}", language_instruction(language))
 
 
-def suggest_prompt(context: str) -> str:
+def suggest_prompt(context: str, language: str = "en") -> str:
     """Build the SUGGEST prompt with dataset context."""
     return SUGGEST_PROMPT.replace("{context}", context).replace(
         "{enrichment_instruction}", ENRICHMENT_INSTRUCTION
-    )
+    ).replace("{language_instruction}", language_instruction(language))
 
 
-def focus_prompt(context: str) -> str:
+def focus_prompt(context: str, language: str = "en") -> str:
     """Build the FOCUS prompt with dataset context."""
     return FOCUS_PROMPT.replace("{context}", context).replace(
         "{enrichment_instruction}", ENRICHMENT_INSTRUCTION
-    )
+    ).replace("{language_instruction}", language_instruction(language))
 
 
 # ── LLM Calls ──
@@ -501,7 +526,7 @@ async def generate_llm_response(system_prompt: str, question: str, max_tokens: i
         raise
 
 
-async def interpret_results(question: str, sql: str, result: dict) -> str:
+async def interpret_results(question: str, sql: str, result: dict, language: str = "en") -> str:
     """Interpret SQL query results and answer the user's question."""
     settings = get_settings()
     rows_sample = result.get("rows", [])[:10]
@@ -514,13 +539,13 @@ async def interpret_results(question: str, sql: str, result: dict) -> str:
         "{columns}", ", ".join(columns)
     ).replace("{sample_size}", str(len(rows_sample))).replace(
         "{rows_sample}", "\n".join(str(r) for r in rows_sample) if rows_sample else "(no data)"
-    )
+    ).replace("{language_instruction}", language_instruction(language))
     client = get_llm_client()
     try:
         response = await client.chat.completions.create(
             model=settings.llm_model,
             messages=[
-                {"role": "system", "content": "You are a data analysis assistant. Interpret SQL results concisely."},
+                {"role": "system", "content": "You are a data analysis assistant. Interpret SQL results concisely." + language_instruction(language)},
                 {"role": "user", "content": prompt},
             ],
             max_tokens=settings.max_tokens,

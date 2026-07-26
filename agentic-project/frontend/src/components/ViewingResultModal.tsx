@@ -1,4 +1,5 @@
 import { QueryActions, QueryResultState } from "../sections/QueryActions";
+import { useT, tCount } from "../lib/i18n";
 
 interface ViewingResultState {
   aim: string;
@@ -14,6 +15,7 @@ export function ViewingResultModal({
   state: ViewingResultState;
   onClose: () => void;
 }) {
+  const t = useT();
   return (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm"
@@ -36,21 +38,21 @@ export function ViewingResultModal({
         <div className="px-5 py-4 space-y-3">
           <div className="flex items-center gap-2 mb-1">
             <span className="text-[11px] font-medium px-2 py-0.5 rounded-full bg-ic-teal-soft/40 text-ic-teal border border-ic-teal/30">
-              {state.result.row_count} row{state.result.row_count !== 1 ? "s" : ""}
+              {tCount(t, "common.rowCount", state.result.row_count ?? 0)}
             </span>
           </div>
           {state.description && (
             <div className="rounded-xl border-l-3 border-l-ic-blue bg-ic-blue-soft/10 border border-border/40 p-3">
               <div className="flex items-center gap-1.5 text-[10.5px] font-semibold tracking-wider uppercase text-ic-blue mb-1">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" width="12" height="12" strokeWidth="2.2"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg>
-                Description
+                {t("common.description")}
               </div>
               <p className="text-sm text-text leading-relaxed">{state.description}</p>
             </div>
           )}
           {state.datasets && state.datasets.length > 0 && (
             <div>
-              <div className="text-[10.5px] font-semibold tracking-wider uppercase text-tertiary mb-1.5">Datasets</div>
+              <div className="text-[10.5px] font-semibold tracking-wider uppercase text-tertiary mb-1.5">{t("common.datasets")}</div>
               <div className="flex flex-wrap gap-1">
                 {state.datasets.map((ds) => (
                   <span key={ds} className="inline-flex items-center gap-1 text-[11px] font-medium px-2 py-0.5 rounded-full border bg-ic-amber-soft/20 text-ic-amber border-ic-amber/20">
@@ -68,7 +70,7 @@ export function ViewingResultModal({
             className="bg-ic-red-soft/40 backdrop-blur-sm border border-ic-red/30 text-ic-red hover:bg-ic-red-soft/60 transition-all rounded-lg px-3 py-1.5 text-sm"
             onClick={onClose}
           >
-            Close
+            {t("common.close")}
           </button>
         </div>
       </div>

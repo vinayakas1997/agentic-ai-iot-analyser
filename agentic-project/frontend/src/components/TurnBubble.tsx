@@ -10,6 +10,7 @@ import remarkBreaks from "remark-breaks";
 import { parseSuggestions } from "../lib/parseSuggestions";
 import { SuggestionCard } from "./SuggestionCard";
 import type { DatasetInfo } from "../types";
+import { useT } from "../lib/i18n";
 
 export function TurnBubble({ turn, queryResult, completedActions, selectedAims, runningAim, loading, onToggleAction, onScrollToTurn, onRerunAim, datasets }: {
   turn: Turn;
@@ -23,6 +24,7 @@ export function TurnBubble({ turn, queryResult, completedActions, selectedAims, 
   onRerunAim?: (aim: { aim: string; description: string; datasets?: string[] }) => void;
   datasets?: DatasetInfo[];
 }) {
+  const t = useT();
   const hasDetail = turn.description || turn.benefits || (turn.columns && turn.columns.length > 0);
   const hasActions = turn.analysis_actions && turn.analysis_actions.length > 0;
 
@@ -58,7 +60,7 @@ export function TurnBubble({ turn, queryResult, completedActions, selectedAims, 
                   disabled={loading}
                   onClick={() => !loading && onToggleAction(action)}
                   className={`text-[11px] px-2.5 py-1 rounded-full border transition-colors flex items-center gap-1.5 bg-emerald-50 text-emerald-600 border-emerald-200 hover:bg-emerald-100 cursor-pointer ${loading ? "opacity-50 cursor-not-allowed" : ""}`}
-                  title={loading ? "Processing... please wait" : "Click to detach from composer"}
+                  title={loading ? t("common.processingWait") : t("turn.clickToDetach")}
                 >
                   <span className="text-[10px]">✓</span>
                   {action.name}
@@ -69,7 +71,7 @@ export function TurnBubble({ turn, queryResult, completedActions, selectedAims, 
                     disabled={loading}
                     onClick={() => !loading && onRerunAim({ aim: action.name, description: action.description, datasets: action.datasets })}
                     className={`text-[11px] px-1.5 py-1 rounded-full border transition-colors ${loading ? "text-muted/30 cursor-not-allowed border-border/10" : "text-muted hover:text-text hover:border-border border-border/30"}`}
-                    title={loading ? "Processing... please wait" : "Re-run this analysis"}
+                    title={loading ? t("common.processingWait") : t("turn.rerunAnalysis")}
                   >
                     ↻
                   </button>
@@ -93,7 +95,7 @@ export function TurnBubble({ turn, queryResult, completedActions, selectedAims, 
                 <span
                   className="text-[11px] px-1.5 py-1 rounded-full text-muted/60 cursor-default border border-transparent"
                 >
-                  View
+                  {t("common.view")}
                 </span>
               </div>
             );
@@ -136,7 +138,7 @@ export function TurnBubble({ turn, queryResult, completedActions, selectedAims, 
     return (
       <div className="mt-4 space-y-4">
         <div className="text-[11px] font-semibold tracking-wider uppercase text-stage-manager/70 mb-1">
-          Research Steps ({turn.deep_iterations.length})
+          {t("turn.researchSteps", { count: turn.deep_iterations.length })}
         </div>
         {turn.deep_iterations.map((iter, idx) => {
           const iterResult: QueryResultState = {
@@ -154,7 +156,7 @@ export function TurnBubble({ turn, queryResult, completedActions, selectedAims, 
                 <span className="inline-flex items-center justify-center w-5 h-5 rounded-full bg-stage-manager/10 text-stage-manager text-[10px] font-bold">
                   {idx + 1}
                 </span>
-                Iteration {idx + 1}
+                {t("turn.iteration", { count: idx + 1 })}
               </div>
               <div className="prose-custom text-sm text-text/90 mb-3">
                 <ReactMarkdown remarkPlugins={[remarkGfm, remarkBreaks]}>{iter.explanation}</ReactMarkdown>
@@ -192,21 +194,21 @@ export function TurnBubble({ turn, queryResult, completedActions, selectedAims, 
         <div className="rounded-xl border-l-3 border-l-ic-blue bg-ic-blue-soft/10 border border-border/40 p-3 mb-3">
           <div className="flex items-center gap-1.5 text-[10.5px] font-semibold tracking-wider uppercase text-ic-blue mb-1">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" width="12" height="12" strokeWidth="2.2"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg>
-            Description
+            {t("common.description")}
           </div>
           <p className="text-sm text-text leading-relaxed">{turn.description}</p>
         </div>
       )}
       {turn.benefits && (
         <div className="text-sm text-text/70 mb-3">
-          <span className="text-stage-manager font-semibold">Benefits:</span> {turn.benefits}
+          <span className="text-stage-manager font-semibold">{t("turn.benefitsLabel")}</span> {turn.benefits}
         </div>
       )}
       {turn.columns && turn.columns.length > 0 && (
         <div className="mt-3">
           <div className="flex items-center gap-1.5 text-[10.5px] font-semibold tracking-wider uppercase text-tertiary mb-1.5">
             <IconGrid size={11} />
-            Columns used
+            {t("common.columnsUsed")}
           </div>
           <div className="flex flex-wrap gap-1">
             {turn.columns.map((c, i) => (

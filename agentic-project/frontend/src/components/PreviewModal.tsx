@@ -2,6 +2,7 @@ import { btnPrimary, btnSecondary, monoClass } from "../lib/styles";
 import { IconGrid } from "../lib/icons";
 import { datasetColor } from "../lib/datasetColors";
 import { DatasetColumns } from "./DatasetColumns";
+import { useT } from "../lib/i18n";
 import type { DatasetInfo } from "../types";
 
 interface Aim {
@@ -29,6 +30,7 @@ export function PreviewModal({
   onClose: () => void;
   isAlreadyAdded: boolean;
 }) {
+  const t = useT();
   return (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm"
@@ -54,7 +56,7 @@ export function PreviewModal({
             <div className="rounded-xl border-l-3 border-l-ic-blue bg-ic-blue-soft/10 border border-border/40 p-3">
               <div className="flex items-center gap-1.5 text-[10.5px] font-semibold tracking-wider uppercase text-ic-blue mb-1">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" width="12" height="12" strokeWidth="2.2"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg>
-                Description
+                {t("common.description")}
               </div>
               <p className="text-sm text-text leading-relaxed">{aim.description}</p>
             </div>
@@ -62,7 +64,7 @@ export function PreviewModal({
 
           {aim.benefits && (
             <div>
-              <div className="text-[10.5px] font-semibold tracking-wider uppercase text-tertiary mb-1">Benefits</div>
+              <div className="text-[10.5px] font-semibold tracking-wider uppercase text-tertiary mb-1">{t("common.benefits")}</div>
               <p className="text-sm text-text/80 leading-relaxed">{aim.benefits}</p>
             </div>
           )}
@@ -71,7 +73,7 @@ export function PreviewModal({
             <div>
               <div className="flex items-center gap-1.5 text-[10.5px] font-semibold tracking-wider uppercase text-tertiary mb-1.5">
                 <IconGrid size={11} />
-                Columns used
+                {t("common.columnsUsed")}
               </div>
               <div className="flex flex-wrap gap-1">
                 {aim.columns.map((c, i) =>
@@ -90,7 +92,7 @@ export function PreviewModal({
 
           {aim.datasets && aim.datasets.length > 0 && (
             <div>
-              <div className="text-[10.5px] font-semibold tracking-wider uppercase text-tertiary mb-1.5">Datasets</div>
+              <div className="text-[10.5px] font-semibold tracking-wider uppercase text-tertiary mb-1.5">{t("common.datasets")}</div>
               <div className="flex flex-wrap gap-1.5">
                 {aim.datasets.map((dsName) => {
                   const ds = datasetLookup.get(dsName);
@@ -106,7 +108,7 @@ export function PreviewModal({
                           className="text-[11px] font-medium text-accent hover:text-accent/80 transition-colors"
                           onClick={() => onToggleDataset(dsName)}
                         >
-                          {expandedDataset === dsName ? "Hide" : "Details"}
+                          {expandedDataset === dsName ? t("common.hide") : t("common.details")}
                         </button>
                       )}
                     </div>
@@ -128,7 +130,7 @@ export function PreviewModal({
 
         <div className="flex items-center justify-end gap-2 px-5 pb-5 pt-2 border-t border-border/50">
           <button type="button" className={btnSecondary} onClick={onClose}>
-            Close
+            {t("common.close")}
           </button>
           <button
             type="button"
@@ -136,7 +138,7 @@ export function PreviewModal({
             onClick={onUseAim}
             disabled={isAlreadyAdded}
           >
-            {isAlreadyAdded ? "Already added" : "Use this"}
+            {isAlreadyAdded ? t("preview.alreadyAdded") : t("preview.useThis")}
           </button>
         </div>
       </div>

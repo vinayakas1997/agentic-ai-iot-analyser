@@ -4,7 +4,7 @@ import json
 import logging
 from config import get_settings, get_llm_client
 from sql_executor import explain_sql, validate_sql, validate_sql_safety, clean_sql
-from llm_client import build_enrichment_system_prompt
+from llm_client import build_enrichment_system_prompt, language_instruction
 
 logger = logging.getLogger(__name__)
 
@@ -284,6 +284,7 @@ async def generate_chat_response(
     history: list[dict] | None = None,
     enrichment_block: str | None = None,
     enrichment_mode: str = "",
+    language: str = "en",
 ) -> str:
     """Generate an LLM chat response using dataset context and conversation history.
 
@@ -303,14 +304,14 @@ async def generate_chat_response(
 
     try:
         if enrichment_block:
-            system_prompt = build_enrichment_system_prompt(enrichment_mode, context)
+            system_prompt = build_enrichment_system_prompt(enrichment_mode, context, language=language)
             combined_system = f"{system_prompt}\n\n## Previous Context\n{enrichment_block}"
             messages = [
                 {"role": "system", "content": combined_system},
                 {"role": "user", "content": message},
             ]
         else:
-            system_prompt = CHAT_SYSTEM_PROMPT.replace("{context}", context)
+            system_prompt = CHAT_SYSTEM_PROMPT.replace("{context}", context) + language_instruction(language)
             truncated_history = []
             if history:
                 for h in history[-10:]:

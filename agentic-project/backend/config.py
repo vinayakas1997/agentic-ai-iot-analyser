@@ -28,9 +28,17 @@ class Settings(BaseSettings):
     user_data_dir: str = "/data/users"
     max_bad_row_pct: float = 5.0
 
+    # Comma-separated allowlist of IDs that log in with the "iot" role instead of "normal".
+    # No passwords — this is a trust-level allowlist for an internal tool, not real auth.
+    iot_user_ids: str = "iot,iotteam"
+
     @property
     def cors_origin_list(self) -> list[str]:
         return [o.strip() for o in self.cors_origins.split(",") if o.strip()]
+
+    @property
+    def iot_user_id_set(self) -> set[str]:
+        return {u.strip().lower() for u in self.iot_user_ids.split(",") if u.strip()}
 
 @lru_cache
 def get_settings() -> Settings:

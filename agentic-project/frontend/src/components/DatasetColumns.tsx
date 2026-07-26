@@ -1,14 +1,16 @@
 import { monoClass } from "../lib/styles";
+import { useT } from "../lib/i18n";
 
 export function DatasetColumns({ columns }: { columns: { name: string; datatype: string; meaning?: string }[] }) {
+  const t = useT();
   return (
     <div className="rounded-lg border border-border/50 bg-surface-2 overflow-hidden">
       <table className="w-full text-xs">
         <thead>
           <tr className="text-[10px] font-semibold tracking-wider uppercase text-tertiary bg-black/[0.08]">
-            <th className="text-left py-1.5 px-2.5 w-[30%]">Name</th>
-            <th className="text-left py-1.5 px-2 w-[16%]">Type</th>
-            <th className="text-left py-1.5 px-2.5">Description</th>
+            <th className="text-left py-1.5 px-2.5 w-[30%]">{t("common.name")}</th>
+            <th className="text-left py-1.5 px-2 w-[16%]">{t("common.type")}</th>
+            <th className="text-left py-1.5 px-2.5">{t("common.description")}</th>
           </tr>
         </thead>
         <tbody>

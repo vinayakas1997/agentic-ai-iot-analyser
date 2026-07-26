@@ -13,7 +13,7 @@ from resolve import resolve_line_lookup, fetch_datasets, save_task_definition
 from aims import generate_chat_response, generate_sql, fix_sql, criticize_sql, extract_aims_from_text, extract_analysis_actions, suggest_charts, _fallback_chart_configs, generate_aim
 from llm_client import parse_numbered_suggestions
 from logger import log_route, log_llm_call, log_sql, log_aims, log_response, log_full_prompt
-from llm_client import summarize_turns, classify_route, extract_sql, extract_sql_fallback, generate_llm_response, interpret_results, direct_prompt, suggest_prompt, focus_prompt, deep_prompt
+from llm_client import summarize_turns, classify_route, extract_sql, extract_sql_fallback, generate_llm_response, interpret_results, direct_prompt, suggest_prompt, focus_prompt, deep_prompt, language_instruction
 from focus_agent import run_focus_agent
 from sql_executor import validate_sql
 from sql_executor import execute_sql
@@ -29,6 +29,14 @@ from user_datasets import (
     list_user_datasets,
     delete_user_dataset,
     fetch_active_user_datasets,
+)
+from registry_admin import (
+    TableNotFoundError,
+    introspect_pg_table,
+    create_draft_entry,
+    confirm_entry,
+    list_entries,
+    delete_entry,
 )
 
 logger = logging.getLogger(__name__)
@@ -82,6 +90,7 @@ class MessageRequest(BaseModel):
     enrichment_mode: str = "research"
     history: list[dict] | None = None
     route_override: str = ""
+    language: str = "en"
 
 class AimProposal(BaseModel):
     aim: str
@@ -177,6 +186,32 @@ class UploadResponse(BaseModel):
 
 class ConfirmDatasetRequest(BaseModel):
     user_id: str = ""
+    columns: list[dict]
+    description: str = ""
+
+class LoginRequest(BaseModel):
+    user_id: str
+
+class LoginResponse(BaseModel):
+    user_id: str
+    role: str
+
+class IntrospectRequest(BaseModel):
+    table_name: str
+
+class CreateRegistryEntryRequest(BaseModel):
+    maintained_by: str
+    line_name: str
+    dataset_name: str
+    table_name: str
+    description: str = ""
+    column_definitions: list[dict]
+    role: str | None = None
+    join_hints: dict | list | None = None
+    suggested_aims: dict | list | None = None
+    synonyms: list[str] | None = None
+
+class ConfirmRegistryEntryRequest(BaseModel):
     columns: list[dict]
     description: str = ""
 
@@ -693,6 +728,63 @@ async def remove_user_dataset(dataset_id: int, user_id: str = ""):
         raise HTTPException(status_code=404, detail="Dataset not found")
     return {"status": "deleted", "id": dataset_id}
 
+@router.post("/login", response_model=LoginResponse)
+async def login(req: LoginRequest):
+    """Stateless ID-only allowlist check — no passwords. Decides which top-level view the
+    frontend renders (IoT registration page vs the normal dashboard)."""
+    role = "iot" if req.user_id.strip().lower() in settings.iot_user_id_set else "normal"
+    return LoginResponse(user_id=req.user_id.strip(), role=role)
+
+@router.post("/registry-admin/introspect")
+async def registry_introspect(req: IntrospectRequest):
+    """Look up an existing Postgres table's columns + a sample, and draft column meanings —
+    nothing is saved yet, same preview-before-commit shape as CSV upload."""
+    try:
+        columns, sample_rows = await introspect_pg_table(req.table_name)
+    except TableNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    col_names = [c["name"] for c in columns]
+    drafted = await draft_column_meanings(req.table_name, col_names, sample_rows)
+    meaning_by_name = {d["name"]: d["meaning"] for d in drafted}
+    for c in columns:
+        c["meaning"] = meaning_by_name.get(c["name"], "")
+    return {"table_name": req.table_name, "columns": columns, "sample_rows": sample_rows[:5]}
+
+@router.post("/registry-admin/entries")
+async def registry_create_entry(req: CreateRegistryEntryRequest):
+    entry_id = await create_draft_entry(
+        maintained_by=req.maintained_by,
+        line_name=req.line_name,
+        dataset_name=req.dataset_name,
+        table_name=req.table_name,
+        description=req.description,
+        column_definitions=req.column_definitions,
+        role=req.role,
+        join_hints=req.join_hints,
+        suggested_aims=req.suggested_aims,
+        synonyms=req.synonyms,
+    )
+    return {"id": entry_id, "status": "draft"}
+
+@router.post("/registry-admin/entries/{entry_id}/confirm")
+async def registry_confirm_entry(entry_id: int, req: ConfirmRegistryEntryRequest):
+    try:
+        return await confirm_entry(entry_id, req.columns, req.description)
+    except ValueError:
+        raise HTTPException(status_code=404, detail="Entry not found")
+
+@router.get("/registry-admin/entries")
+async def registry_list_entries(maintained_by: str = ""):
+    return {"entries": await list_entries(maintained_by or None)}
+
+@router.delete("/registry-admin/entries/{entry_id}")
+async def registry_delete_entry(entry_id: int):
+    try:
+        await delete_entry(entry_id)
+    except ValueError:
+        raise HTTPException(status_code=404, detail="Entry not found")
+    return {"status": "deleted", "id": entry_id}
+
 # ── Route Handlers ──
 
 def _build_context(
@@ -730,10 +822,11 @@ async def _handle_direct(
     enrichment_block: str = "",
     aim_descriptions: dict[str, str] | None = None,
     session_state: dict | None = None,
+    language: str = "en",
 ):
     """DIRECT route: LLM generates SQL → we validate and execute → LLM interprets results."""
     context = _build_context(dataset_names, datasets_data, attached_aims, aim_descriptions)
-    system_prompt = direct_prompt(context=context)
+    system_prompt = direct_prompt(context=context, language=language)
     if enrichment_block:
         system_prompt += f"\n\n## Previous Context\n{enrichment_block}"
     raw = await generate_llm_response(
@@ -803,7 +896,7 @@ async def _handle_direct(
             "row_count": 0,
         }
         interpretation = await generate_llm_response(
-            system_prompt=f"You are a data analyst assistant. The SQL query failed with error: {error_msg}. Explain the error briefly and suggest how to fix it.",
+            system_prompt=f"You are a data analyst assistant. The SQL query failed with error: {error_msg}. Explain the error briefly and suggest how to fix it." + language_instruction(language),
             question=f"The query was:\n```sql\n{sql}\n```",
         )
         return {
@@ -819,6 +912,7 @@ async def _handle_direct(
         question=message,
         sql=result.get("sql", ""),
         result=result,
+        language=language,
     )
 
     result_uuid = str(uuid.uuid4())
@@ -837,10 +931,11 @@ async def _handle_suggest(
     enrichment_block: str = "",
     aim_descriptions: dict[str, str] | None = None,
     session_state: dict | None = None,
+    language: str = "en",
 ):
     """SUGGEST route: LLM proposes 3 exploration ideas (no SQL)."""
     context = _build_context(dataset_names, datasets_data, attached_aims, aim_descriptions)
-    system_prompt = suggest_prompt(context=context)
+    system_prompt = suggest_prompt(context=context, language=language)
     real_dataset_names = [ds.get("dataset_name", "?") for ds in datasets_data]
     if len(real_dataset_names) > 1:
         system_prompt += (
@@ -888,6 +983,7 @@ async def _handle_focus_multi(
     attached_aims: list[str],
     enrichment_block: str = "",
     aim_descriptions: dict[str, str] | None = None,
+    language: str = "en",
 ):
     """Multiple aims attached: run one focused query per aim, then synthesize a combined view."""
     deep_iterations = []
@@ -896,7 +992,7 @@ async def _handle_focus_multi(
     aim_descriptions = aim_descriptions or {}
     for aim in attached_aims:
         context = _build_context(dataset_names, datasets_data, [aim], aim_descriptions)
-        system_prompt = focus_prompt(context=context)
+        system_prompt = focus_prompt(context=context, language=language)
         if enrichment_block:
             system_prompt += f"\n\n## Previous Context\n{enrichment_block}"
         desc = aim_descriptions.get(aim, "")
@@ -925,7 +1021,7 @@ async def _handle_focus_multi(
             chart_suggestions = cs.model_dump() if hasattr(cs, "model_dump") else cs
 
         interpretation = await interpret_results(
-            question=aim_question, sql=result.get("sql", ""), result=result
+            question=aim_question, sql=result.get("sql", ""), result=result, language=language
         )
         deep_iterations.append({
             "iteration": len(deep_iterations),
@@ -949,7 +1045,7 @@ async def _handle_focus_multi(
         "new combined analysis idea that connects them."
     )
     combined_msg = await generate_llm_response(
-        system_prompt="You are a data analyst assistant synthesizing multiple related analyses into one combined narrative.",
+        system_prompt="You are a data analyst assistant synthesizing multiple related analyses into one combined narrative." + language_instruction(language),
         question=combined_prompt,
     )
 
@@ -970,6 +1066,7 @@ async def _handle_focus(
     enrichment_block: str = "",
     aim_descriptions: dict[str, str] | None = None,
     session_state: dict | None = None,
+    language: str = "en",
 ):
     """FOCUS route: agentic tool-calling loop (query fresh data or recall a previously
     fetched result in this session) for a single aim; delegates to _handle_focus_multi
@@ -982,6 +1079,7 @@ async def _handle_focus(
             attached_aims=attached_aims,
             enrichment_block=enrichment_block,
             aim_descriptions=aim_descriptions,
+            language=language,
         )
     context = _build_context(dataset_names, datasets_data, attached_aims, aim_descriptions)
     agent_result = await run_focus_agent(
@@ -991,6 +1089,7 @@ async def _handle_focus(
         enrichment_block=enrichment_block,
         session_state=session_state or {},
         datasets_data=datasets_data,
+        language=language,
     )
 
     result = agent_result["query_result"]
@@ -1023,6 +1122,7 @@ async def _handle_deep(
     max_iterations: int = 3,
     aim_descriptions: dict[str, str] | None = None,
     session_state: dict | None = None,
+    language: str = "en",
 ):
     """DEEP route: multi-iteration research — loop SQL → execute → analyze for N rounds."""
     all_results = []
@@ -1047,6 +1147,7 @@ async def _handle_deep(
             system_prompt=deep_prompt(
                 context=context,
                 previous_results=prev_str,
+                language=language,
             ),
             question=current_message,
         )
@@ -1225,6 +1326,7 @@ async def send_message(req: MessageRequest):
                 datasets_data=datasets_data,
                 enrichment_block=enrichment_block,
                 enrichment_mode=req.enrichment_mode,
+                language=req.language,
             )
         else:
             history = req.history or []
@@ -1234,6 +1336,7 @@ async def send_message(req: MessageRequest):
                 datasets_data=datasets_data,
                 history=history,
                 enrichment_mode=req.enrichment_mode,
+                language=req.language,
             )
 
         aim_proposals_raw = await extract_aims_from_text(agent_msg, dataset_names)
@@ -1334,6 +1437,7 @@ async def send_message(req: MessageRequest):
         enrichment_block=enrichment_block,
         aim_descriptions=req.aim_descriptions,
         session_state=session_state,
+        language=req.language,
     )
 
     agent_msg = handler_result["agent_message"]

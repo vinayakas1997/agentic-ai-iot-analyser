@@ -5,6 +5,7 @@ import { IconDatabase, IconGrid, IconTarget } from "../lib/icons";
 import { datasetColor } from "../lib/datasetColors";
 import type { ParsedSuggestion } from "../lib/parseSuggestions";
 import type { DatasetInfo } from "../types";
+import { useT } from "../lib/i18n";
 
 // Renders a single line of markdown (bold/italic) inline, without the block-level <p> wrapper
 // react-markdown normally adds — the model often bolds column names inline (e.g. "grouping by **fruits_name**").
@@ -17,6 +18,7 @@ function InlineMarkdown({ text }: { text: string }) {
 }
 
 export function SuggestionCard({ suggestion, index, datasets }: { suggestion: ParsedSuggestion; index: number; datasets?: DatasetInfo[] }) {
+  const t = useT();
   // Show the real SQL table name, not the friendly dataset label — stay transparent about what's actually queried.
   const tableFor = (name: string) => datasets?.find((d) => d.dataset_name === name)?.table || name;
 
@@ -40,7 +42,7 @@ export function SuggestionCard({ suggestion, index, datasets }: { suggestion: Pa
         <div className="mb-1.5">
           <div className={fieldLabelClass}>
             <IconDatabase size={11} />
-            Datasets
+            {t("common.datasets")}
           </div>
           <div className="flex flex-wrap gap-1">
             {suggestion.datasets.map((d, i) => {
@@ -63,7 +65,7 @@ export function SuggestionCard({ suggestion, index, datasets }: { suggestion: Pa
         <div className="mb-2">
           <div className={fieldLabelClass}>
             <IconGrid size={11} />
-            Columns
+            {t("common.columns")}
           </div>
           <div className="flex flex-wrap gap-1">
             {suggestion.columns.map((c, i) => (
@@ -86,7 +88,7 @@ export function SuggestionCard({ suggestion, index, datasets }: { suggestion: Pa
 
       {suggestion.insight && (
         <p className={insightNoteClass}>
-          <strong>Expected insight:</strong> <InlineMarkdown text={suggestion.insight} />
+          <strong>{t("suggestion.expectedInsight")}</strong> <InlineMarkdown text={suggestion.insight} />
         </p>
       )}
     </div>

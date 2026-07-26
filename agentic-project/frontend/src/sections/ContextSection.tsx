@@ -7,9 +7,11 @@ import { panelClass, monoClass } from "../lib/styles";
 import { IconDatabase, IconEdit, IconTrash } from "../lib/icons";
 import { listDatasets, listUserDatasets, deleteUserDataset } from "../api/client";
 import { DatasetColumns } from "../components/DatasetColumns";
+import { useT } from "../lib/i18n";
 import type { DatasetInfo, PersonalDataset } from "../types";
 
 export default function ContextSection() {
+  const t = useT();
   const sessionMeta = useSessionStore((s) => s.sessionMeta);
   const sessionId = useSessionStore((s) => s.sessionId);
   const isLocalSession = useSessionStore((s) => s.isLocalSession);
@@ -91,7 +93,7 @@ export default function ContextSection() {
         <span className="inline-flex items-center justify-center w-[22px] h-[22px] rounded-[7px] bg-ic-violet-soft text-ic-violet">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" width="13" height="13" strokeWidth="2.2"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
         </span>
-        Context
+        {t("context.title")}
       </div>
 
       {displaySession && (
@@ -100,7 +102,7 @@ export default function ContextSection() {
             <span className="inline-flex items-center justify-center w-[22px] h-[22px] rounded-[7px] bg-ic-blue-soft text-ic-blue">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" width="13" height="13" strokeWidth="2.2"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 3"/></svg>
             </span>
-            Session
+            {t("context.session")}
           </div>
           <div className="flex items-center gap-1.5 mb-0.5">
             {editingTitle ? (
@@ -136,14 +138,14 @@ export default function ContextSection() {
           </div>
           <div className="flex items-center gap-2">
             <span className="text-[13px] text-muted">
-              Turns: <b className="text-text font-medium">{turns.length}</b>
+              {t("context.turns")} <b className="text-text font-medium">{turns.length}</b>
             </span>
             <span className="text-muted">·</span>
             <span className="text-[10px] font-semibold uppercase px-1.5 py-0.5 rounded border bg-ic-blue-soft text-ic-blue border-ic-blue/30">
               {displaySession.mode || "ask"}
             </span>
             {isLocalSession && (
-              <span className="text-[10px] text-ic-amber font-semibold">(local)</span>
+              <span className="text-[10px] text-ic-amber font-semibold">{t("context.local")}</span>
             )}
           </div>
         </div>
@@ -154,13 +156,13 @@ export default function ContextSection() {
           <span className="inline-flex items-center justify-center w-[22px] h-[22px] rounded-[7px] bg-ic-amber-soft text-ic-amber">
             <IconDatabase size={13} />
           </span>
-          Datasets
+          {t("common.datasets")}
           {storeSelected.length > 0 && (
             <span className="text-tertiary font-normal text-xs">({storeSelected.length})</span>
           )}
         </div>
         {storeSelected.length === 0 ? (
-          <p className="text-xs text-muted">No datasets selected. Search and select from the center panel.</p>
+          <p className="text-xs text-muted">{t("context.noDatasetsSelected")}</p>
         ) : (
           <div className="space-y-2">
             {selectedDatasetInfos.map((ds) => (
@@ -178,15 +180,15 @@ export default function ContextSection() {
                     className="text-[11px] font-medium text-accent hover:text-accent/80 transition-colors shrink-0"
                     onClick={() => setExpandedDataset(expandedDataset === ds.dataset_name ? null : ds.dataset_name)}
                   >
-                    {expandedDataset === ds.dataset_name ? "Hide" : "Details"}
+                    {expandedDataset === ds.dataset_name ? t("common.hide") : t("common.details")}
                   </button>
                   {storeAttached.includes(ds.dataset_name) ? (
                     lockedByAims.includes(ds.dataset_name) ? (
                       <span
                         className="text-[11px] font-medium text-ic-amber/60 cursor-not-allowed shrink-0"
-                        title="Locked by a selected aim — remove the aim first"
+                        title={t("common.lockedByAim")}
                       >
-                        Locked
+                        {t("context.locked")}
                       </span>
                     ) : (
                       <button
@@ -194,7 +196,7 @@ export default function ContextSection() {
                         className="text-[11px] font-medium text-ic-teal hover:text-text transition-colors shrink-0"
                         onClick={() => storeDetach(ds.dataset_name)}
                       >
-                        In-use
+                        {t("common.inUse")}
                       </button>
                     )
                   ) : (
@@ -203,7 +205,7 @@ export default function ContextSection() {
                       className="text-[11px] font-medium text-accent hover:text-accent/80 transition-colors shrink-0"
                       onClick={() => storeAttach(ds.dataset_name)}
                     >
-                      Use
+                      {t("common.use")}
                     </button>
                   )}
                   {!lockedByAims.includes(ds.dataset_name) && (
@@ -232,13 +234,13 @@ export default function ContextSection() {
           <span className="inline-flex items-center justify-center w-[22px] h-[22px] rounded-[7px] bg-ic-teal-soft text-ic-teal">
             <IconDatabase size={13} />
           </span>
-          Personal Datasets
+          {t("context.personalDatasets")}
           {personalDatasets.length > 0 && (
             <span className="text-tertiary font-normal text-xs">({personalDatasets.length})</span>
           )}
         </div>
         {personalDatasets.length === 0 ? (
-          <p className="text-xs text-muted">No uploaded CSVs yet. Use "Upload CSV" in the center panel to test your own data.</p>
+          <p className="text-xs text-muted">{t("context.noPersonalDatasets")}</p>
         ) : (
           <div className="space-y-2">
             {personalDatasets.map((ds) => (
@@ -256,7 +258,7 @@ export default function ContextSection() {
                     className="text-[11px] font-medium text-accent hover:text-accent/80 transition-colors shrink-0"
                     onClick={() => setExpandedDataset(expandedDataset === ds.dataset_name ? null : ds.dataset_name)}
                   >
-                    {expandedDataset === ds.dataset_name ? "Hide" : "Details"}
+                    {expandedDataset === ds.dataset_name ? t("common.hide") : t("common.details")}
                   </button>
                   {storeAttached.includes(ds.dataset_name) ? (
                     <button
@@ -264,7 +266,7 @@ export default function ContextSection() {
                       className="text-[11px] font-medium text-ic-teal hover:text-text transition-colors shrink-0"
                       onClick={() => storeDetach(ds.dataset_name)}
                     >
-                      In-use
+                      {t("common.inUse")}
                     </button>
                   ) : (
                     <button
@@ -272,14 +274,14 @@ export default function ContextSection() {
                       className="text-[11px] font-medium text-accent hover:text-accent/80 transition-colors shrink-0"
                       onClick={() => storeAttach(ds.dataset_name)}
                     >
-                      Use
+                      {t("common.use")}
                     </button>
                   )}
                   <button
                     type="button"
                     className="text-muted hover:text-ic-amber transition-colors shrink-0"
                     onClick={() => handleDeletePersonalDataset(ds)}
-                    title="Delete this dataset"
+                    title={t("context.deleteDatasetTitle")}
                   >
                     <IconTrash size={13} />
                   </button>

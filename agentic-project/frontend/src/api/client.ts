@@ -109,10 +109,11 @@ export async function getSession(sessionId: string) {
   }>(`/api/v2/sessions/${sessionId}`);
 }
 
-export async function sendMessage(sessionId: string, message: string, lineName = "", attachedAims: string[] = [], enrichmentMode = "research", history?: { role: string; content: string }[], routeOverride?: string, aimDescriptions?: Record<string, string>) {
+export async function sendMessage(sessionId: string, message: string, lineName = "", attachedAims: string[] = [], enrichmentMode = "research", history?: { role: string; content: string }[], routeOverride?: string, aimDescriptions?: Record<string, string>, language?: string) {
   const body: Record<string, unknown> = { session_id: sessionId, message, line_name: lineName, attached_aims: attachedAims, enrichment_mode: enrichmentMode, history: history ?? [] };
   if (routeOverride) body.route_override = routeOverride;
   if (aimDescriptions && Object.keys(aimDescriptions).length > 0) body.aim_descriptions = aimDescriptions;
+  if (language) body.language = language;
   return withRetry(() => request<{
     session_id: string;
     turn_index?: number;
@@ -235,4 +236,73 @@ export async function listUserDatasets() {
 
 export async function deleteUserDataset(datasetId: number) {
   return request<{ status: string; id: number }>(`/api/v2/user-datasets/${datasetId}`, { method: "DELETE" });
+}
+
+export async function login(userId: string) {
+  return request<{ user_id: string; role: "iot" | "normal" }>("/api/v2/login", {
+    method: "POST",
+    body: JSON.stringify({ user_id: userId }),
+  });
+}
+
+export interface RegistryColumnDraft {
+  name: string;
+  datatype: string;
+  meaning: string;
+}
+
+export async function introspectTable(tableName: string) {
+  return request<{ table_name: string; columns: RegistryColumnDraft[]; sample_rows: Record<string, unknown>[] }>(
+    "/api/v2/registry-admin/introspect",
+    { method: "POST", body: JSON.stringify({ table_name: tableName }) }
+  );
+}
+
+export async function createRegistryEntry(params: {
+  maintained_by: string;
+  line_name: string;
+  dataset_name: string;
+  table_name: string;
+  description?: string;
+  column_definitions: RegistryColumnDraft[];
+  role?: string;
+  join_hints?: unknown;
+  suggested_aims?: unknown;
+  synonyms?: string[];
+}) {
+  return request<{ id: number; status: string }>("/api/v2/registry-admin/entries", {
+    method: "POST",
+    body: JSON.stringify(params),
+  });
+}
+
+export async function confirmRegistryEntry(entryId: number, columns: RegistryColumnDraft[], description = "") {
+  return request<{ id: number; dataset_name: string; status: string }>(
+    `/api/v2/registry-admin/entries/${entryId}/confirm`,
+    { method: "POST", body: JSON.stringify({ columns, description }) }
+  );
+}
+
+export interface RegistryEntry {
+  id: number;
+  line_name: string;
+  dataset_name: string;
+  table: string | null;
+  description: string | null;
+  column_definitions: RegistryColumnDraft[];
+  role: string | null;
+  join_hints: unknown;
+  suggested_aims: unknown;
+  synonyms: string[] | null;
+  status: string;
+  maintained_by: string | null;
+}
+
+export async function listRegistryEntries(maintainedBy?: string) {
+  const qs = maintainedBy ? `?maintained_by=${encodeURIComponent(maintainedBy)}` : "";
+  return request<{ entries: RegistryEntry[] }>(`/api/v2/registry-admin/entries${qs}`);
+}
+
+export async function deleteRegistryEntry(entryId: number) {
+  return request<{ status: string; id: number }>(`/api/v2/registry-admin/entries/${entryId}`, { method: "DELETE" });
 }

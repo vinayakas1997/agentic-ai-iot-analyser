@@ -5,6 +5,7 @@ import { useOutputStore } from "../stores/outputStore";
 import { listDatasets, updateSessionState, summarizeContext, uploadCsvFiles } from "../api/client";
 import { useDatasetStore } from "../stores/datasetStore";
 import { useUploadStore } from "../stores/uploadStore";
+import { useT, tCount } from "../lib/i18n";
 import { IconDatabase, IconCheck, IconUser, IconTarget, IconUpload } from "../lib/icons";
 import { QueryResultState } from "./QueryActions";
 import type { Turn } from "../types/manager";
@@ -25,6 +26,7 @@ interface Aim {
 }
 
 export default function ChatSection() {
+  const t = useT();
   const sessionId = useSessionStore((s) => s.sessionId);
   const turns = useSessionStore((s) => s.turns);
   const loading = useSessionStore((s) => s.loading);
@@ -487,7 +489,7 @@ export default function ChatSection() {
 
   const handleCsvFilesSelected = async (fileList: FileList | null) => {
     if (!fileList || fileList.length === 0) return;
-    const label = fileList.length === 1 ? `Processing ${fileList[0].name}...` : `Processing ${fileList.length} files...`;
+    const label = fileList.length === 1 ? t("chat.processingFile", { filename: fileList[0].name }) : t("chat.processingFiles", { count: fileList.length });
     setUploadProcessing(true, label);
     try {
       const res = await uploadCsvFiles(Array.from(fileList));
@@ -514,9 +516,9 @@ export default function ChatSection() {
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" width="14" height="14" strokeWidth="2.2" className={`transition-transform ${showSearch ? 'rotate-90' : ''}`}>
               <path d="M9 18l6-6-6-6" />
             </svg>
-            <span className="text-muted text-[11px] font-semibold tracking-wider uppercase">Search datasets</span>
+            <span className="text-muted text-[11px] font-semibold tracking-wider uppercase">{t("chat.searchDatasets")}</span>
             {!showSearch && storeAttached.length > 0 && (
-              <span className="text-[11px] text-muted">({storeAttached.length} attached)</span>
+              <span className="text-[11px] text-muted">{t("chat.attachedCount", { count: storeAttached.length })}</span>
             )}
           </button>
           <button
@@ -526,7 +528,7 @@ export default function ChatSection() {
             disabled={uploadingCsv}
           >
             <IconUpload size={13} />
-            {uploadingCsv ? "Uploading..." : "Upload CSV"}
+            {uploadingCsv ? t("chat.uploading") : t("chat.uploadCsv")}
           </button>
           <input
             ref={csvInputRef}
@@ -550,7 +552,7 @@ export default function ChatSection() {
               <input
                 type="text"
                 className="w-full rounded-xl border-2 border-border bg-surface-1 text-text text-sm pl-9 pr-3 py-2.5 focus:outline-none focus:border-accent transition-colors"
-                placeholder="Search datasets..."
+                placeholder={t("chat.searchPlaceholder")}
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
               />
@@ -559,7 +561,7 @@ export default function ChatSection() {
             {searchQuery && (
               <div className="mt-2 rounded-xl border-2 border-border bg-surface-1 max-h-[240px] overflow-y-auto">
                 {filtered.length === 0 && (
-                  <div className="px-3 py-4 text-sm text-muted text-center">No datasets found</div>
+                  <div className="px-3 py-4 text-sm text-muted text-center">{t("chat.noDatasetsFound")}</div>
                 )}
                 {filtered.map((ds) => (
                   <div
@@ -590,7 +592,7 @@ export default function ChatSection() {
                           {ds.table ? ` · ${ds.table}` : ""}
                         </div>
                       </div>
-                      <span className="text-[11px] text-muted shrink-0 whitespace-nowrap">{ds.column_definitions.length} cols</span>
+                      <span className="text-[11px] text-muted shrink-0 whitespace-nowrap">{ds.column_definitions.length} {t("chat.colsSuffix")}</span>
                       <span
                         className="text-[11px] font-medium text-accent hover:text-accent/80 transition-colors shrink-0 ml-1 cursor-pointer"
                         onClick={(e) => {
@@ -598,7 +600,7 @@ export default function ChatSection() {
                           setExpandedDataset(expandedDataset === ds.dataset_name ? null : ds.dataset_name);
                         }}
                       >
-                        {expandedDataset === ds.dataset_name ? "Hide" : "Details"}
+                        {expandedDataset === ds.dataset_name ? t("common.hide") : t("common.details")}
                       </span>
                     </div>
                     {expandedDataset === ds.dataset_name && (
@@ -615,7 +617,7 @@ export default function ChatSection() {
               <div className="mt-3 rounded-xl border-2 border-border bg-surface-1 p-3">
                 <div className="flex items-center gap-1.5 text-[10.5px] font-semibold tracking-wider uppercase text-muted mb-2">
                   <IconTarget size={12} />
-                  Suggested Aims
+                  {t("chat.suggestedAims")}
                 </div>
                 <div className="flex flex-wrap gap-1.5">
                   {suggestedAims.filter((sa) => !selectedAims.some((a) => a.aim === sa.aim)).map((sa, i) => {
@@ -650,15 +652,15 @@ export default function ChatSection() {
               <IconDatabase size={22} />
             </span>
             <h3 className="text-base font-semibold text-text mb-1">
-              {selectedDatasets.length > 0 ? "Ask about your data" : "Select a dataset to begin"}
+              {selectedDatasets.length > 0 ? t("chat.askAboutData") : t("chat.selectDatasetToBegin")}
             </h3>
             <p className="text-sm text-muted max-w-sm">
               {selectedDatasets.length > 0
-                ? `Ask questions about ${selectedDatasets.map((d) => d.dataset_name).join(", ")}`
-                : "Search and select datasets above to start exploring your data."}
+                ? t("chat.askQuestionsAbout", { datasets: selectedDatasets.map((d) => d.dataset_name).join(", ") })
+                : t("chat.searchAndSelect")}
             </p>
             {selectedDatasets.length > 0 && suggestedAims.length > 0 && (
-              <p className="text-xs text-tertiary mt-2">Or click a suggested aim above</p>
+              <p className="text-xs text-tertiary mt-2">{t("chat.orClickSuggested")}</p>
             )}
           </div>
         ) : (
@@ -696,13 +698,13 @@ export default function ChatSection() {
         {loading && (
           <div className="flex items-center gap-2 text-sm text-muted py-3">
             <span className="w-2 h-2 rounded-full bg-yellow-400 animate-pulse" />
-            Thinking...
+            {t("common.thinking")}
           </div>
         )}
         {summarizingTags.size > 0 && (
           <div className="flex items-center gap-2 text-sm text-muted py-1 border-t border-border/30 mt-1">
             <span className="w-2 h-2 rounded-full bg-ic-teal animate-pulse" />
-            Summarizing{summarizingTags.size > 1 ? ` (${summarizingTags.size} groups)` : ""}...
+            {summarizingTags.size > 1 ? t("chat.summarizingGroups", { count: summarizingTags.size }) : t("chat.summarizing")}
           </div>
         )}
       </div>
@@ -721,7 +723,7 @@ export default function ChatSection() {
                 className={`transition-colors shrink-0 ${lockedByAims.includes(ds) || loading ? "text-muted/40 cursor-not-allowed" : "hover:text-text"}`}
                 disabled={lockedByAims.includes(ds) || loading}
                 onClick={() => storeDetach(ds)}
-                title={lockedByAims.includes(ds) ? "Locked by a selected aim — remove the aim first" : loading ? "Processing... please wait" : undefined}
+                title={lockedByAims.includes(ds) ? t("common.lockedByAim") : loading ? t("common.processingWait") : undefined}
               >
                 ×
               </button>
@@ -735,7 +737,7 @@ export default function ChatSection() {
         <div className="rounded-xl border-2 border-border bg-surface-1 p-3 mb-3">
           <div className="flex items-center gap-1.5 text-[10.5px] font-semibold tracking-wider uppercase text-muted mb-2">
             <IconTarget size={12} />
-            Suggested by LLM
+            {t("chat.suggestedByLlm")}
           </div>
           <div className="flex flex-wrap gap-1.5">
             {aimProposals.filter((p) => !selectedAims.some((a) => a.aim === p.aim)).map((p, i) => (
@@ -770,21 +772,21 @@ export default function ChatSection() {
       <div className="shrink-0 mt-3 space-y-2">
         {/* Mode toggle */}
         <div className="flex items-center gap-2">
-          <span className="text-[10.5px] font-semibold tracking-wider uppercase text-muted">Mode:</span>
+          <span className="text-[10.5px] font-semibold tracking-wider uppercase text-muted">{t("chat.modeLabel")}</span>
           <div className="flex rounded-full border-2 border-border overflow-hidden">
               <button
                 type="button"
                 className={`text-[11px] font-medium px-3 py-1 transition-colors ${loading ? "cursor-not-allowed opacity-50" : ""} ${enrichmentMode === "research" ? "bg-accent text-white" : "bg-surface-1 text-muted hover:text-text"}`}
                 onClick={() => !loading && setEnrichmentMode("research")}
               >
-                RESEARCH
+                {t("chat.modeResearch")}
               </button>
             <button
               type="button"
               className={`text-[11px] font-medium px-3 py-1 transition-colors ${loading ? "cursor-not-allowed opacity-50" : ""} ${enrichmentMode === "summary" ? "bg-accent text-white" : "bg-surface-1 text-muted hover:text-text"}`}
               onClick={() => !loading && setEnrichmentMode("summary")}
             >
-              SUMMARY
+              {t("chat.modeSummary")}
             </button>
           </div>
         </div>
@@ -793,7 +795,7 @@ export default function ChatSection() {
           <textarea
             ref={composerRef}
             className="flex-1 rounded-xl border-2 border-border bg-surface-1 text-text text-sm px-3 py-2.5 resize-none overflow-y-auto focus:outline-none focus:border-accent transition-colors min-h-[42px] max-h-[120px]"
-            placeholder={enrichmentMode === "research" ? "Ask about your data..." : "Summarize findings, compare analyses, ask about past results..."}
+            placeholder={enrichmentMode === "research" ? t("chat.composerResearchPlaceholder") : t("chat.composerSummaryPlaceholder")}
             rows={1}
             value={input}
             onChange={(e) => setInput(e.target.value)}
@@ -805,7 +807,7 @@ export default function ChatSection() {
             onClick={() => handleSend()}
             disabled={(!input.trim() && selectedAims.length === 0) || !sessionId || loading}
           >
-            Send
+            {t("common.send")}
           </button>
         </div>
       </div>

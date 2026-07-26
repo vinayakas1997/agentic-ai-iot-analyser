@@ -1,9 +1,12 @@
 import { useState, useRef, useEffect } from "react";
 import { btnSecondary } from "../lib/styles";
 import { useSessionStore } from "../stores/sessionStore";
+import { useUiStore } from "../stores/uiStore";
+import { useAuthStore } from "../stores/authStore";
+import { useT, tCount } from "../lib/i18n";
 import { IconTrash } from "../lib/icons";
 
-export default function Navbar() {
+export default function Navbar({ onBackToManage }: { onBackToManage?: () => void }) {
   const sessions = useSessionStore((s) => s.sessions);
   const sessionId = useSessionStore((s) => s.sessionId);
   const sessionMeta = useSessionStore((s) => s.sessionMeta);
@@ -11,6 +14,10 @@ export default function Navbar() {
   const switchSession = useSessionStore((s) => s.switchSession);
   const newSession = useSessionStore((s) => s.newSession);
   const deleteSession = useSessionStore((s) => s.deleteSession);
+  const language = useUiStore((s) => s.language);
+  const toggleLanguage = useUiStore((s) => s.toggleLanguage);
+  const logout = useAuthStore((s) => s.logout);
+  const t = useT();
   const [open, setOpen] = useState(false);
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
   const [deleting, setDeleting] = useState(false);
@@ -50,8 +57,16 @@ export default function Navbar() {
 
       <div className="flex items-center gap-3">
         <span className="text-[11px] font-semibold tabular-nums text-muted mr-1">
-          {sessions.length} session{sessions.length === 1 ? "" : "s"}
+          {tCount(t, "nav.sessionCount", sessions.length)}
         </span>
+        <button
+          type="button"
+          className="text-[11px] font-semibold rounded-full border border-border bg-surface-1 px-2.5 py-1 text-text hover:bg-white/[0.06] transition-colors"
+          onClick={toggleLanguage}
+          title={language === "en" ? "日本語に切り替え" : "Switch to English"}
+        >
+          {language === "en" ? "日本語" : "EN"}
+        </button>
         <div className="relative" ref={ref}>
           <button
             type="button"
@@ -63,13 +78,13 @@ export default function Navbar() {
             {current ? (
               <span className="flex-1 truncate">{current.title || current.line_name || "New"}</span>
             ) : (
-              <span className="text-muted">No session</span>
+              <span className="text-muted">{t("nav.noSession")}</span>
             )}
           </button>
           {open && (
             <div className="absolute top-full mt-1 left-0 right-0 rounded-lg border border-border bg-surface-1 shadow-xl z-50 max-h-[300px] overflow-y-auto">
               {sessions.length === 0 && (
-                <div className="px-3 py-2 text-sm text-muted">No sessions</div>
+                <div className="px-3 py-2 text-sm text-muted">{t("nav.noSessions")}</div>
               )}
               {sessions.map((s) => (
                 <div
@@ -80,14 +95,14 @@ export default function Navbar() {
                 >
                   {confirmDeleteId === s.session_id ? (
                     <>
-                      <span className="flex-1 text-[12px] text-ic-amber">Delete this session?</span>
+                      <span className="flex-1 text-[12px] text-ic-amber">{t("nav.deleteConfirm")}</span>
                       <button
                         type="button"
                         className="text-[11px] font-semibold text-ic-amber hover:text-text transition-colors shrink-0 disabled:opacity-50"
                         onClick={() => handleConfirmDelete(s.session_id)}
                         disabled={deleting}
                       >
-                        {deleting ? "Deleting..." : "Delete"}
+                        {deleting ? t("nav.deleting") : t("nav.delete")}
                       </button>
                       <button
                         type="button"
@@ -95,7 +110,7 @@ export default function Navbar() {
                         onClick={() => setConfirmDeleteId(null)}
                         disabled={deleting}
                       >
-                        Cancel
+                        {t("common.cancel")}
                       </button>
                     </>
                   ) : (
@@ -114,8 +129,8 @@ export default function Navbar() {
                         type="button"
                         className="text-muted hover:text-ic-amber transition-colors shrink-0"
                         onClick={() => setConfirmDeleteId(s.session_id)}
-                        title="Delete session"
-                        aria-label="Delete session"
+                        title={t("nav.deleteSessionTitle")}
+                        aria-label={t("nav.deleteSessionTitle")}
                       >
                         <IconTrash size={13} />
                       </button>
@@ -127,13 +142,21 @@ export default function Navbar() {
           )}
         </div>
         <button type="button" className={btnSecondary} onClick={newSession} disabled={loading}>
-          + New
+          {t("nav.new")}
+        </button>
+        {onBackToManage && (
+          <button type="button" className={btnSecondary} onClick={onBackToManage}>
+            {t("registryAdmin.backToManage")}
+          </button>
+        )}
+        <button type="button" className={btnSecondary} onClick={logout}>
+          {t("registryAdmin.logout")}
         </button>
         <span
           className={`w-2 h-2 rounded-full ${loading ? "bg-yellow-400" : "bg-success"}`}
           aria-hidden
         />
-        <span className="text-xs text-muted">{loading ? "Thinking\u2026" : "Ready"}</span>
+        <span className="text-xs text-muted">{loading ? t("common.thinking") : t("nav.ready")}</span>
       </div>
     </header>
   );

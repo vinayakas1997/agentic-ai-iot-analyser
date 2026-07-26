@@ -312,7 +312,8 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       }
 
       // History built server-side from stored turns (via enrichment block + conv history)
-      const res = await api.sendMessage(activeSessionId, userText, lineName, attachedAims, enrichmentMode, [], routeOverride, aimDescriptions);
+      const language = useUiStore.getState().language;
+      const res = await api.sendMessage(activeSessionId, userText, lineName, attachedAims, enrichmentMode, [], routeOverride, aimDescriptions, language);
       clearInterval(statusTimer);
       set({ statusMessage: "Response received" });
 

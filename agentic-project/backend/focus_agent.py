@@ -14,6 +14,7 @@ import logging
 from config import get_settings, get_llm_client
 from sql_executor import validate_sql, execute_sql
 from sqlite_executor import execute_sql as execute_sqlite_sql
+from llm_client import language_instruction
 from logger import log_sql
 
 logger = logging.getLogger(__name__)
@@ -74,6 +75,7 @@ You have two tools available:
 
 ## Previously Fetched In This Session
 {previously_fetched}
+{language_instruction}
 
 ## How To Decide
 - If the question can be answered from something already listed above under "Previously Fetched", call recall_result with that reference first — don't re-query data you already have.
@@ -212,6 +214,7 @@ async def run_focus_agent(
     session_state: dict,
     max_rounds: int = 6,
     datasets_data: list[dict] | None = None,
+    language: str = "en",
 ) -> dict:
     """Agentic FOCUS loop: the LLM chooses between querying fresh data and recalling
     a previously fetched result in this session, across up to max_rounds tool-call turns.
@@ -221,7 +224,11 @@ async def run_focus_agent(
     client = get_llm_client()
 
     previously_fetched = _build_previously_fetched_section(session_state, attached_aims)
-    system_prompt = AGENT_SYSTEM_PROMPT.format(context=context, previously_fetched=previously_fetched)
+    system_prompt = AGENT_SYSTEM_PROMPT.format(
+        context=context,
+        previously_fetched=previously_fetched,
+        language_instruction=language_instruction(language),
+    )
     if enrichment_block:
         system_prompt += f"\n\n## Previous Context\n{enrichment_block}"
 
