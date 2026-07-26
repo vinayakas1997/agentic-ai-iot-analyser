@@ -133,6 +133,23 @@ export function IconEdit(props: Props) {
   );
 }
 
+export function IconUpload(props: Props) {
+  return (
+    <Icon {...props} strokeWidth="2.2">
+      <path d="M12 16V4M7 9l5-5 5 5" />
+      <path d="M4 17v2a2 2 0 002 2h12a2 2 0 002-2v-2" />
+    </Icon>
+  );
+}
+
+export function IconTrash(props: Props) {
+  return (
+    <Icon {...props} strokeWidth="2.2">
+      <path d="M4 7h16M9 7V4h6v3M6 7l1 13a2 2 0 002 2h6a2 2 0 002-2l1-13" />
+    </Icon>
+  );
+}
+
 export function IconChart(props: Props) {
   return (
     <Icon {...props} strokeWidth="2.2">

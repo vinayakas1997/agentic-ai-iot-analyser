@@ -6,7 +6,7 @@ import time
 import logging
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, UploadFile, File, Form
 from pydantic import BaseModel
 
 from resolve import resolve_line_lookup, fetch_datasets, save_task_definition
@@ -20,6 +20,16 @@ from sql_executor import execute_sql
 from db.models import GlobalRegistry, ManagerSession
 from db.session import AsyncSessionLocal
 from config import get_settings
+from csv_validator import validate_csv
+from sqlite_importer import import_csv_to_sqlite
+from user_datasets import (
+    draft_column_meanings,
+    create_draft_dataset,
+    confirm_dataset,
+    list_user_datasets,
+    delete_user_dataset,
+    fetch_active_user_datasets,
+)
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/v2")
@@ -146,6 +156,29 @@ class ExecuteQueryResponse(BaseModel):
     rows: list[dict]
     row_count: int
     chart_suggestions: ChartSuggestions | None = None
+
+class UploadedFileReport(BaseModel):
+    dataset_id: int
+    dataset_name: str
+    table_name: str
+    filename: str
+    columns: list[dict]
+    row_count: int
+    warnings: list[str] = []
+
+class UploadFailure(BaseModel):
+    filename: str
+    errors: list[str]
+
+class UploadResponse(BaseModel):
+    status: str
+    files: list[UploadedFileReport] = []
+    failures: list[UploadFailure] = []
+
+class ConfirmDatasetRequest(BaseModel):
+    user_id: str = ""
+    columns: list[dict]
+    description: str = ""
 
 # ── Helpers ──
 
@@ -539,6 +572,21 @@ async def get_session(session_id: str):
         "turns": state.get("turns", []),
     }
 
+@router.delete("/sessions/{session_id}")
+async def delete_session(session_id: str):
+    """Delete a session and everything tied to it (turns, query results, chart state
+    all live inside state_json, so deleting the row deletes all of it)."""
+    async with AsyncSessionLocal() as db:
+        from sqlalchemy import select, delete as sa_delete
+        row = (await db.execute(
+            select(ManagerSession).where(ManagerSession.session_id == session_id)
+        )).scalar_one_or_none()
+        if not row:
+            raise HTTPException(status_code=404, detail="Session not found")
+        await db.execute(sa_delete(ManagerSession).where(ManagerSession.session_id == session_id))
+        await db.commit()
+    return {"status": "deleted", "session_id": session_id}
+
 @router.get("/datasets")
 async def list_datasets():
     """List all datasets from global_registry."""
@@ -560,6 +608,90 @@ async def list_datasets():
         }
         for r in rows
     ]
+
+@router.get("/user-datasets")
+async def get_user_datasets(user_id: str = ""):
+    """List the current user's personal (uploaded CSV) datasets — separate from global_registry."""
+    uid = user_id or settings.default_user_id
+    return {"datasets": await list_user_datasets(uid)}
+
+@router.post("/upload", response_model=UploadResponse)
+async def upload_csv(files: list[UploadFile] = File(...), user_id: str = Form(default="")):
+    """Validate + import one or more CSVs into the user's personal SQLite file.
+    Each file lands as a 'draft' dataset — not usable until confirmed via /upload/{id}/confirm."""
+    uid = user_id or settings.default_user_id
+    reports: list[UploadedFileReport] = []
+    failures: list[UploadFailure] = []
+
+    for f in files:
+        raw = await f.read()
+        result = validate_csv(
+            raw, f.filename or "upload.csv",
+            max_size_mb=settings.max_upload_size_mb,
+            max_bad_row_pct=settings.max_bad_row_pct,
+        )
+        if result.status == "fail":
+            failures.append(UploadFailure(filename=f.filename or "upload.csv", errors=result.errors))
+            continue
+
+        try:
+            imported = import_csv_to_sqlite(uid, result.table_name, result.columns, result.column_types, result.rows)
+        except Exception as e:
+            logger.exception("upload_csv: sqlite import failed for %s", f.filename)
+            failures.append(UploadFailure(filename=f.filename or "upload.csv", errors=[f"Import failed: {str(e)[:200]}"]))
+            continue
+
+        meanings = await draft_column_meanings(result.table_name, result.columns, result.rows)
+        meaning_by_name = {m["name"]: m["meaning"] for m in meanings}
+        column_defs = [
+            {"name": c, "datatype": t, "meaning": meaning_by_name.get(c, "")}
+            for c, t in zip(result.columns, result.column_types)
+        ]
+
+        dataset_id = await create_draft_dataset(
+            user_id=uid,
+            dataset_name=result.table_name,
+            table_name=result.table_name,
+            sqlite_path=imported["db_path"],
+            original_filename=f.filename or "upload.csv",
+            column_definitions=column_defs,
+            row_count=result.row_count,
+        )
+        reports.append(UploadedFileReport(
+            dataset_id=dataset_id,
+            dataset_name=result.table_name,
+            table_name=result.table_name,
+            filename=f.filename or "upload.csv",
+            columns=column_defs,
+            row_count=result.row_count,
+            warnings=result.warnings,
+        ))
+
+    if reports and not failures:
+        status = "ok"
+    elif reports and failures:
+        status = "partial"
+    else:
+        status = "fail"
+    return UploadResponse(status=status, files=reports, failures=failures)
+
+@router.post("/upload/{dataset_id}/confirm")
+async def confirm_upload(dataset_id: int, req: ConfirmDatasetRequest):
+    """User clicked 'All set' in the column-clarification view — lock the edited meanings in."""
+    uid = req.user_id or settings.default_user_id
+    try:
+        return await confirm_dataset(uid, dataset_id, req.columns, req.description)
+    except ValueError:
+        raise HTTPException(status_code=404, detail="Dataset not found")
+
+@router.delete("/user-datasets/{dataset_id}")
+async def remove_user_dataset(dataset_id: int, user_id: str = ""):
+    uid = user_id or settings.default_user_id
+    try:
+        await delete_user_dataset(uid, dataset_id)
+    except ValueError:
+        raise HTTPException(status_code=404, detail="Dataset not found")
+    return {"status": "deleted", "id": dataset_id}
 
 # ── Route Handlers ──
 
@@ -858,6 +990,7 @@ async def _handle_focus(
         attached_aims=attached_aims,
         enrichment_block=enrichment_block,
         session_state=session_state or {},
+        datasets_data=datasets_data,
     )
 
     result = agent_result["query_result"]
@@ -1058,7 +1191,14 @@ async def send_message(req: MessageRequest):
                 "join_hints": reg.join_hints,
                 "suggested_aims": reg.suggested_aims,
                 "table": sc.get("table", reg.dataset_name),
+                "backend": "pg",
             })
+
+    # Merge in the user's personal (uploaded CSV) datasets, if any of the attached
+    # names match — kept in a separate table from global_registry, tagged so
+    # query execution knows to hit the user's SQLite file instead of Postgres.
+    user_datasets = await fetch_active_user_datasets(settings.default_user_id, dataset_names)
+    datasets_data.extend(user_datasets)
 
     # If SUMMARY mode, skip routing and use existing summarization flow
     if req.enrichment_mode == "summary":

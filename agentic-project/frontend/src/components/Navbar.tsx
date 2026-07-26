@@ -1,13 +1,7 @@
-import { useState, useRef, useEffect, useMemo } from "react";
+import { useState, useRef, useEffect } from "react";
 import { btnSecondary } from "../lib/styles";
 import { useSessionStore } from "../stores/sessionStore";
-
-const MODE_STYLES: Record<string, string> = {
-  ask: "bg-ic-blue-soft text-ic-blue border-ic-blue/30",
-  man: "bg-stage-manager-soft text-stage-manager border-stage-manager-line/40",
-  plan: "bg-stage-planner-soft text-stage-planner border-stage-planner-line/40",
-  exe: "bg-stage-execution-soft text-stage-execution border-stage-execution-line/40",
-};
+import { IconTrash } from "../lib/icons";
 
 export default function Navbar() {
   const sessions = useSessionStore((s) => s.sessions);
@@ -16,7 +10,10 @@ export default function Navbar() {
   const loading = useSessionStore((s) => s.loading);
   const switchSession = useSessionStore((s) => s.switchSession);
   const newSession = useSessionStore((s) => s.newSession);
+  const deleteSession = useSessionStore((s) => s.deleteSession);
   const [open, setOpen] = useState(false);
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
+  const [deleting, setDeleting] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -29,39 +26,32 @@ export default function Navbar() {
     return () => document.removeEventListener("mousedown", handleClick);
   }, []);
 
+  useEffect(() => {
+    if (!open) setConfirmDeleteId(null);
+  }, [open]);
+
+  const handleConfirmDelete = async (id: string) => {
+    setDeleting(true);
+    try {
+      await deleteSession(id);
+    } catch (e) {
+      console.error("Failed to delete session:", e);
+    } finally {
+      setDeleting(false);
+      setConfirmDeleteId(null);
+    }
+  };
+
   const current = sessions.find((s) => s.session_id === sessionId);
-
-  const counts = useMemo(() => {
-    const c = { ask: 0, man: 0, plan: 0, exe: 0 };
-    sessions.forEach((s) => {
-      const m = s.mode || "ask";
-      if (m in c) c[m as keyof typeof c]++;
-    });
-    return c;
-  }, [sessions]);
-
-  const DOTS: { key: string; color: string }[] = [
-    { key: "ask", color: "bg-ic-blue" },
-    { key: "man", color: "bg-stage-manager" },
-    { key: "plan", color: "bg-stage-planner" },
-    { key: "exe", color: "bg-stage-execution" },
-  ];
 
   return (
     <header className="flex items-center justify-between px-5 py-3 border-b border-border bg-surface-1 shrink-0">
       <span className="text-lg font-semibold">EDAS</span>
 
       <div className="flex items-center gap-3">
-        <div className="flex items-center gap-2.5 mr-1">
-          {DOTS.map((d) => (
-            <div key={d.key} className="flex items-center gap-1">
-              <span className={`w-1.5 h-1.5 rounded-full ${d.color}`} />
-              <span className="text-[11px] font-semibold tabular-nums text-muted min-w-[12px] text-center">
-                {counts[d.key as keyof typeof counts]}
-              </span>
-            </div>
-          ))}
-        </div>
+        <span className="text-[11px] font-semibold tabular-nums text-muted mr-1">
+          {sessions.length} session{sessions.length === 1 ? "" : "s"}
+        </span>
         <div className="relative" ref={ref}>
           <button
             type="button"
@@ -71,14 +61,7 @@ export default function Navbar() {
             aria-label="Session"
           >
             {current ? (
-              <>
-                <span className="flex-1 truncate">{current.title || current.line_name || "New"}</span>
-                <span
-                  className={`text-[10px] font-semibold uppercase px-1.5 py-0.5 rounded border ${MODE_STYLES[current.mode || "ask"] || "bg-surface-2 text-muted border-border"}`}
-                >
-                  {current.mode || "ask"}
-                </span>
-              </>
+              <span className="flex-1 truncate">{current.title || current.line_name || "New"}</span>
             ) : (
               <span className="text-muted">No session</span>
             )}
@@ -89,24 +72,56 @@ export default function Navbar() {
                 <div className="px-3 py-2 text-sm text-muted">No sessions</div>
               )}
               {sessions.map((s) => (
-                <button
+                <div
                   key={s.session_id}
-                  type="button"
-                  className={`flex items-center gap-2 w-full text-left px-3 py-2 text-sm hover:bg-white/[0.04] transition-colors ${
-                    s.session_id === sessionId ? "bg-white/[0.06]" : ""
+                  className={`flex items-center gap-2 w-full px-3 py-2 text-sm transition-colors ${
+                    s.session_id === sessionId ? "bg-white/[0.06]" : "hover:bg-white/[0.04]"
                   }`}
-                  onClick={() => {
-                    switchSession(s.session_id);
-                    setOpen(false);
-                  }}
                 >
-                  <span className="flex-1 truncate">{s.title || s.line_name || "New"}</span>
-                  <span
-                    className={`text-[10px] font-semibold uppercase px-1.5 py-0.5 rounded border shrink-0 ${MODE_STYLES[s.mode || "ask"] || "bg-surface-2 text-muted border-border"}`}
-                  >
-                    {s.mode || "ask"}
-                  </span>
-                </button>
+                  {confirmDeleteId === s.session_id ? (
+                    <>
+                      <span className="flex-1 text-[12px] text-ic-amber">Delete this session?</span>
+                      <button
+                        type="button"
+                        className="text-[11px] font-semibold text-ic-amber hover:text-text transition-colors shrink-0 disabled:opacity-50"
+                        onClick={() => handleConfirmDelete(s.session_id)}
+                        disabled={deleting}
+                      >
+                        {deleting ? "Deleting..." : "Delete"}
+                      </button>
+                      <button
+                        type="button"
+                        className="text-[11px] font-medium text-muted hover:text-text transition-colors shrink-0 disabled:opacity-50"
+                        onClick={() => setConfirmDeleteId(null)}
+                        disabled={deleting}
+                      >
+                        Cancel
+                      </button>
+                    </>
+                  ) : (
+                    <>
+                      <button
+                        type="button"
+                        className="flex-1 text-left truncate"
+                        onClick={() => {
+                          switchSession(s.session_id);
+                          setOpen(false);
+                        }}
+                      >
+                        {s.title || s.line_name || "New"}
+                      </button>
+                      <button
+                        type="button"
+                        className="text-muted hover:text-ic-amber transition-colors shrink-0"
+                        onClick={() => setConfirmDeleteId(s.session_id)}
+                        title="Delete session"
+                        aria-label="Delete session"
+                      >
+                        <IconTrash size={13} />
+                      </button>
+                    </>
+                  )}
+                </div>
               ))}
             </div>
           )}

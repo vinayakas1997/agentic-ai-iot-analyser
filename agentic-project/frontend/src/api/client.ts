@@ -91,6 +91,12 @@ export async function listSessions() {
   );
 }
 
+export async function deleteSession(sessionId: string) {
+  return request<{ status: string; session_id: string }>(`/api/v2/sessions/${sessionId}`, {
+    method: "DELETE",
+  });
+}
+
 export async function getSession(sessionId: string) {
   return request<{
     session_id: string;
@@ -201,4 +207,32 @@ export async function listDatasets() {
     suggested_aims: any;
     synonyms: string[] | null;
   }[]>("/api/v2/datasets");
+}
+
+import type { UploadedFileDraft, UploadFailure, PersonalDataset, ColumnDraft } from "../types";
+
+export async function uploadCsvFiles(files: File[]) {
+  const form = new FormData();
+  for (const f of files) form.append("files", f);
+  const res = await fetch(`${API}/api/v2/upload`, { method: "POST", body: form });
+  if (!res.ok) {
+    const body = await res.text();
+    throw new ApiError(body || res.statusText, res.status);
+  }
+  return res.json() as Promise<{ status: string; files: UploadedFileDraft[]; failures: UploadFailure[] }>;
+}
+
+export async function confirmUploadDataset(datasetId: number, columns: ColumnDraft[], description = "") {
+  return request<{ id: number; dataset_name: string; status: string }>(
+    `/api/v2/upload/${datasetId}/confirm`,
+    { method: "POST", body: JSON.stringify({ columns, description }) }
+  );
+}
+
+export async function listUserDatasets() {
+  return request<{ datasets: PersonalDataset[] }>("/api/v2/user-datasets");
+}
+
+export async function deleteUserDataset(datasetId: number) {
+  return request<{ status: string; id: number }>(`/api/v2/user-datasets/${datasetId}`, { method: "DELETE" });
 }

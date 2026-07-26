@@ -74,6 +74,26 @@ async def create_tables() -> None:
         """))
         await conn.execute(text("CREATE INDEX IF NOT EXISTS idx_manager_sessions_user ON manager_sessions(user_id, updated_at DESC)"))
 
+        await conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS user_registry (
+                id                  SERIAL PRIMARY KEY,
+                user_id             TEXT NOT NULL,
+                dataset_name        TEXT NOT NULL,
+                table_name          TEXT NOT NULL,
+                sqlite_path         TEXT NOT NULL,
+                original_filename   TEXT NOT NULL,
+                description         TEXT,
+                column_definitions  JSONB NOT NULL DEFAULT '[]',
+                row_count           INT NOT NULL DEFAULT 0,
+                status              TEXT DEFAULT 'draft',
+                created_at          TIMESTAMPTZ DEFAULT NOW(),
+                updated_at          TIMESTAMPTZ DEFAULT NOW(),
+                UNIQUE (user_id, dataset_name)
+            )
+        """))
+        await conn.execute(text("CREATE INDEX IF NOT EXISTS idx_user_registry_user_id ON user_registry(user_id)"))
+        await conn.execute(text("CREATE INDEX IF NOT EXISTS idx_user_registry_status ON user_registry(status)"))
+
         # Mock data tables
         await conn.execute(text("DROP TABLE IF EXISTS test_fruits CASCADE"))
         await conn.execute(text("""

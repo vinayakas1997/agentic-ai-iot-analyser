@@ -1,12 +1,13 @@
 import { useState, useRef, useEffect, useMemo } from "react";
 import { useSessionStore } from "../stores/sessionStore";
 import { useDatasetStore } from "../stores/datasetStore";
+import { useUploadStore } from "../stores/uploadStore";
 import type { SessionMeta } from "../types/manager";
 import { panelClass, monoClass } from "../lib/styles";
-import { IconDatabase, IconEdit } from "../lib/icons";
-import { listDatasets } from "../api/client";
+import { IconDatabase, IconEdit, IconTrash } from "../lib/icons";
+import { listDatasets, listUserDatasets, deleteUserDataset } from "../api/client";
 import { DatasetColumns } from "../components/DatasetColumns";
-import type { DatasetInfo } from "../types";
+import type { DatasetInfo, PersonalDataset } from "../types";
 
 export default function ContextSection() {
   const sessionMeta = useSessionStore((s) => s.sessionMeta);
@@ -25,14 +26,33 @@ export default function ContextSection() {
   const lockedByAims = useDatasetStore((s) => s.lockedByAims);
 
   const [datasets, setDatasets] = useState<DatasetInfo[]>([]);
+  const [personalDatasets, setPersonalDatasets] = useState<PersonalDataset[]>([]);
   const [expandedDataset, setExpandedDataset] = useState<string | null>(null);
   const [editingTitle, setEditingTitle] = useState(false);
   const [titleInput, setTitleInput] = useState("");
   const titleInputRef = useRef<HTMLInputElement>(null);
+  const personalDatasetsVersion = useUploadStore((s) => s.personalDatasetsVersion);
 
   useEffect(() => {
     listDatasets().then(setDatasets).catch((err) => console.error("Failed to load datasets:", err));
   }, []);
+
+  useEffect(() => {
+    listUserDatasets()
+      .then((res) => setPersonalDatasets(res.datasets.filter((d) => d.status === "active")))
+      .catch((err) => console.error("Failed to load personal datasets:", err));
+  }, [personalDatasetsVersion]);
+
+  const handleDeletePersonalDataset = async (ds: PersonalDataset) => {
+    try {
+      await deleteUserDataset(ds.id);
+      setPersonalDatasets((prev) => prev.filter((d) => d.id !== ds.id));
+      storeDetach(ds.dataset_name);
+      storeRemove(ds.dataset_name);
+    } catch (err) {
+      console.error("Failed to delete personal dataset:", err);
+    }
+  };
 
   useEffect(() => {
     if (editingTitle && titleInputRef.current) {
@@ -195,6 +215,74 @@ export default function ContextSection() {
                       ×
                     </button>
                   )}
+                </div>
+                {expandedDataset === ds.dataset_name && (
+                  <div className="px-3 pb-3">
+                    <DatasetColumns columns={ds.column_definitions} />
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      <div className="rounded-xl border border-border bg-surface-1 p-4 mt-4 shadow-[0_1px_0_rgba(255,255,255,0.02)_inset,0_8px_24px_-12px_rgba(0,0,0,0.5)]">
+        <div className="flex items-center gap-2 text-sm font-semibold text-text mb-3">
+          <span className="inline-flex items-center justify-center w-[22px] h-[22px] rounded-[7px] bg-ic-teal-soft text-ic-teal">
+            <IconDatabase size={13} />
+          </span>
+          Personal Datasets
+          {personalDatasets.length > 0 && (
+            <span className="text-tertiary font-normal text-xs">({personalDatasets.length})</span>
+          )}
+        </div>
+        {personalDatasets.length === 0 ? (
+          <p className="text-xs text-muted">No uploaded CSVs yet. Use "Upload CSV" in the center panel to test your own data.</p>
+        ) : (
+          <div className="space-y-2">
+            {personalDatasets.map((ds) => (
+              <div key={ds.id} className="rounded-lg border border-border/40 bg-surface-2/50">
+                <div className="flex items-center gap-2 px-3 py-2">
+                  <div className="flex-1 min-w-0">
+                    <div className="text-sm font-medium text-text truncate">{ds.dataset_name}</div>
+                    <div className="text-[11px] text-tertiary truncate">
+                      {ds.original_filename} · {ds.row_count} rows
+                    </div>
+                  </div>
+                  <span className="text-[11px] text-muted shrink-0">{ds.column_definitions.length} cols</span>
+                  <button
+                    type="button"
+                    className="text-[11px] font-medium text-accent hover:text-accent/80 transition-colors shrink-0"
+                    onClick={() => setExpandedDataset(expandedDataset === ds.dataset_name ? null : ds.dataset_name)}
+                  >
+                    {expandedDataset === ds.dataset_name ? "Hide" : "Details"}
+                  </button>
+                  {storeAttached.includes(ds.dataset_name) ? (
+                    <button
+                      type="button"
+                      className="text-[11px] font-medium text-ic-teal hover:text-text transition-colors shrink-0"
+                      onClick={() => storeDetach(ds.dataset_name)}
+                    >
+                      In-use
+                    </button>
+                  ) : (
+                    <button
+                      type="button"
+                      className="text-[11px] font-medium text-accent hover:text-accent/80 transition-colors shrink-0"
+                      onClick={() => storeAttach(ds.dataset_name)}
+                    >
+                      Use
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    className="text-muted hover:text-ic-amber transition-colors shrink-0"
+                    onClick={() => handleDeletePersonalDataset(ds)}
+                    title="Delete this dataset"
+                  >
+                    <IconTrash size={13} />
+                  </button>
                 </div>
                 {expandedDataset === ds.dataset_name && (
                   <div className="px-3 pb-3">

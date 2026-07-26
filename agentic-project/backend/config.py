@@ -24,6 +24,10 @@ class Settings(BaseSettings):
     debug: bool = False
     log_level: int = 0
 
+    max_upload_size_mb: int = 50
+    user_data_dir: str = "/data/users"
+    max_bad_row_pct: float = 5.0
+
     @property
     def cors_origin_list(self) -> list[str]:
         return [o.strip() for o in self.cors_origins.split(",") if o.strip()]

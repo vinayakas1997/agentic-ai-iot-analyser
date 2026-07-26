@@ -39,6 +39,8 @@ services:
       CORS_ORIGINS: "http://localhost:7008,http://localhost"
       DEBUG: "${DEBUG:-false}"
       LOG_LEVEL: "${LOG_LEVEL:-0}"
+    volumes:
+      - user_csv_data:/data/users
     depends_on:
       db:
         condition: service_healthy
@@ -62,3 +64,6 @@ services:
 networks:
   edas-net:
     driver: bridge
+
+volumes:
+  user_csv_data:

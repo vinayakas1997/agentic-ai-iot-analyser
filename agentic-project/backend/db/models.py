@@ -40,6 +40,26 @@ class TaskRegistry(Base):
     version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
     task_definition: Mapped[dict] = mapped_column(JSONB, nullable=False)
 
+class UserRegistry(Base):
+    """Personal (user-uploaded CSV) datasets — separate from the IoT team's global_registry.
+    Each row points at one table inside that user's own SQLite file, never Postgres."""
+    __tablename__ = "user_registry"
+    __table_args__ = (UniqueConstraint("user_id", "dataset_name", name="uq_user_registry_user_dataset"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[str] = mapped_column(Text, nullable=False)
+    dataset_name: Mapped[str] = mapped_column(Text, nullable=False)
+    table_name: Mapped[str] = mapped_column(Text, nullable=False)
+    sqlite_path: Mapped[str] = mapped_column(Text, nullable=False)
+    original_filename: Mapped[str] = mapped_column(Text, nullable=False)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    column_definitions: Mapped[dict | list] = mapped_column(JSONB, nullable=False, default=list)
+    row_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    status: Mapped[str] = mapped_column(Text, default="draft")  # draft | active
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
 class ManagerSession(Base):
     __tablename__ = "manager_sessions"
     session_id: Mapped[str] = mapped_column(Text, primary_key=True)

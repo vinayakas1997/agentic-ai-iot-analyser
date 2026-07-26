@@ -13,6 +13,7 @@ import logging
 
 from config import get_settings, get_llm_client
 from sql_executor import validate_sql, execute_sql
+from sqlite_executor import execute_sql as execute_sqlite_sql
 from logger import log_sql
 
 logger = logging.getLogger(__name__)
@@ -132,13 +133,35 @@ def _build_previously_fetched_section(session_state: dict, attached_aims: list[s
     return "\n".join(lines) if lines else "(nothing fetched yet this session for the attached aim(s))"
 
 
-async def _run_query_data(sql: str) -> dict:
+async def _run_query_data(sql: str, datasets_data: list[dict] | None = None) -> dict:
     try:
         validated = validate_sql(sql)
     except ValueError as e:
         return {"ok": False, "error": f"SQL validation failed: {e}"}
+
+    # Personal (uploaded CSV) datasets live in the user's own SQLite file, separate
+    # from the shared Postgres global_registry datasets — route to whichever engine
+    # actually holds the table(s) this query references.
+    datasets_data = datasets_data or []
+    sqlite_tables = {d["table"]: d.get("sqlite_path") for d in datasets_data if d.get("backend") == "sqlite"}
+    pg_tables = {d["table"] for d in datasets_data if d.get("backend", "pg") == "pg"}
+    referenced_sqlite = [t for t in sqlite_tables if re.search(rf'\b{re.escape(t)}\b', validated, re.IGNORECASE)]
+    referenced_pg = [t for t in pg_tables if re.search(rf'\b{re.escape(t)}\b', validated, re.IGNORECASE)]
+
+    if referenced_sqlite and referenced_pg:
+        return {
+            "ok": False,
+            "error": (
+                "This query mixes a personal uploaded dataset with a shared dataset — "
+                "they live in separate databases and cannot be joined directly. Query them separately."
+            ),
+        }
+
     try:
-        result = await execute_sql(validated)
+        if referenced_sqlite:
+            result = await execute_sqlite_sql(sqlite_tables[referenced_sqlite[0]], validated)
+        else:
+            result = await execute_sql(validated)
         log_sql("agent_tool_call", f"query_data: {validated[:150]}")
         return {"ok": True, "result": result}
     except Exception as e:
@@ -188,6 +211,7 @@ async def run_focus_agent(
     enrichment_block: str,
     session_state: dict,
     max_rounds: int = 6,
+    datasets_data: list[dict] | None = None,
 ) -> dict:
     """Agentic FOCUS loop: the LLM chooses between querying fresh data and recalling
     a previously fetched result in this session, across up to max_rounds tool-call turns.
@@ -262,7 +286,7 @@ async def run_focus_agent(
                 tool_result = {"ok": False, "error": "Malformed tool call arguments — please retry with valid JSON."}
             else:
                 if tc.function.name == "query_data":
-                    tool_result = await _run_query_data(args.get("sql", ""))
+                    tool_result = await _run_query_data(args.get("sql", ""), datasets_data)
                     if tool_result.get("ok"):
                         last_query_result = tool_result["result"]
                 elif tc.function.name == "recall_result":

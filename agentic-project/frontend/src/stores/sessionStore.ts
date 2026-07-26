@@ -72,6 +72,7 @@ interface SessionState {
   refreshSessions: () => Promise<SessionListItem[]>;
   switchSession: (id: string) => Promise<void>;
   newSession: () => void;
+  deleteSession: (id: string) => Promise<void>;
   sendUserMessage: (text: string, lineName?: string, attachedAims?: string[], enrichmentMode?: string, routeOverride?: string, aimDescriptions?: Record<string, string>) => Promise<MessageResponse | undefined>;
   setError: (error: string | null) => void;
   setStatusMessage: (msg: string | null) => void;
@@ -247,6 +248,20 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     useUiStore.getState().selectTurn(-1);
   },
 
+  deleteSession: async (id) => {
+    const { sessionId, sessions } = get();
+    await api.deleteSession(id);
+    const remaining = sessions.filter((s) => s.session_id !== id);
+    set({ sessions: remaining });
+    if (id === sessionId) {
+      if (remaining.length > 0) {
+        await get().switchSession(remaining[0].session_id);
+      } else {
+        get().newSession();
+      }
+    }
+  },
+
   sendUserMessage: async (text, lineName = "", attachedAims: string[] = [], enrichmentMode = "research", routeOverride?: string, aimDescriptions?: Record<string, string>) => {
     const { sessionId, turns, isLocalSession, pendingTitle, sessionMeta } = get();
     const isDone = turns.length > 0 && Boolean(turns[turns.length - 1]?.ui?.done);
@@ -311,7 +326,6 @@ export const useSessionStore = create<SessionState>((set, get) => ({
 
       const datasetNames = lineName.split(",").map((d) => d.trim()).filter(Boolean);
       const newTurn = turnFromResponse(res, userText, attachedAims, datasetNames);
-      const isFirstTurn = turns.length === 0;
       set((state) => ({
         turns: [...state.turns, newTurn],
         pendingTurn: null,
@@ -321,16 +335,8 @@ export const useSessionStore = create<SessionState>((set, get) => ({
           status: res.status,
         },
       }));
-      // Auto-name session after first message
-      if (isFirstTurn) {
-        const name = userText.slice(0, 50).trim();
-        if (name) {
-          api.updateSessionTitle(activeSessionId, name).catch((err) => console.error("Failed to auto-name session:", err));
-          set((s) => ({
-            sessionMeta: s.sessionMeta ? { ...s.sessionMeta, title: name } : s.sessionMeta,
-          }));
-        }
-      }
+      // Session keeps its randomly generated name — the user renames it manually
+      // (via the edit-title control in ContextSection) if they want to.
       // Store inline query result for persistence across reloads
       if (res.result_uuid && res.query_result) {
         const updatedResults = {

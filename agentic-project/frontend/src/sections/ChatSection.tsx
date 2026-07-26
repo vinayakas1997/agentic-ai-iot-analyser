@@ -2,9 +2,10 @@ import { useState, useEffect, useMemo, useRef, useCallback, KeyboardEvent } from
 import { panelClass, btnPrimary } from "../lib/styles";
 import { useSessionStore } from "../stores/sessionStore";
 import { useOutputStore } from "../stores/outputStore";
-import { listDatasets, updateSessionState, summarizeContext } from "../api/client";
+import { listDatasets, updateSessionState, summarizeContext, uploadCsvFiles } from "../api/client";
 import { useDatasetStore } from "../stores/datasetStore";
-import { IconDatabase, IconCheck, IconUser, IconTarget } from "../lib/icons";
+import { useUploadStore } from "../stores/uploadStore";
+import { IconDatabase, IconCheck, IconUser, IconTarget, IconUpload } from "../lib/icons";
 import { QueryResultState } from "./QueryActions";
 import type { Turn } from "../types/manager";
 import { DatasetColumns } from "../components/DatasetColumns";
@@ -53,6 +54,10 @@ export default function ChatSection() {
   const [expandedDataset, setExpandedDataset] = useState<string | null>(null);
   const [showSearch, setShowSearch] = useState(true);
   const [queryResults, setQueryResults] = useState<Record<string, QueryResultState>>({});
+  const csvInputRef = useRef<HTMLInputElement>(null);
+  const openClarify = useUploadStore((s) => s.openClarify);
+  const setUploadProcessing = useUploadStore((s) => s.setProcessing);
+  const uploadingCsv = useUploadStore((s) => s.isProcessing);
   const [aimResults, setAimResults] = useState<Record<string, QueryResultState>>({});
   const [runningAim, setRunningAim] = useState<string | null>(null);
   const [completedActions, setCompletedActions] = useState<Record<string, string>>({});
@@ -480,23 +485,58 @@ export default function ChatSection() {
     setLockedByAims(Array.from(locked));
   }, [selectedAims, setLockedByAims]);
 
+  const handleCsvFilesSelected = async (fileList: FileList | null) => {
+    if (!fileList || fileList.length === 0) return;
+    const label = fileList.length === 1 ? `Processing ${fileList[0].name}...` : `Processing ${fileList.length} files...`;
+    setUploadProcessing(true, label);
+    try {
+      const res = await uploadCsvFiles(Array.from(fileList));
+      openClarify(res.files, res.failures);
+    } catch (e) {
+      console.error("CSV upload failed:", e);
+      openClarify([], [{ filename: "upload", errors: [e instanceof Error ? e.message : "Upload failed"] }]);
+    } finally {
+      setUploadProcessing(false);
+      if (csvInputRef.current) csvInputRef.current.value = "";
+    }
+  };
+
   return (
     <section className={`${panelClass} order-2 lg:order-none`}>
       {enrichmentMode === "research" && (
       <div className="rounded-xl border-2 border-border bg-surface-1 p-3 mb-4">
-        <button
-          type="button"
-          className="flex items-center gap-2 w-full text-sm text-left mb-2"
-          onClick={() => setShowSearch(!showSearch)}
-        >
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" width="14" height="14" strokeWidth="2.2" className={`transition-transform ${showSearch ? 'rotate-90' : ''}`}>
-            <path d="M9 18l6-6-6-6" />
-          </svg>
-          <span className="text-muted text-[11px] font-semibold tracking-wider uppercase">Search datasets</span>
-          {!showSearch && storeAttached.length > 0 && (
-            <span className="text-[11px] text-muted">({storeAttached.length} attached)</span>
-          )}
-        </button>
+        <div className="flex items-center gap-2 mb-2">
+          <button
+            type="button"
+            className="flex items-center gap-2 flex-1 text-sm text-left"
+            onClick={() => setShowSearch(!showSearch)}
+          >
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" width="14" height="14" strokeWidth="2.2" className={`transition-transform ${showSearch ? 'rotate-90' : ''}`}>
+              <path d="M9 18l6-6-6-6" />
+            </svg>
+            <span className="text-muted text-[11px] font-semibold tracking-wider uppercase">Search datasets</span>
+            {!showSearch && storeAttached.length > 0 && (
+              <span className="text-[11px] text-muted">({storeAttached.length} attached)</span>
+            )}
+          </button>
+          <button
+            type="button"
+            className="flex items-center gap-1.5 text-[11px] font-medium text-accent hover:text-accent/80 transition-colors shrink-0 disabled:opacity-50"
+            onClick={() => csvInputRef.current?.click()}
+            disabled={uploadingCsv}
+          >
+            <IconUpload size={13} />
+            {uploadingCsv ? "Uploading..." : "Upload CSV"}
+          </button>
+          <input
+            ref={csvInputRef}
+            type="file"
+            accept=".csv"
+            multiple
+            className="hidden"
+            onChange={(e) => handleCsvFilesSelected(e.target.files)}
+          />
+        </div>
 
         {showSearch && (
           <div className="space-y-3">

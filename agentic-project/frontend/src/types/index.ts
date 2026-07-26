@@ -65,3 +65,35 @@ export interface NewResearchResult {
   datasets_used: string[];
   joins: string | null;
 }
+
+export interface ColumnDraft {
+  name: string;
+  datatype: string;
+  meaning: string;
+}
+
+export interface UploadedFileDraft {
+  dataset_id: number;
+  dataset_name: string;
+  table_name: string;
+  filename: string;
+  columns: ColumnDraft[];
+  row_count: number;
+  warnings: string[];
+}
+
+export interface UploadFailure {
+  filename: string;
+  errors: string[];
+}
+
+export interface PersonalDataset {
+  id: number;
+  dataset_name: string;
+  table_name: string;
+  original_filename: string;
+  description: string | null;
+  column_definitions: ColumnDraft[];
+  row_count: number;
+  status: "draft" | "active";
+}
