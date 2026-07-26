@@ -14,6 +14,7 @@ from aims import generate_chat_response, generate_sql, fix_sql, criticize_sql, e
 from llm_client import parse_numbered_suggestions
 from logger import log_route, log_llm_call, log_sql, log_aims, log_response, log_full_prompt
 from llm_client import summarize_turns, classify_route, extract_sql, extract_sql_fallback, generate_llm_response, interpret_results, direct_prompt, suggest_prompt, focus_prompt, deep_prompt
+from focus_agent import run_focus_agent
 from sql_executor import validate_sql
 from sql_executor import execute_sql
 from db.models import GlobalRegistry, ManagerSession
@@ -596,6 +597,7 @@ async def _handle_direct(
     attached_aims: list[str],
     enrichment_block: str = "",
     aim_descriptions: dict[str, str] | None = None,
+    session_state: dict | None = None,
 ):
     """DIRECT route: LLM generates SQL → we validate and execute → LLM interprets results."""
     context = _build_context(dataset_names, datasets_data, attached_aims, aim_descriptions)
@@ -702,6 +704,7 @@ async def _handle_suggest(
     attached_aims: list[str],
     enrichment_block: str = "",
     aim_descriptions: dict[str, str] | None = None,
+    session_state: dict | None = None,
 ):
     """SUGGEST route: LLM proposes 3 exploration ideas (no SQL)."""
     context = _build_context(dataset_names, datasets_data, attached_aims, aim_descriptions)
@@ -834,8 +837,11 @@ async def _handle_focus(
     attached_aims: list[str],
     enrichment_block: str = "",
     aim_descriptions: dict[str, str] | None = None,
+    session_state: dict | None = None,
 ):
-    """FOCUS route: LLM generates a focused analysis query then interprets results."""
+    """FOCUS route: agentic tool-calling loop (query fresh data or recall a previously
+    fetched result in this session) for a single aim; delegates to _handle_focus_multi
+    for multiple aims."""
     if len(attached_aims) > 1:
         return await _handle_focus_multi(
             message=message,
@@ -846,80 +852,30 @@ async def _handle_focus(
             aim_descriptions=aim_descriptions,
         )
     context = _build_context(dataset_names, datasets_data, attached_aims, aim_descriptions)
-    system_prompt = focus_prompt(context=context)
-    if enrichment_block:
-        system_prompt += f"\n\n## Previous Context\n{enrichment_block}"
-    raw = await generate_llm_response(
-        system_prompt=system_prompt,
-        question=message,
+    agent_result = await run_focus_agent(
+        message=message,
+        context=context,
+        attached_aims=attached_aims,
+        enrichment_block=enrichment_block,
+        session_state=session_state or {},
     )
 
-    # Parse chart decision from LLM response
-    chart_decision = re.search(r'\[CHART_DECISION:\s*(yes|no)\]', raw, re.IGNORECASE)
-    chart_needed = chart_decision and chart_decision.group(1).lower() == "yes"
-    clean_raw = re.sub(r'\s*\[CHART_DECISION:\s*(yes|no)\]\s*', ' ', raw).strip()
-
-    sql = extract_sql(clean_raw)
-    if not sql:
-        sql = extract_sql_fallback(clean_raw)
-    if not sql:
+    result = agent_result["query_result"]
+    if result is None:
         return {
-            "agent_message": clean_raw,
+            "agent_message": agent_result["agent_message"],
             "result_uuid": None,
             "query_result": None,
         }
 
-    try:
-        sql = validate_sql(sql)
-    except ValueError as e:
-        error_result = {
-            "sql": sql,
-            "columns": [],
-            "column_types": [],
-            "rows": [],
-            "row_count": 0,
-        }
-        return {
-            "agent_message": f"I generated a deep-dive query but it couldn't be validated:\n\n```sql\n{sql}\n```\n\n**Validation error:** {str(e)}",
-            "result_uuid": None,
-            "query_result": error_result,
-        }
-
-    try:
-        result = await execute_sql(sql)
-    except Exception as e:
-        error_msg = str(e)[:300]
-        error_result = {
-            "sql": sql,
-            "columns": [],
-            "column_types": [],
-            "rows": [],
-            "row_count": 0,
-        }
-        interpretation = await generate_llm_response(
-            system_prompt=f"You are a data analyst assistant. The SQL query failed with error: {error_msg}. Explain the error briefly and suggest how to fix it.",
-            question=f"The query was:\n```sql\n{sql}\n```",
-        )
-        return {
-            "agent_message": interpretation,
-            "result_uuid": None,
-            "query_result": error_result,
-        }
-
     chart_suggestions = None
-    if chart_needed:
+    if agent_result["chart_needed"]:
         chart_suggestions = await _build_chart_suggestions(result)
     result_with_charts = {**result, "chart_suggestions": chart_suggestions}
 
-    interpretation = await interpret_results(
-        question=message,
-        sql=result.get("sql", ""),
-        result=result,
-    )
-
     result_uuid = str(uuid.uuid4())
     return {
-        "agent_message": interpretation,
+        "agent_message": agent_result["agent_message"],
         "result_uuid": result_uuid,
         "query_result": result_with_charts,
     }
@@ -933,6 +889,7 @@ async def _handle_deep(
     enrichment_block: str = "",
     max_iterations: int = 3,
     aim_descriptions: dict[str, str] | None = None,
+    session_state: dict | None = None,
 ):
     """DEEP route: multi-iteration research — loop SQL → execute → analyze for N rounds."""
     all_results = []
@@ -1204,15 +1161,16 @@ async def send_message(req: MessageRequest):
     else:
         route = await classify_route(question=req.message)
 
+    session_state = dict(session.state_json or {})
     enrichment_block = build_enrichment_block(
-        state=dict(session.state_json or {}),
+        state=session_state,
         attached_aims=req.attached_aims,
         attached_datasets=dataset_names,
         mode=req.enrichment_mode,
     )
 
     # Append conversation history from stored turns (not covered by enrichment tags)
-    turns = (session.state_json or {}).get("turns", [])
+    turns = session_state.get("turns", [])
     conv_history = build_conversation_history(turns)
     if conv_history:
         if enrichment_block:
@@ -1235,6 +1193,7 @@ async def send_message(req: MessageRequest):
         attached_aims=req.attached_aims,
         enrichment_block=enrichment_block,
         aim_descriptions=req.aim_descriptions,
+        session_state=session_state,
     )
 
     agent_msg = handler_result["agent_message"]
