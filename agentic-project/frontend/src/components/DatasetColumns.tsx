@@ -22,7 +22,7 @@ export function DatasetColumns({ columns }: { columns: { name: string; datatype:
                   {col.datatype}
                 </span>
               </td>
-              <td className="py-1.5 px-2.5 text-muted">{col.meaning || ""}</td>
+              <td className="py-1.5 px-2.5 text-muted whitespace-normal break-words">{col.meaning || ""}</td>
             </tr>
           ))}
         </tbody>

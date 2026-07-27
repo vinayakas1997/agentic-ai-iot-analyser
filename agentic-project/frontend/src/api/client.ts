@@ -230,8 +230,22 @@ export async function confirmUploadDataset(datasetId: number, columns: ColumnDra
   );
 }
 
+export async function llmFillMeanings(datasetId: number, columns: string[]) {
+  return request<{ columns: ColumnDraft[] }>(
+    `/api/v2/upload/${datasetId}/llm-fill`,
+    { method: "POST", body: JSON.stringify({ columns }) }
+  );
+}
+
 export async function listUserDatasets() {
   return request<{ datasets: PersonalDataset[] }>("/api/v2/user-datasets");
+}
+
+export async function updateDatasetColumns(datasetId: number, columns: ColumnDraft[]) {
+  return request<{ id: number; dataset_name: string; status: string }>(
+    `/api/v2/user-datasets/${datasetId}/columns`,
+    { method: "PATCH", body: JSON.stringify({ columns }) }
+  );
 }
 
 export async function deleteUserDataset(datasetId: number) {

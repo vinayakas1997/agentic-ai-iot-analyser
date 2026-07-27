@@ -15,7 +15,7 @@ export default function Navbar({ onBackToManage }: { onBackToManage?: () => void
   const newSession = useSessionStore((s) => s.newSession);
   const deleteSession = useSessionStore((s) => s.deleteSession);
   const language = useUiStore((s) => s.language);
-  const toggleLanguage = useUiStore((s) => s.toggleLanguage);
+  const setLanguage = useUiStore((s) => s.setLanguage);
   const logout = useAuthStore((s) => s.logout);
   const t = useT();
   const [open, setOpen] = useState(false);
@@ -59,14 +59,31 @@ export default function Navbar({ onBackToManage }: { onBackToManage?: () => void
         <span className="text-[11px] font-semibold tabular-nums text-muted mr-1">
           {tCount(t, "nav.sessionCount", sessions.length)}
         </span>
-        <button
-          type="button"
-          className="text-[11px] font-semibold rounded-full border border-border bg-surface-1 px-2.5 py-1 text-text hover:bg-white/[0.06] transition-colors"
-          onClick={toggleLanguage}
-          title={language === "en" ? "日本語に切り替え" : "Switch to English"}
-        >
-          {language === "en" ? "日本語" : "EN"}
-        </button>
+        <div className="flex rounded-full border border-border bg-surface-1 overflow-hidden">
+          <button
+            type="button"
+            className={`text-[11px] font-semibold px-2.5 py-1 transition-colors ${
+              language === "en"
+                ? "bg-ic-amber text-black"
+                : "text-text hover:bg-white/[0.06]"
+            }`}
+            onClick={() => setLanguage("en")}
+          >
+            EN
+          </button>
+          <div className="w-px bg-border self-stretch" />
+          <button
+            type="button"
+            className={`text-[11px] font-semibold px-2.5 py-1 transition-colors ${
+              language === "ja"
+                ? "bg-ic-amber text-black"
+                : "text-text hover:bg-white/[0.06]"
+            }`}
+            onClick={() => setLanguage("ja")}
+          >
+            日本語
+          </button>
+        </div>
         <div className="relative" ref={ref}>
           <button
             type="button"

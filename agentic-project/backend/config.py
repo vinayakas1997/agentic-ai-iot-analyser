@@ -1,5 +1,8 @@
+import json
 import os
 from functools import lru_cache
+from pathlib import Path
+
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from openai import AsyncOpenAI
 
@@ -28,17 +31,22 @@ class Settings(BaseSettings):
     user_data_dir: str = "/data/users"
     max_bad_row_pct: float = 5.0
 
-    # Comma-separated allowlist of IDs that log in with the "iot" role instead of "normal".
-    # No passwords — this is a trust-level allowlist for an internal tool, not real auth.
-    iot_user_ids: str = "iot,iotteam"
+    # Path to the IoT user allowlist JSON file.
+    # Edit this file at runtime to add/remove IoT users without restarting.
+    iot_user_ids_path: str = "/app/iot_users.json"
 
     @property
     def cors_origin_list(self) -> list[str]:
         return [o.strip() for o in self.cors_origins.split(",") if o.strip()]
 
-    @property
-    def iot_user_id_set(self) -> set[str]:
-        return {u.strip().lower() for u in self.iot_user_ids.split(",") if u.strip()}
+    def get_iot_user_ids(self) -> set[str]:
+        """Read IoT user IDs from the JSON file on every call — no restart needed."""
+        try:
+            raw = Path(self.iot_user_ids_path).read_text(encoding="utf-8")
+            ids: list[str] = json.loads(raw)
+            return {u.strip().lower() for u in ids if isinstance(u, str) and u.strip()}
+        except (FileNotFoundError, json.JSONDecodeError, Exception):
+            return set()
 
 @lru_cache
 def get_settings() -> Settings:

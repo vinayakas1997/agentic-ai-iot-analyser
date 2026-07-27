@@ -41,6 +41,7 @@ services:
       LOG_LEVEL: "${LOG_LEVEL:-0}"
     volumes:
       - user_csv_data:/data/users
+      - ./backend/iot_users.json:/app/iot_users.json
     depends_on:
       db:
         condition: service_healthy

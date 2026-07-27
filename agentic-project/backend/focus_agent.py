@@ -9,7 +9,9 @@ question.
 
 import json
 import re
+import unicodedata
 import logging
+from difflib import get_close_matches
 
 from config import get_settings, get_llm_client
 from sql_executor import validate_sql, execute_sql
@@ -18,6 +20,14 @@ from llm_client import language_instruction
 from logger import log_sql
 
 logger = logging.getLogger(__name__)
+
+
+def normalize_halfwidth(text: str) -> str:
+    """Convert half-width katakana to full-width so the LLM can read them properly.
+    Half-width katakana (e.g. ﾜｰｸ) are valid Unicode but uncommon in modern text and
+    cause the LLM to hallucinate □ replacement characters."""
+    return unicodedata.normalize("NFKC", text)
+
 
 TOOLS = [
     {
@@ -81,9 +91,17 @@ You have two tools available:
 - If the question can be answered from something already listed above under "Previously Fetched", call recall_result with that reference first — don't re-query data you already have.
 - If recall_result's returned columns don't actually cover what's being asked, call query_data next with a query that gets the right breakdown. Do not guess or make up numbers.
 - If the topic isn't listed under "Previously Fetched" at all, call query_data directly.
+- Before writing SQL, verify every column name exists in its table by checking the schema above.
 - Only use columns and tables from the datasets listed above. Use the exact SQL table name given in parentheses for each dataset.
 - Always include LIMIT 100 in any SQL you run unless the user asks for all results.
-- Once a tool call returns a valid, usable result, answer from it. Do not call query_data again for the same question just to double-check or rephrase the same query — only re-query if the result was actually wrong, errored, or missing what's needed.
+
+## CRITICAL — Never Give Up On SQL Errors
+- If query_data returns ANY error (column not found, syntax error, type mismatch), you MUST fix the mistake and retry with corrected SQL. A SQL error is ALWAYS a retry signal, NEVER an answer signal.
+- You MUST NOT respond with "I cannot execute", "I cannot run the query", or any variation of giving up. "I cannot execute" is NEVER an acceptable final answer.
+- If you don't know the correct column name, look at the schema above and pick the closest match from the listed columns.
+- Only answer without data if you have exhausted the last available tool round (the system will tell you when no more tool calls are available).
+- If query_data returns 0 rows, broaden the query (fewer joins, looser filters) and retry once before concluding no data exists.
+- Once a tool call returns a valid, usable result (rows > 0), answer from it. Do not call query_data again for the same question just to double-check or rephrase the same query.
 
 ## Your Final Answer
 Once you have enough information, respond with plain text (no more tool calls):
@@ -135,6 +153,41 @@ def _build_previously_fetched_section(session_state: dict, attached_aims: list[s
     return "\n".join(lines) if lines else "(nothing fetched yet this session for the attached aim(s))"
 
 
+def _build_column_map(datasets_data: list[dict]) -> dict[str, set[str]]:
+    """Build a map of table_name -> set of known column names from column_definitions.
+    column_definitions may be a list of {name, ...} dicts or a direct dict of name->description."""
+    col_map: dict[str, set[str]] = {}
+    for d in datasets_data:
+        table = d.get("table", "")
+        cdefs = d.get("column_definitions") or {}
+        if isinstance(cdefs, dict):
+            col_map[table] = set(cdefs.keys())
+        elif isinstance(cdefs, list):
+            col_map[table] = {c.get("name", "") for c in cdefs if isinstance(c, dict)}
+    return col_map
+
+
+def _suggest_column_fix(error_msg: str, column_map: dict[str, set[str]]) -> str:
+    """If the error mentions a missing column, find the closest match and append did-you-mean."""
+    m = re.search(r"no such column:\s*(\S+)", error_msg, re.IGNORECASE)
+    if not m:
+        m = re.search(r"column\s+\"?(\w+)\"?\s+does not exist", error_msg, re.IGNORECASE)
+    if not m:
+        return error_msg
+    bad_col = m.group(1)
+    # Strip table alias prefix if any (e.g. "a.異常№" -> "異常№")
+    bad_col_short = bad_col.split(".")[-1] if "." in bad_col else bad_col
+    all_known: set[str] = set()
+    for cols in column_map.values():
+        all_known.update(cols)
+    if bad_col_short in all_known:
+        return error_msg
+    suggestions = get_close_matches(bad_col_short, list(all_known), n=3, cutoff=0.3)
+    if suggestions:
+        return f"{error_msg} Did you mean: {', '.join(suggestions)}?"
+    return error_msg
+
+
 async def _run_query_data(sql: str, datasets_data: list[dict] | None = None) -> dict:
     try:
         validated = validate_sql(sql)
@@ -159,15 +212,28 @@ async def _run_query_data(sql: str, datasets_data: list[dict] | None = None) -> 
             ),
         }
 
+    column_map = _build_column_map(datasets_data)
+
     try:
         if referenced_sqlite:
             result = await execute_sqlite_sql(sqlite_tables[referenced_sqlite[0]], validated)
         else:
             result = await execute_sql(validated)
         log_sql("agent_tool_call", f"query_data: {validated[:150]}")
+        # Normalize half-width katakana in result so the LLM doesn't hallucinate □ characters
+        if result and result.get("rows"):
+            normalized_rows = []
+            for row in result["rows"]:
+                normalized_rows.append({
+                    k: normalize_halfwidth(v) if isinstance(v, str) else v
+                    for k, v in row.items()
+                })
+            result["rows"] = normalized_rows
         return {"ok": True, "result": result}
     except Exception as e:
-        return {"ok": False, "error": f"SQL execution failed: {str(e)[:300]}"}
+        msg = str(e)[:300]
+        msg = _suggest_column_fix(msg, column_map)
+        return {"ok": False, "error": f"SQL execution failed: {msg}"}
 
 
 _STOPWORDS = {"the", "a", "an", "of", "for", "and", "to", "that", "this", "data", "show", "me", "get"}
@@ -223,7 +289,20 @@ async def run_focus_agent(
     settings = get_settings()
     client = get_llm_client()
 
-    previously_fetched = _build_previously_fetched_section(session_state, attached_aims)
+    # If this aim+datasets combo already has a successful focus result in this session,
+    # hide the "Previously Fetched" section. Otherwise the LLM may pivot to "explain
+    # from schema" when a fresh query errors, instead of retrying.
+    is_rerun = False
+    turns = session_state.get("turns", [])
+    for t in reversed(turns):
+        if t.get("route") == "focus" and t.get("aims") == attached_aims:
+            is_rerun = True
+            break
+
+    if is_rerun:
+        previously_fetched = ""
+    else:
+        previously_fetched = _build_previously_fetched_section(session_state, attached_aims)
     system_prompt = AGENT_SYSTEM_PROMPT.format(
         context=context,
         previously_fetched=previously_fetched,
@@ -241,19 +320,12 @@ async def run_focus_agent(
 
     for round_num in range(max_rounds):
         is_last_round = round_num == max_rounds - 1
-        create_kwargs = dict(
-            model=settings.llm_model,
-            messages=messages,
-            max_tokens=settings.max_tokens,
-            temperature=settings.temperature,
-            extra_body={"chat_template_kwargs": {"enable_thinking": False}},
-        )
         if is_last_round:
             # Force a final text answer using whatever was gathered so far — without
             # this, a model that second-guesses itself can burn every round re-calling
             # tools on the same question and never actually answer.
             messages.append({
-                "role": "system",
+                "role": "user",
                 "content": (
                     "No more tool calls are available. You must answer now, in plain natural "
                     "language only, using whatever information was already gathered above. "
@@ -263,7 +335,14 @@ async def run_focus_agent(
                     "rather than attempting another action."
                 ),
             })
-        else:
+        create_kwargs = dict(
+            model=settings.llm_model,
+            messages=list(messages),
+            max_tokens=settings.max_tokens,
+            temperature=settings.temperature,
+            extra_body={"chat_template_kwargs": {"enable_thinking": False}},
+        )
+        if not is_last_round:
             create_kwargs["tools"] = TOOLS
             create_kwargs["tool_choice"] = "auto"
         response = await client.chat.completions.create(**create_kwargs)

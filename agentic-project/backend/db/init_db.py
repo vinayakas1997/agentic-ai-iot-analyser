@@ -84,6 +84,7 @@ async def create_tables() -> None:
                 original_filename   TEXT NOT NULL,
                 description         TEXT,
                 column_definitions  JSONB NOT NULL DEFAULT '[]',
+                column_profiling    JSONB,
                 row_count           INT NOT NULL DEFAULT 0,
                 status              TEXT DEFAULT 'draft',
                 created_at          TIMESTAMPTZ DEFAULT NOW(),
@@ -93,6 +94,8 @@ async def create_tables() -> None:
         """))
         await conn.execute(text("CREATE INDEX IF NOT EXISTS idx_user_registry_user_id ON user_registry(user_id)"))
         await conn.execute(text("CREATE INDEX IF NOT EXISTS idx_user_registry_status ON user_registry(status)"))
+        # Migration: add column_profiling if missing (safe to re-run)
+        await conn.execute(text("ALTER TABLE user_registry ADD COLUMN IF NOT EXISTS column_profiling JSONB"))
 
         # Mock data tables
         await conn.execute(text("DROP TABLE IF EXISTS test_fruits CASCADE"))

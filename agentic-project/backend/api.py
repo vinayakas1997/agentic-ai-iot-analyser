@@ -14,21 +14,25 @@ from aims import generate_chat_response, generate_sql, fix_sql, criticize_sql, e
 from llm_client import parse_numbered_suggestions
 from logger import log_route, log_llm_call, log_sql, log_aims, log_response, log_full_prompt
 from llm_client import summarize_turns, classify_route, extract_sql, extract_sql_fallback, generate_llm_response, interpret_results, direct_prompt, suggest_prompt, focus_prompt, deep_prompt, language_instruction
-from focus_agent import run_focus_agent
+from focus_agent import run_focus_agent, normalize_halfwidth
 from sql_executor import validate_sql
 from sql_executor import execute_sql
 from db.models import GlobalRegistry, ManagerSession
 from db.session import AsyncSessionLocal
 from config import get_settings
 from csv_validator import validate_csv
+from column_profile import profile_columns
 from sqlite_importer import import_csv_to_sqlite
+import sqlite_executor
 from user_datasets import (
     draft_column_meanings,
     create_draft_dataset,
     confirm_dataset,
     list_user_datasets,
     delete_user_dataset,
+    update_dataset_columns,
     fetch_active_user_datasets,
+    llm_fill_missing_meanings,
 )
 from registry_admin import (
     TableNotFoundError,
@@ -166,12 +170,23 @@ class ExecuteQueryResponse(BaseModel):
     row_count: int
     chart_suggestions: ChartSuggestions | None = None
 
+class ColumnProfile(BaseModel):
+    datatype: str
+    null_pct: float
+    distinct_count: int
+    is_constant: bool
+    zero_pct: float | None = None
+    min: str | None = None
+    max: str | None = None
+    common_samples: list[str] = []
+
 class UploadedFileReport(BaseModel):
     dataset_id: int
     dataset_name: str
     table_name: str
     filename: str
     columns: list[dict]
+    profiling: dict[str, ColumnProfile] = {}
     row_count: int
     warnings: list[str] = []
 
@@ -188,6 +203,10 @@ class ConfirmDatasetRequest(BaseModel):
     user_id: str = ""
     columns: list[dict]
     description: str = ""
+
+class LlmFillRequest(BaseModel):
+    user_id: str = ""
+    columns: list[str]
 
 class LoginRequest(BaseModel):
     user_id: str
@@ -676,11 +695,13 @@ async def upload_csv(files: list[UploadFile] = File(...), user_id: str = Form(de
             failures.append(UploadFailure(filename=f.filename or "upload.csv", errors=[f"Import failed: {str(e)[:200]}"]))
             continue
 
-        meanings = await draft_column_meanings(result.table_name, result.columns, result.rows)
-        meaning_by_name = {m["name"]: m["meaning"] for m in meanings}
+        # Profile columns for initial analysis display
+        profiling = profile_columns(result.columns, result.rows)
+
+        # Start with blank meanings — no auto LLM draft
         column_defs = [
-            {"name": c, "datatype": t, "meaning": meaning_by_name.get(c, "")}
-            for c, t in zip(result.columns, result.column_types)
+            {"name": c, "original_name": r, "datatype": t, "meaning": ""}
+            for c, r, t in zip(result.columns, result.raw_columns, result.column_types)
         ]
 
         dataset_id = await create_draft_dataset(
@@ -690,6 +711,7 @@ async def upload_csv(files: list[UploadFile] = File(...), user_id: str = Form(de
             sqlite_path=imported["db_path"],
             original_filename=f.filename or "upload.csv",
             column_definitions=column_defs,
+            column_profiling=profiling,
             row_count=result.row_count,
         )
         reports.append(UploadedFileReport(
@@ -698,6 +720,7 @@ async def upload_csv(files: list[UploadFile] = File(...), user_id: str = Form(de
             table_name=result.table_name,
             filename=f.filename or "upload.csv",
             columns=column_defs,
+            profiling=profiling,
             row_count=result.row_count,
             warnings=result.warnings,
         ))
@@ -719,6 +742,24 @@ async def confirm_upload(dataset_id: int, req: ConfirmDatasetRequest):
     except ValueError:
         raise HTTPException(status_code=404, detail="Dataset not found")
 
+@router.post("/upload/{dataset_id}/llm-fill")
+async def llm_fill_upload(dataset_id: int, req: LlmFillRequest):
+    """User clicked 'LLM fill' — generate meanings for empty columns via LLM."""
+    uid = req.user_id or settings.default_user_id
+    try:
+        return await llm_fill_missing_meanings(uid, dataset_id, req.columns)
+    except ValueError:
+        raise HTTPException(status_code=404, detail="Dataset not found")
+
+@router.patch("/user-datasets/{dataset_id}/columns")
+async def patch_dataset_columns(dataset_id: int, req: ConfirmDatasetRequest):
+    """Update column definitions for an existing personal dataset (post-upload editing)."""
+    uid = req.user_id or settings.default_user_id
+    try:
+        return await update_dataset_columns(uid, dataset_id, req.columns)
+    except ValueError:
+        raise HTTPException(status_code=404, detail="Dataset not found")
+
 @router.delete("/user-datasets/{dataset_id}")
 async def remove_user_dataset(dataset_id: int, user_id: str = ""):
     uid = user_id or settings.default_user_id
@@ -732,7 +773,7 @@ async def remove_user_dataset(dataset_id: int, user_id: str = ""):
 async def login(req: LoginRequest):
     """Stateless ID-only allowlist check — no passwords. Decides which top-level view the
     frontend renders (IoT registration page vs the normal dashboard)."""
-    role = "iot" if req.user_id.strip().lower() in settings.iot_user_id_set else "normal"
+    role = "iot" if req.user_id.strip().lower() in settings.get_iot_user_ids() else "normal"
     return LoginResponse(user_id=req.user_id.strip(), role=role)
 
 @router.post("/registry-admin/introspect")
@@ -787,13 +828,51 @@ async def registry_delete_entry(entry_id: int):
 
 # ── Route Handlers ──
 
-def _build_context(
+async def _fetch_sample_rows(ds: dict, limit: int = 5) -> list[dict]:
+    """Fetch up to `limit` sample rows from a dataset for context previews."""
+    table = ds.get("table") or ds.get("dataset_name", "")
+    if not table:
+        return []
+    try:
+        if ds.get("backend") == "sqlite":
+            db_path = ds.get("sqlite_path")
+            if not db_path:
+                return []
+            result = await sqlite_executor.execute_sql(db_path, f'SELECT * FROM "{table}" LIMIT {limit}')
+            return result.get("rows", [])
+        else:
+            result = await execute_sql(f'SELECT * FROM "{table}" LIMIT {limit}')
+            return result.get("rows", [])
+    except Exception:
+        return []
+
+
+def _format_sample_values(rows: list[dict], col_name: str, max_samples: int = 3) -> str:
+    """Extract up to `max_samples` distinct non-null values for a column from sample rows."""
+    seen = set()
+    values = []
+    for row in rows:
+        val = row.get(col_name)
+        if val is not None and str(val).strip() and str(val) not in seen:
+            seen.add(str(val))
+            values.append(str(val))
+            if len(values) >= max_samples:
+                break
+    if not values:
+        return ""
+    return f" e.g. {', '.join(repr(v) for v in values)}"
+
+
+async def _build_context(
     dataset_names: list[str],
     datasets_data: list[dict],
     attached_aims: list[str],
     aim_descriptions: dict[str, str] | None = None,
+    include_samples: bool = True,
 ) -> str:
-    """Build a context string describing datasets and attached aims."""
+    """Build a context string describing datasets and attached aims with column details
+    and optionally sample values. include_samples should be False for the FOCUS route
+    so the LLM actually queries data instead of answering from sample values."""
     parts = [f"Available datasets: {', '.join(dataset_names) if dataset_names else 'None'}"]
     if attached_aims:
         aim_descriptions = aim_descriptions or {}
@@ -804,8 +883,42 @@ def _build_context(
         parts.append(f"Active research aims:\n" + "\n".join(f"- {line}" for line in aim_lines))
     for ds in datasets_data:
         cols = ds.get("column_definitions", [])
-        col_str = "; ".join(f"{c.get('name','?')} ({c.get('datatype','?')})" for c in cols[:10])
         table = ds.get("table") or ds.get("dataset_name", "?")
+        sample_rows = await _fetch_sample_rows(ds) if include_samples else None
+        if sample_rows:
+            sample_rows = [
+                {k: normalize_halfwidth(v) if isinstance(v, str) else v for k, v in row.items()}
+                for row in sample_rows
+            ]
+        profiling = ds.get("column_profiling", {})
+        col_lines = []
+        for c in cols:
+            name_display = c.get('original_name', c.get('name', '?'))
+            dtype = c.get('datatype', '?')
+            meaning = c.get('meaning', '')
+            sql_name = c.get('name', '')
+            samples = _format_sample_values(sample_rows, sql_name) if include_samples and sql_name and sample_rows else ""
+            col_info = f"{name_display} ({dtype})"
+            if meaning:
+                col_info += f" — {meaning}"
+            if samples:
+                col_info += samples
+            # Append profiling hints
+            p = profiling.get(sql_name, {})
+            hints = []
+            if p.get("is_constant"):
+                hints.append("constant value")
+            zero_pct = p.get("zero_pct")
+            if zero_pct is not None and zero_pct > 0:
+                hints.append(f"{zero_pct}% zeros")
+            if p.get("null_pct", 0) > 5:
+                hints.append(f"{p['null_pct']}% empty")
+            if p.get("min") is not None and p.get("max") is not None:
+                hints.append(f"range {p['min']}–{p['max']}")
+            if hints:
+                col_info += f" [{', '.join(hints)}]"
+            col_lines.append(col_info)
+        col_str = "; ".join(col_lines)
         parts.append(f"Dataset '{ds.get('dataset_name','?')}' (SQL table name: `{table}`): {col_str}")
         if ds.get("description"):
             parts.append(f"  Description: {ds['description']}")
@@ -825,7 +938,7 @@ async def _handle_direct(
     language: str = "en",
 ):
     """DIRECT route: LLM generates SQL → we validate and execute → LLM interprets results."""
-    context = _build_context(dataset_names, datasets_data, attached_aims, aim_descriptions)
+    context = await _build_context(dataset_names, datasets_data, attached_aims, aim_descriptions)
     system_prompt = direct_prompt(context=context, language=language)
     if enrichment_block:
         system_prompt += f"\n\n## Previous Context\n{enrichment_block}"
@@ -934,7 +1047,7 @@ async def _handle_suggest(
     language: str = "en",
 ):
     """SUGGEST route: LLM proposes 3 exploration ideas (no SQL)."""
-    context = _build_context(dataset_names, datasets_data, attached_aims, aim_descriptions)
+    context = await _build_context(dataset_names, datasets_data, attached_aims, aim_descriptions)
     system_prompt = suggest_prompt(context=context, language=language)
     real_dataset_names = [ds.get("dataset_name", "?") for ds in datasets_data]
     if len(real_dataset_names) > 1:
@@ -991,7 +1104,7 @@ async def _handle_focus_multi(
 
     aim_descriptions = aim_descriptions or {}
     for aim in attached_aims:
-        context = _build_context(dataset_names, datasets_data, [aim], aim_descriptions)
+        context = await _build_context(dataset_names, datasets_data, [aim], aim_descriptions)
         system_prompt = focus_prompt(context=context, language=language)
         if enrichment_block:
             system_prompt += f"\n\n## Previous Context\n{enrichment_block}"
@@ -1081,7 +1194,24 @@ async def _handle_focus(
             aim_descriptions=aim_descriptions,
             language=language,
         )
-    context = _build_context(dataset_names, datasets_data, attached_aims, aim_descriptions)
+
+    # Auto-recall: if this exact aim+datasets combo already has a successful
+    # focus result in this session, return the cached result without calling
+    # the LLM at all — avoids re-hallucination on re-runs.
+    if session_state:
+        session_turns = session_state.get("turns", [])
+        for t in reversed(session_turns):
+            if (t.get("route") == "focus"
+                and t.get("aims") == attached_aims
+                and t.get("datasets") == dataset_names
+                and t.get("result_uuid")):
+                return {
+                    "agent_message": t.get("agent", ""),
+                    "result_uuid": t["result_uuid"],
+                    "query_result": None,
+                }
+
+    context = await _build_context(dataset_names, datasets_data, attached_aims, aim_descriptions, include_samples=False)
     agent_result = await run_focus_agent(
         message=message,
         context=context,
@@ -1127,7 +1257,7 @@ async def _handle_deep(
     """DEEP route: multi-iteration research — loop SQL → execute → analyze for N rounds."""
     all_results = []
     current_message = message
-    context = _build_context(dataset_names, datasets_data, attached_aims, aim_descriptions)
+    context = await _build_context(dataset_names, datasets_data, attached_aims, aim_descriptions)
     final_msg = ""
     last_clean = ""
     deep_iterations = []
@@ -1540,6 +1670,24 @@ async def send_message(req: MessageRequest):
             ):
                 existing.append(ap)
         state["aim_proposals"] = existing
+
+        # Persist full query result (including rows and chart_suggestions) to
+        # chat_query_results so the frontend finds it on page reload.
+        if result_uuid and query_result_raw:
+            chat_results = dict(state.get("chat_query_results", {}))
+            chat_result = {
+                "sql": query_result_raw.get("sql", ""),
+                "columns": query_result_raw.get("columns", []),
+                "column_types": query_result_raw.get("column_types", []),
+                "rows": query_result_raw.get("rows", []),
+                "row_count": query_result_raw.get("row_count", 0),
+            }
+            if query_result_raw.get("chart_suggestions") is not None:
+                cs = query_result_raw["chart_suggestions"]
+                chat_result["chart_suggestions"] = cs.model_dump() if hasattr(cs, "model_dump") else cs
+            chat_results[result_uuid] = chat_result
+            state["chat_query_results"] = chat_results
+
         row.state_json = state
         row.version += 1
         row.updated_at = datetime.now(timezone.utc)

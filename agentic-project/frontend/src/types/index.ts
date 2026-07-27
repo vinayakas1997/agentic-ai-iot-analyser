@@ -66,8 +66,20 @@ export interface NewResearchResult {
   joins: string | null;
 }
 
+export interface ColumnProfile {
+  datatype: string;
+  null_pct: number;
+  distinct_count: number;
+  is_constant: boolean;
+  zero_pct: number | null;
+  min: string | null;
+  max: string | null;
+  common_samples: string[];
+}
+
 export interface ColumnDraft {
   name: string;
+  original_name?: string;
   datatype: string;
   meaning: string;
 }
@@ -78,6 +90,7 @@ export interface UploadedFileDraft {
   table_name: string;
   filename: string;
   columns: ColumnDraft[];
+  profiling: Record<string, ColumnProfile>;
   row_count: number;
   warnings: string[];
 }
@@ -94,6 +107,7 @@ export interface PersonalDataset {
   original_filename: string;
   description: string | null;
   column_definitions: ColumnDraft[];
+  column_profiling: Record<string, ColumnProfile>;
   row_count: number;
   status: "draft" | "active";
 }

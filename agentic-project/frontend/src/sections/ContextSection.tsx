@@ -7,6 +7,7 @@ import { panelClass, monoClass } from "../lib/styles";
 import { IconDatabase, IconEdit, IconTrash } from "../lib/icons";
 import { listDatasets, listUserDatasets, deleteUserDataset } from "../api/client";
 import { DatasetColumns } from "../components/DatasetColumns";
+import EditColumnsDialog from "../components/EditColumnsDialog";
 import { useT } from "../lib/i18n";
 import type { DatasetInfo, PersonalDataset } from "../types";
 
@@ -30,6 +31,7 @@ export default function ContextSection() {
   const [datasets, setDatasets] = useState<DatasetInfo[]>([]);
   const [personalDatasets, setPersonalDatasets] = useState<PersonalDataset[]>([]);
   const [expandedDataset, setExpandedDataset] = useState<string | null>(null);
+  const [editingDataset, setEditingDataset] = useState<PersonalDataset | null>(null);
   const [editingTitle, setEditingTitle] = useState(false);
   const [titleInput, setTitleInput] = useState("");
   const titleInputRef = useRef<HTMLInputElement>(null);
@@ -279,6 +281,14 @@ export default function ContextSection() {
                   )}
                   <button
                     type="button"
+                    className="text-muted hover:text-accent transition-colors shrink-0"
+                    onClick={() => setEditingDataset(ds)}
+                    title="Edit column meanings"
+                  >
+                    <IconEdit size={12} />
+                  </button>
+                  <button
+                    type="button"
                     className="text-muted hover:text-ic-amber transition-colors shrink-0"
                     onClick={() => handleDeletePersonalDataset(ds)}
                     title={t("context.deleteDatasetTitle")}
@@ -296,6 +306,10 @@ export default function ContextSection() {
           </div>
         )}
       </div>
+
+      {editingDataset && (
+        <EditColumnsDialog dataset={editingDataset} onClose={() => setEditingDataset(null)} />
+      )}
     </section>
   );
 }

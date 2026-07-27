@@ -54,6 +54,7 @@ class UserRegistry(Base):
     original_filename: Mapped[str] = mapped_column(Text, nullable=False)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
     column_definitions: Mapped[dict | list] = mapped_column(JSONB, nullable=False, default=list)
+    column_profiling: Mapped[dict | None] = mapped_column(JSONB, nullable=True, default=None)
     row_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     status: Mapped[str] = mapped_column(Text, default="draft")  # draft | active
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

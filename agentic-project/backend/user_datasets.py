@@ -14,7 +14,8 @@ from sqlalchemy import select, delete
 from config import get_settings, get_llm_client
 from db.models import UserRegistry
 from db.session import AsyncSessionLocal
-from sqlite_importer import drop_user_table
+from sqlite_importer import drop_user_table, user_db_path
+from sqlite_executor import execute_sql
 
 logger = logging.getLogger(__name__)
 
@@ -31,15 +32,23 @@ Return ONLY a JSON array, no other text: [{{"name": "col_name", "meaning": "..."
 """
 
 
-async def draft_column_meanings(table_name: str, columns: list[str], sample_rows: list[dict]) -> list[dict]:
-    """LLM drafts a 1-line meaning per column from its name + first 5 sample values."""
+async def draft_column_meanings(
+    table_name: str, columns: list[str], sample_rows: list[dict],
+    display_names: list[str] | None = None,
+) -> list[dict]:
+    """LLM drafts a 1-line meaning per column from its name + first 5 sample values.
+    `display_names` are shown in the LLM prompt (e.g. original Japanese headers);
+    `columns` are used for extracting sample values from the dicts.
+    """
+    if display_names is None:
+        display_names = columns
     settings = get_settings()
     client = get_llm_client()
 
     lines = []
-    for col in columns:
+    for dn, col in zip(display_names, columns):
         values = [str(r.get(col)) for r in sample_rows[:5] if r.get(col) is not None]
-        lines.append(f"{col}: {{{', '.join(values) if values else '(all empty)'}}}")
+        lines.append(f"{dn}: {{{', '.join(values) if values else '(all empty)'}}}")
     prompt = _MEANING_PROMPT.format(table_name=table_name, column_samples="\n".join(lines))
 
     fallback = [{"name": c, "meaning": ""} for c in columns]
@@ -65,7 +74,7 @@ async def draft_column_meanings(table_name: str, columns: list[str], sample_rows
         return fallback
 
     by_name = {p.get("name"): p.get("meaning", "") for p in parsed if isinstance(p, dict)}
-    return [{"name": c, "meaning": by_name.get(c, "")} for c in columns]
+    return [{"name": c, "meaning": by_name.get(dn, "")} for c, dn in zip(columns, display_names)]
 
 
 async def create_draft_dataset(
@@ -76,6 +85,7 @@ async def create_draft_dataset(
     original_filename: str,
     column_definitions: list[dict],
     row_count: int,
+    column_profiling: dict | None = None,
 ) -> int:
     """Insert (or replace, on re-upload of the same dataset name) a draft user_registry row."""
     async with AsyncSessionLocal() as db:
@@ -89,6 +99,7 @@ async def create_draft_dataset(
             existing.sqlite_path = sqlite_path
             existing.original_filename = original_filename
             existing.column_definitions = column_definitions
+            existing.column_profiling = column_profiling
             existing.row_count = row_count
             existing.status = "draft"
             await db.commit()
@@ -101,6 +112,7 @@ async def create_draft_dataset(
             sqlite_path=sqlite_path,
             original_filename=original_filename,
             column_definitions=column_definitions,
+            column_profiling=column_profiling,
             row_count=row_count,
             status="draft",
         )
@@ -139,6 +151,7 @@ async def list_user_datasets(user_id: str, status: str | None = None) -> list[di
             "original_filename": r.original_filename,
             "description": r.description,
             "column_definitions": r.column_definitions,
+            "column_profiling": r.column_profiling or {},
             "row_count": r.row_count,
             "status": r.status,
         }
@@ -159,6 +172,7 @@ async def fetch_active_user_datasets(user_id: str, dataset_names: list[str] | No
             "dataset_name": r.dataset_name,
             "description": r.description or f"Uploaded CSV ({r.row_count} rows)",
             "column_definitions": r.column_definitions,
+            "column_profiling": r.column_profiling or {},
             "join_hints": None,
             "suggested_aims": [],
             "table": r.table_name,
@@ -167,6 +181,71 @@ async def fetch_active_user_datasets(user_id: str, dataset_names: list[str] | No
         }
         for r in rows
     ]
+
+
+async def llm_fill_missing_meanings(user_id: str, dataset_id: int, column_names: list[str]) -> dict:
+    """Fill empty meanings for the given columns using the LLM."""
+    import sqlite3 as _sqlite3
+
+    async with AsyncSessionLocal() as db:
+        row = (await db.execute(
+            select(UserRegistry).where(UserRegistry.id == dataset_id, UserRegistry.user_id == user_id)
+        )).scalar_one_or_none()
+        if not row:
+            raise ValueError("dataset_not_found")
+
+        current_defs = list(row.column_definitions)
+        current_by_name = {d["name"]: d for d in current_defs}
+        table_name = row.table_name
+        sqlite_path = row.sqlite_path
+
+        # Get sample rows from SQLite
+        conn = _sqlite3.connect(f"file:{sqlite_path}?mode=ro", uri=True)
+        try:
+            cursor = conn.execute(f'SELECT * FROM "{table_name}" LIMIT 5')
+            col_names_sqlite = [d[0] for d in cursor.description]
+            sample_rows = [dict(zip(col_names_sqlite, row_vals)) for row_vals in cursor.fetchall()]
+        finally:
+            conn.close()
+
+        # Filter to columns that need fill and exist in the table
+        columns_to_fill = [c for c in column_names if c in current_by_name and not current_by_name[c].get("meaning", "").strip()]
+        if not columns_to_fill:
+            return {"columns": [dict(d) for d in current_defs if d["name"] in column_names]}
+
+        # Get display names for the columns
+        display_names = [current_by_name[c].get("original_name", c) for c in columns_to_fill]
+
+        drafted = await draft_column_meanings(table_name, columns_to_fill, sample_rows, display_names=display_names)
+
+        by_name = {d["name"]: d["meaning"] for d in drafted}
+
+        # Build new definitions with filled meanings
+        new_defs = []
+        for d in current_defs:
+            entry = dict(d)
+            if entry["name"] in by_name and by_name[entry["name"]].strip():
+                entry["meaning"] = by_name[entry["name"]]
+            new_defs.append(entry)
+
+        row.column_definitions = new_defs
+        await db.commit()
+        await db.refresh(row)
+
+    return {"columns": [d for d in new_defs if d["name"] in column_names]}
+
+
+async def update_dataset_columns(user_id: str, dataset_id: int, columns: list[dict]) -> dict:
+    """Update column definitions for an existing (active) personal dataset."""
+    async with AsyncSessionLocal() as db:
+        row = (await db.execute(
+            select(UserRegistry).where(UserRegistry.id == dataset_id, UserRegistry.user_id == user_id)
+        )).scalar_one_or_none()
+        if not row:
+            raise ValueError("dataset_not_found")
+        row.column_definitions = columns
+        await db.commit()
+        return {"id": row.id, "dataset_name": row.dataset_name, "status": row.status}
 
 
 async def delete_user_dataset(user_id: str, dataset_id: int) -> None:

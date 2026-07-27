@@ -13,6 +13,7 @@ import csv
 import io
 import re
 from dataclasses import dataclass, field
+from charset_normalizer import detect
 
 
 @dataclass
@@ -21,6 +22,7 @@ class ValidationResult:
     filename: str
     table_name: str = ""
     columns: list[str] = field(default_factory=list)
+    raw_columns: list[str] = field(default_factory=list)
     column_types: list[str] = field(default_factory=list)
     rows: list[dict] = field(default_factory=list)
     row_count: int = 0
@@ -36,7 +38,7 @@ _SQL_RESERVED = {
 
 
 def _sanitize_identifier(name: str, used: set[str], fallback_prefix: str) -> str:
-    cleaned = re.sub(r"[^a-zA-Z0-9_]", "_", name.strip()).strip("_")
+    cleaned = re.sub(r"[^\w]", "_", name.strip(), flags=re.UNICODE).strip("_")
     if not cleaned:
         cleaned = f"{fallback_prefix}_col"
     if cleaned[0].isdigit():
@@ -54,11 +56,18 @@ def _sanitize_identifier(name: str, used: set[str], fallback_prefix: str) -> str
 
 
 def _decode(raw: bytes) -> str | None:
-    for enc in ("utf-8-sig", "utf-8", "latin-1"):
+    for enc in ("utf-8-sig", "utf-8", "cp932", "shift_jis", "euc-jp", "latin-1"):
         try:
             return raw.decode(enc)
         except (UnicodeDecodeError, LookupError):
             continue
+    try:
+        detected = detect(raw)
+        enc = detected.get("encoding") if isinstance(detected, dict) else getattr(detected, "encoding", None)
+        if enc:
+            return raw.decode(enc)
+    except (LookupError, UnicodeDecodeError):
+        pass
     return None
 
 
@@ -142,6 +151,8 @@ def validate_csv(raw: bytes, filename: str, max_size_mb: int = 50, max_bad_row_p
             result.errors.append(f"Duplicate column name '{h.strip()}' — rename before re-uploading.")
             return result
         seen_raw.add(key)
+
+    result.raw_columns = [h.strip() for h in raw_header]
 
     used_names: set[str] = set()
     table_stem = re.sub(r"\.csv$", "", filename, flags=re.IGNORECASE)
