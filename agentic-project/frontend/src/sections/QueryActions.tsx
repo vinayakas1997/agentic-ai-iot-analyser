@@ -1,7 +1,8 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useRef } from "react";
 import { monoClass } from "../lib/styles";
 import { IconGrid, IconChart } from "../lib/icons";
 import { useT, tCount } from "../lib/i18n";
+import domtoimage from "dom-to-image-more";
 import {
   BarChart, Bar, LineChart, Line, AreaChart, Area,
   PieChart, Pie, Cell, ComposedChart, ScatterChart, Scatter,
@@ -182,15 +183,22 @@ function renderFunnelChart(cfg: ChartConfig, rows: Record<string, unknown>[]) {
 }
 
 function renderSunburstChart(cfg: ChartConfig, rows: Record<string, unknown>[]) {
-  const yKey = cfg.yKeys[0] || cfg.yKeys[0];
-  const data = rows.map((r, i) => ({
-    name: String(r[cfg.xKey] ?? `Root ${i}`),
-    children: cfg.yKeys.length > 1 ? cfg.yKeys.slice(1).map(sk => ({
-      name: String(r[sk] ?? ""),
-      value: Number(r[yKey] || 0),
-      fill: CHART_COLORS[(i + 1) % CHART_COLORS.length],
-    })) : [],
+  const agg = new Map<string, Map<string, number>>();
+  for (const row of rows) {
+    const cat = String(row[cfg.xKey] ?? "other");
+    const sub = String(row[cfg.yKeys[1]] ?? "other");
+    const val = Number(row[cfg.yKeys[0]] || 0);
+    if (!agg.has(cat)) agg.set(cat, new Map());
+    const subMap = agg.get(cat)!;
+    subMap.set(sub, (subMap.get(sub) || 0) + val);
+  }
+  const data = Array.from(agg.entries()).map(([cat, subMap], i) => ({
+    name: cat,
     fill: CHART_COLORS[i % CHART_COLORS.length],
+    children: Array.from(subMap.entries()).map(([sub, val]) => ({
+      name: sub,
+      value: val,
+    })),
   }));
   return (
     <SunburstChart width={400} height={200} data={{ name: "root", children: data }}>
@@ -289,6 +297,19 @@ function ChartView({ rows, chart_suggestions }: {
   const t = useT();
   const [expandedSet, setExpandedSet] = useState<Set<number>>(new Set());
   const [activeBasic, setActiveBasic] = useState<string>("bar");
+  const chartRefs = useRef<(HTMLDivElement | null)[]>([]);
+  const basicChartRef = useRef<HTMLDivElement | null>(null);
+
+  const downloadPng = async (el: HTMLElement | null, name: string) => {
+    if (!el) return;
+    const dataUrl = await domtoimage.toPng(el, { bgcolor: "#111116", quality: 1 });
+    const a = document.createElement('a');
+    a.href = dataUrl;
+    a.download = `${name.replace(/[^a-zA-Z0-9_-]/g, "_")}.png`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+  };
 
   const suggestions = useMemo(() => sanitizeSuggestions(chart_suggestions ?? undefined), [chart_suggestions]);
   const advanced = suggestions.advanced;
@@ -313,12 +334,26 @@ function ChartView({ rows, chart_suggestions }: {
           {advanced.map((cfg, i) => {
             const expanded = expandedSet.has(i);
             return (
-              <div key={i} className="rounded-lg border border-border/50 bg-black/20 overflow-hidden transition-all duration-200">
+              <div key={i} ref={el => chartRefs.current[i] = el} className="rounded-lg border border-border/50 bg-black/20 overflow-hidden transition-all duration-200">
                 <div
                   className="flex items-center gap-2 px-3 py-2 cursor-pointer hover:bg-white/[0.03] transition-colors"
                   onClick={() => toggleExpand(i)}
                 >
                   <div className="text-[10px] font-medium px-1.5 py-0.5 rounded bg-ic-violet-soft/20 text-ic-violet shrink-0">{cfg.chartType}</div>
+                  <button
+                    type="button"
+                    onClick={(e) => { e.stopPropagation(); if (expanded) downloadPng(chartRefs.current[i], cfg.chartType); }}
+                    className={`w-6 h-6 rounded-md border transition-all shrink-0 flex items-center justify-center ${
+                      expanded
+                        ? "bg-ic-amber-soft/30 text-ic-amber border-ic-amber/30 hover:bg-ic-amber-soft/50"
+                        : "opacity-30 cursor-not-allowed border-border/10 text-muted/40"
+                    }`}
+                    title={expanded ? t("query.downloadPng") : "Expand chart first to download"}
+                  >
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" width="12" height="12" strokeWidth="2.2">
+                      <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>
+                    </svg>
+                  </button>
                   <div className="text-xs text-text/70 flex-1 truncate">{cfg.reason}</div>
                   <svg className={`w-3 h-3 text-muted transition-transform shrink-0 ${expanded ? 'rotate-180' : ''}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2">
                     <polyline points="6 9 12 15 18 9" />
@@ -343,22 +378,40 @@ function ChartView({ rows, chart_suggestions }: {
       {/* Basic toggle */}
       {suggestions.basic.length > 0 && (
         <div>
-          <div className="flex gap-1.5 mb-2">
-            {(["bar", "line", "area", "pie"] as const).map(t => (
-              <button
-                key={t}
-                type="button"
-                className={`text-[10px] font-medium px-2 py-0.5 rounded-full border transition-colors ${
-                  activeBasic === t ? "bg-ic-violet-soft/20 text-ic-violet border-ic-violet/30" : "text-muted border-border/50 hover:text-text"
-                }`}
-                onClick={() => setActiveBasic(t)}
-              >
-                {t}
-              </button>
-            ))}
+          <div className="flex items-center gap-1.5 mb-2 flex-wrap">
+            {(["bar", "line", "area", "pie"] as const).map(type => {
+              const active = activeBasic === type;
+              return (
+                <div key={type} className="flex items-stretch">
+                  <button
+                    type="button"
+                    className={`text-[10px] font-medium px-2 py-0.5 border border-r-0 transition-colors rounded-l-full ${
+                      active ? "bg-ic-violet-soft/20 text-ic-violet border-ic-violet/30" : "text-muted border-border/50 hover:text-text"
+                    }`}
+                    onClick={() => setActiveBasic(type)}
+                  >
+                    {type}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => active && downloadPng(basicChartRef.current, type)}
+                    className={`w-6 h-6 rounded-r-md border transition-all shrink-0 flex items-center justify-center ${
+                      active
+                        ? "bg-ic-amber-soft/30 text-ic-amber border-ic-amber/30 hover:bg-ic-amber-soft/50"
+                        : "opacity-25 cursor-not-allowed border-border/10 text-muted/40"
+                    }`}
+                    title={t("query.downloadPng")}
+                  >
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" width="12" height="12" strokeWidth="2.2">
+                      <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>
+                    </svg>
+                  </button>
+                </div>
+              );
+            })}
           </div>
           {basicCfg && (
-            <div className="rounded-lg border border-border/50 bg-black/20 p-3">
+            <div ref={basicChartRef} className="rounded-lg border border-border/50 bg-black/20 p-3">
               <ResponsiveContainer width="100%" height={250}>
                 {renderChartByType(basicCfg, rows)}
               </ResponsiveContainer>
@@ -378,6 +431,7 @@ function ChartView({ rows, chart_suggestions }: {
 export function QueryActions({ queryResult }: { queryResult?: QueryResultState }) {
   const t = useT();
   const [showChart, setShowChart] = useState(false);
+  const [tableExpanded, setTableExpanded] = useState(true);
 
   const handleDownloadCsv = () => {
     if (!queryResult?.columns || !queryResult?.rows) return;
@@ -463,10 +517,20 @@ export function QueryActions({ queryResult }: { queryResult?: QueryResultState }
               {t("query.chart")}
             </button>
           </div>
+          <button
+            type="button"
+            onClick={() => setTableExpanded(!tableExpanded)}
+            className="w-6 h-6 rounded-md bg-white/[0.04] hover:bg-white/[0.08] border border-border/20 transition-all flex items-center justify-center text-muted hover:text-text shrink-0"
+            title={tableExpanded ? "Collapse" : "Expand"}
+          >
+            <svg className={`w-3 h-3 transition-transform ${tableExpanded ? '' : 'rotate-180'}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+              <polyline points="18 15 12 9 6 15" />
+            </svg>
+          </button>
         </div>
         {showChart ? (
           <ChartView rows={queryResult.rows} chart_suggestions={queryResult.chart_suggestions} />
-        ) : (
+        ) : tableExpanded ? (
           <>
             <div className="overflow-x-auto rounded-lg border border-border/50">
               <table className="w-full text-xs">
@@ -492,7 +556,7 @@ export function QueryActions({ queryResult }: { queryResult?: QueryResultState }
               <div className="text-[11px] text-muted">{t("query.showingFirst50", { count: queryResult.row_count ?? 0 })}</div>
             )}
           </>
-        )}
+        ) : null}
       </div>
     );
   }

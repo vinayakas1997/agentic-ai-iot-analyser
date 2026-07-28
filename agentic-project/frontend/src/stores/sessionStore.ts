@@ -374,13 +374,12 @@ export const useSessionStore = create<SessionState>((set, get) => ({
         }
       }
 
-      // Store aim proposals from response
-      if (res.aim_proposals?.length) {
-        set((state) => {
-          const seen = new Set(state.aimProposals.map((p) => p.aim));
-          const fresh = res.aim_proposals!.filter((p) => !seen.has(p.aim));
-          return fresh.length ? { aimProposals: [...state.aimProposals, ...fresh] } : {};
-        });
+      // Replace aimProposals with latest turn's proposals
+      const latestProposals = res.aim_proposals?.length
+        ? res.aim_proposals
+        : res.analysis_actions?.map((a) => ({ aim: a.name, description: a.description, datasets: a.datasets }));
+      if (latestProposals?.length) {
+        set({ aimProposals: latestProposals });
       }
       const nextIdx = useUiStore.getState().selectedTurnIndex;
       useUiStore.getState().selectTurn(nextIdx < 0 ? 0 : nextIdx + 1);

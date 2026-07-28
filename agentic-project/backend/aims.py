@@ -608,6 +608,9 @@ Each object in the array must have:
 - "name": short actionable label (e.g., "Compare quality scores by supplier")
 - "description": natural paragraph (3-4 sentences) explaining what this analysis reveals, including which columns are examined and what insight to expect — extract the full text from the source without truncation
 - "datasets": list of dataset names to use — ONLY from this allowed list: {datasets}
+- "goal" (optional): one-sentence purpose of this analysis (what it aims to find out)
+- "columns" (optional): list of specific column names examined in this analysis
+- "insight" (optional): what insight or finding the user can expect from this analysis
 
 If no clear actions, return [].
 
@@ -653,6 +656,9 @@ Each object in the array must have:
 - "aim": short name (2-6 words)
 - "description": what this analysis computes or reveals (1 sentence)
 - "datasets": list of dataset names to use
+- "goal" (optional): one-sentence purpose of this analysis
+- "columns" (optional): list of specific column names examined
+- "insight" (optional): what insight or finding the user can expect
 
 If no clear aims, return [].
 

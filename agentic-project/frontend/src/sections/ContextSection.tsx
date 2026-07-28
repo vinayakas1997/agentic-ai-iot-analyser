@@ -99,7 +99,7 @@ export default function ContextSection() {
       </div>
 
       {displaySession && (
-        <div className="rounded-xl border border-border bg-surface-1 p-4 mb-4 shadow-[0_1px_0_rgba(255,255,255,0.02)_inset,0_8px_24px_-12px_rgba(0,0,0,0.5)]">
+        <div className="rounded-xl border border-border bg-surface-1 p-4 mb-4 shadow-[0_1px_0_rgba(255,255,255,0.03)_inset,0_4px_6px_-4px_rgba(0,0,0,0.4),0_12px_32px_-16px_rgba(0,0,0,0.6)]">
           <div className="flex items-center gap-2 text-sm font-semibold text-text mb-3">
             <span className="inline-flex items-center justify-center w-[22px] h-[22px] rounded-[7px] bg-ic-blue-soft text-ic-blue">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" width="13" height="13" strokeWidth="2.2"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 3"/></svg>
@@ -153,7 +153,7 @@ export default function ContextSection() {
         </div>
       )}
 
-      <div className="rounded-xl border border-border bg-surface-1 p-4 shadow-[0_1px_0_rgba(255,255,255,0.02)_inset,0_8px_24px_-12px_rgba(0,0,0,0.5)]">
+      <div className="rounded-xl border border-border bg-surface-1 p-4 shadow-[0_1px_0_rgba(255,255,255,0.03)_inset,0_4px_6px_-4px_rgba(0,0,0,0.4),0_12px_32px_-16px_rgba(0,0,0,0.6)]">
         <div className="flex items-center gap-2 text-sm font-semibold text-text mb-3">
           <span className="inline-flex items-center justify-center w-[22px] h-[22px] rounded-[7px] bg-ic-amber-soft text-ic-amber">
             <IconDatabase size={13} />
@@ -168,7 +168,7 @@ export default function ContextSection() {
         ) : (
           <div className="space-y-2">
             {selectedDatasetInfos.map((ds) => (
-              <div key={ds.dataset_name} className="rounded-lg border border-border/40 bg-surface-2/50">
+              <div key={ds.dataset_name} className="rounded-lg border border-border/40 bg-surface-2/50 shadow-[0_2px_6px_-3px_rgba(0,0,0,0.5),0_1px_0_rgba(255,255,255,0.03)_inset]">
                 <div className="flex items-center gap-2 px-3 py-2">
                   <div className="flex-1 min-w-0">
                     <div className="text-sm font-medium text-text truncate">{ds.dataset_name}</div>
@@ -179,7 +179,7 @@ export default function ContextSection() {
                   <span className="text-[11px] text-muted shrink-0">{ds.column_definitions.length} cols</span>
                   <button
                     type="button"
-                    className="text-[11px] font-medium text-accent hover:text-accent/80 transition-colors shrink-0"
+                    className="text-[11px] font-medium px-2.5 py-1 rounded-full bg-white/5 text-muted hover:bg-white/10 hover:text-text border border-border/30 transition-all shrink-0"
                     onClick={() => setExpandedDataset(expandedDataset === ds.dataset_name ? null : ds.dataset_name)}
                   >
                     {expandedDataset === ds.dataset_name ? t("common.hide") : t("common.details")}
@@ -187,7 +187,7 @@ export default function ContextSection() {
                   {storeAttached.includes(ds.dataset_name) ? (
                     lockedByAims.includes(ds.dataset_name) ? (
                       <span
-                        className="text-[11px] font-medium text-ic-amber/60 cursor-not-allowed shrink-0"
+                        className="text-[11px] font-medium px-2.5 py-1 rounded-full bg-ic-amber/15 text-ic-amber/60 border border-ic-amber/25 cursor-not-allowed shrink-0"
                         title={t("common.lockedByAim")}
                       >
                         {t("context.locked")}
@@ -195,7 +195,7 @@ export default function ContextSection() {
                     ) : (
                       <button
                         type="button"
-                        className="text-[11px] font-medium text-ic-teal hover:text-text transition-colors shrink-0"
+                        className="text-[11px] font-medium px-2.5 py-1 rounded-full bg-ic-teal/15 text-ic-teal border border-ic-teal/25 hover:bg-ic-teal/25 transition-all shrink-0"
                         onClick={() => storeDetach(ds.dataset_name)}
                       >
                         {t("common.inUse")}
@@ -204,7 +204,7 @@ export default function ContextSection() {
                   ) : (
                     <button
                       type="button"
-                      className="text-[11px] font-medium text-accent hover:text-accent/80 transition-colors shrink-0"
+                      className="text-[11px] font-medium px-2.5 py-1 rounded-full bg-accent/15 text-accent border border-accent/25 hover:bg-accent/25 shadow-[0_1px_3px_-1px_rgba(0,0,0,0.3)] transition-all shrink-0"
                       onClick={() => storeAttach(ds.dataset_name)}
                     >
                       {t("common.use")}
@@ -213,7 +213,7 @@ export default function ContextSection() {
                   {!lockedByAims.includes(ds.dataset_name) && (
                     <button
                       type="button"
-                      className="text-muted hover:text-text transition-colors shrink-0"
+                      className="w-5 h-5 rounded-md bg-white/[0.04] hover:bg-red-500/15 hover:text-red-400 border border-border/20 transition-all shrink-0 flex items-center justify-center text-xs leading-none"
                       onClick={() => storeRemove(ds.dataset_name)}
                     >
                       ×
@@ -221,7 +221,12 @@ export default function ContextSection() {
                   )}
                 </div>
                 {expandedDataset === ds.dataset_name && (
-                  <div className="px-3 pb-3">
+                  <div className="px-3 pb-3 space-y-2">
+                    {ds.description && (
+                      <div className="text-[11px] text-muted leading-relaxed bg-white/[0.02] rounded-lg px-3 py-2 border border-border/20 shadow-[inset_0_1px_1px_rgba(0,0,0,0.2)]">
+                        {ds.description}
+                      </div>
+                    )}
                     <DatasetColumns columns={ds.column_definitions} />
                   </div>
                 )}
@@ -231,7 +236,7 @@ export default function ContextSection() {
         )}
       </div>
 
-      <div className="rounded-xl border border-border bg-surface-1 p-4 mt-4 shadow-[0_1px_0_rgba(255,255,255,0.02)_inset,0_8px_24px_-12px_rgba(0,0,0,0.5)]">
+      <div className="rounded-xl border border-border bg-surface-1 p-4 mt-4 shadow-[0_1px_0_rgba(255,255,255,0.03)_inset,0_4px_6px_-4px_rgba(0,0,0,0.4),0_12px_32px_-16px_rgba(0,0,0,0.6)]">
         <div className="flex items-center gap-2 text-sm font-semibold text-text mb-3">
           <span className="inline-flex items-center justify-center w-[22px] h-[22px] rounded-[7px] bg-ic-teal-soft text-ic-teal">
             <IconDatabase size={13} />
@@ -246,7 +251,7 @@ export default function ContextSection() {
         ) : (
           <div className="space-y-2">
             {personalDatasets.map((ds) => (
-              <div key={ds.id} className="rounded-lg border border-border/40 bg-surface-2/50">
+              <div key={ds.id} className="rounded-lg border border-border/40 bg-surface-2/50 shadow-[0_2px_6px_-3px_rgba(0,0,0,0.5),0_1px_0_rgba(255,255,255,0.03)_inset]">
                 <div className="flex items-center gap-2 px-3 py-2">
                   <div className="flex-1 min-w-0">
                     <div className="text-sm font-medium text-text truncate">{ds.dataset_name}</div>
@@ -257,7 +262,7 @@ export default function ContextSection() {
                   <span className="text-[11px] text-muted shrink-0">{ds.column_definitions.length} cols</span>
                   <button
                     type="button"
-                    className="text-[11px] font-medium text-accent hover:text-accent/80 transition-colors shrink-0"
+                    className="text-[11px] font-medium px-2.5 py-1 rounded-full bg-white/5 text-muted hover:bg-white/10 hover:text-text border border-border/30 transition-all shrink-0"
                     onClick={() => setExpandedDataset(expandedDataset === ds.dataset_name ? null : ds.dataset_name)}
                   >
                     {expandedDataset === ds.dataset_name ? t("common.hide") : t("common.details")}
@@ -265,7 +270,7 @@ export default function ContextSection() {
                   {storeAttached.includes(ds.dataset_name) ? (
                     <button
                       type="button"
-                      className="text-[11px] font-medium text-ic-teal hover:text-text transition-colors shrink-0"
+                      className="text-[11px] font-medium px-2.5 py-1 rounded-full bg-ic-teal/15 text-ic-teal border border-ic-teal/25 hover:bg-ic-teal/25 transition-all shrink-0"
                       onClick={() => storeDetach(ds.dataset_name)}
                     >
                       {t("common.inUse")}
@@ -273,7 +278,7 @@ export default function ContextSection() {
                   ) : (
                     <button
                       type="button"
-                      className="text-[11px] font-medium text-accent hover:text-accent/80 transition-colors shrink-0"
+                      className="text-[11px] font-medium px-2.5 py-1 rounded-full bg-accent/15 text-accent border border-accent/25 hover:bg-accent/25 shadow-[0_1px_3px_-1px_rgba(0,0,0,0.3)] transition-all shrink-0"
                       onClick={() => storeAttach(ds.dataset_name)}
                     >
                       {t("common.use")}
@@ -281,7 +286,7 @@ export default function ContextSection() {
                   )}
                   <button
                     type="button"
-                    className="text-muted hover:text-accent transition-colors shrink-0"
+                    className="w-5 h-5 rounded-md bg-white/[0.04] hover:bg-accent/15 hover:text-accent border border-border/20 transition-all shrink-0 flex items-center justify-center"
                     onClick={() => setEditingDataset(ds)}
                     title="Edit column meanings"
                   >
@@ -289,7 +294,7 @@ export default function ContextSection() {
                   </button>
                   <button
                     type="button"
-                    className="text-muted hover:text-ic-amber transition-colors shrink-0"
+                    className="w-5 h-5 rounded-md bg-white/[0.04] hover:bg-ic-amber/15 hover:text-ic-amber border border-border/20 transition-all shrink-0 flex items-center justify-center"
                     onClick={() => handleDeletePersonalDataset(ds)}
                     title={t("context.deleteDatasetTitle")}
                   >
@@ -297,7 +302,12 @@ export default function ContextSection() {
                   </button>
                 </div>
                 {expandedDataset === ds.dataset_name && (
-                  <div className="px-3 pb-3">
+                  <div className="px-3 pb-3 space-y-2">
+                    {ds.description && (
+                      <div className="text-[11px] text-muted leading-relaxed bg-white/[0.02] rounded-lg px-3 py-2 border border-border/20 shadow-[inset_0_1px_1px_rgba(0,0,0,0.2)]">
+                        {ds.description}
+                      </div>
+                    )}
                     <DatasetColumns columns={ds.column_definitions} />
                   </div>
                 )}

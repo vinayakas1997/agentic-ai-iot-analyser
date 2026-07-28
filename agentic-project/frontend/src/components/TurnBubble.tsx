@@ -1,6 +1,6 @@
 import { useMemo } from "react";
-import { monoClass } from "../lib/styles";
-import { IconUser, IconStar, IconGrid } from "../lib/icons";
+import { monoClass, fieldLabelClass, insightNoteClass } from "../lib/styles";
+import { IconUser, IconStar, IconGrid, IconDatabase, IconTarget } from "../lib/icons";
 import { datasetColor } from "../lib/datasetColors";
 import { QueryActions, QueryResultState } from "../sections/QueryActions";
 import type { Turn, AnalysisAction } from "../types/manager";
@@ -178,6 +178,72 @@ export function TurnBubble({ turn, queryResult, selectedAims, runningAim, loadin
 
   const parsedSuggestions = useMemo(() => parseSuggestions(turn.agent), [turn.agent]);
 
+  const actionCards = useMemo(() => {
+    if (parsedSuggestions || !turn.analysis_actions?.length) return null;
+    return (
+      <div className="mt-3 space-y-2">
+        {turn.analysis_actions.map((action, i) => (
+          <div key={i} className="rounded-xl border border-border/40 bg-surface-1/60 p-3">
+            <div className="flex items-center gap-2 mb-1.5">
+              <span className="inline-flex items-center justify-center w-5 h-5 rounded-full bg-stage-manager/10 text-stage-manager text-[10px] font-bold shrink-0">
+                {i + 1}
+              </span>
+              <h4 className="font-semibold text-sm text-text leading-snug">{action.name}</h4>
+            </div>
+            {action.goal && (
+              <div className="flex items-start gap-1.5 text-[13px] text-text/80 mb-2 pl-0.5">
+                <IconTarget size={12} className="mt-0.5 text-ic-amber shrink-0" />
+                <span>{action.goal}</span>
+              </div>
+            )}
+            {action.datasets && action.datasets.length > 0 && (
+              <div className="mb-2">
+                <div className={fieldLabelClass}>
+                  <IconDatabase size={11} />
+                  {t("common.datasets")}
+                </div>
+                <div className="flex flex-wrap gap-1">
+                  {action.datasets.map((d, j) => (
+                    <span key={j} className={`${monoClass} text-[11px] px-2 py-0.5 rounded-full border ${datasetColor(d)}`}>
+                      {d}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            )}
+            {action.columns && action.columns.length > 0 && (
+              <div className="mb-2">
+                <div className={fieldLabelClass}>
+                  <IconGrid size={11} />
+                  {t("common.columns")}
+                </div>
+                <div className="flex flex-wrap gap-1">
+                  {action.columns.map((c, j) => (
+                    <span key={j} className={`${monoClass} text-[11px] px-2 py-0.5 rounded-full border border-border/50 text-muted bg-black/[0.03]`}>
+                      {c}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            )}
+            {action.description && (
+              <p className="text-[13px] text-text/70 leading-relaxed mb-1.5">
+                <ReactMarkdown remarkPlugins={[remarkGfm]} components={{ p: ({ children }) => <>{children}</> }}>
+                  {escapeAsterisks(action.description)}
+                </ReactMarkdown>
+              </p>
+            )}
+            {action.insight && (
+              <p className={insightNoteClass}>
+                <strong>{t("suggestion.expectedInsight")}</strong> {action.insight}
+              </p>
+            )}
+          </div>
+        ))}
+      </div>
+    );
+  }, [parsedSuggestions, turn.analysis_actions, datasets, t]);
+
   const agentContent = (
     <div className="flex-1 min-w-0">
       <div className="prose-custom text-sm text-text/90">
@@ -196,6 +262,7 @@ export function TurnBubble({ turn, queryResult, selectedAims, runningAim, loadin
           <ReactMarkdown remarkPlugins={[remarkGfm, remarkBreaks]}>{escapeAsterisks(turn.agent)}</ReactMarkdown>
         )}
       </div>
+      {actionCards}
       {deepIterationBlocks}
       {turn.description && (
         <div className="rounded-xl border-l-3 border-l-ic-blue bg-ic-blue-soft/10 border border-border/40 p-3 mb-3">

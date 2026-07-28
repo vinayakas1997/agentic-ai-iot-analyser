@@ -100,11 +100,17 @@ class AimProposal(BaseModel):
     aim: str
     description: str = ""
     datasets: list[str] = []
+    goal: str | None = None
+    columns: list[str] | None = None
+    insight: str | None = None
 
 class AnalysisAction(BaseModel):
     name: str
     description: str = ""
     datasets: list[str] = []
+    goal: str | None = None
+    columns: list[str] | None = None
+    insight: str | None = None
 
 class SummarizeContextRequest(BaseModel):
     tag: str
@@ -1473,7 +1479,7 @@ async def send_message(req: MessageRequest):
     # SUGGEST route: map parsed proposals directly to analysis_actions (no extra LLM call)
     elif route.lower() == "suggest" and handler_proposals:
         analysis_actions_raw = [
-            {"name": p["aim"], "description": p.get("description", ""), "datasets": p.get("datasets", [])}
+            {"name": p["aim"], "description": p.get("description", ""), "datasets": p.get("datasets", []), "goal": p.get("goal"), "columns": p.get("columns"), "insight": p.get("insight")}
             for p in handler_proposals
             if isinstance(p, dict) and p.get("aim")
         ]

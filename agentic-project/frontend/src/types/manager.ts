@@ -119,7 +119,7 @@ export interface MessageResponse {
   description?: string | null;
   benefits?: string | null;
   columns?: { dataset: string; name: string }[] | null;
-  aim_proposals?: { aim: string; description: string; datasets: string[] }[];
+  aim_proposals?: { aim: string; description: string; datasets: string[]; goal?: string; columns?: string[]; insight?: string }[];
   analysis_actions?: AnalysisAction[];
   result_uuid?: string;
   query_result?: {
@@ -137,6 +137,9 @@ export interface AnalysisAction {
   name: string;
   description: string;
   datasets: string[];
+  goal?: string;
+  columns?: string[];
+  insight?: string;
 }
 
 export interface DeepIteration {

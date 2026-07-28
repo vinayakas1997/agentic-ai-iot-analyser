@@ -4,7 +4,7 @@ import { useT } from "../lib/i18n";
 export function DatasetColumns({ columns }: { columns: { name: string; datatype: string; meaning?: string }[] }) {
   const t = useT();
   return (
-    <div className="rounded-lg border border-border/50 bg-surface-2 overflow-hidden">
+    <div className="rounded-lg border border-border/40 bg-gradient-to-b from-black/[0.04] to-transparent overflow-hidden shadow-[inset_0_1px_2px_rgba(0,0,0,0.3)]">
       <table className="w-full text-xs">
         <thead>
           <tr className="text-[10px] font-semibold tracking-wider uppercase text-tertiary bg-black/[0.08]">
