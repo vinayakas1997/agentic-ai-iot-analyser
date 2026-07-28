@@ -1,6 +1,7 @@
 import { IconTarget, IconChart } from "../lib/icons";
 import { QueryResultState } from "../sections/QueryActions";
 import { useT, tCount } from "../lib/i18n";
+import { useSessionStore } from "../stores/sessionStore";
 
 interface Aim {
   aim: string;
@@ -20,7 +21,6 @@ interface ViewingResultState {
 export function AimBar({
   selectedAims,
   aimResults,
-  completedActions,
   runningAim,
   loading,
   onRunSql,
@@ -31,7 +31,6 @@ export function AimBar({
 }: {
   selectedAims: Aim[];
   aimResults: Record<string, QueryResultState>;
-  completedActions: Record<string, string>;
   runningAim: string | null;
   loading: boolean;
   onRunSql: (aim: Aim) => void;
@@ -41,6 +40,7 @@ export function AimBar({
   onPreview: (aim: Aim) => void;
 }) {
   const t = useT();
+  const completedActions = useSessionStore((s) => s.completedActions);
   if (selectedAims.length === 0) return null;
 
   return (

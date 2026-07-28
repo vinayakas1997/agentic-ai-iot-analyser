@@ -11,11 +11,17 @@ import { parseSuggestions } from "../lib/parseSuggestions";
 import { SuggestionCard } from "./SuggestionCard";
 import type { DatasetInfo } from "../types";
 import { useT } from "../lib/i18n";
+import { useSessionStore } from "../stores/sessionStore";
 
-export function TurnBubble({ turn, queryResult, completedActions, selectedAims, runningAim, loading, onToggleAction, onScrollToTurn, onRerunAim, datasets }: {
+function escapeAsterisks(text: string): string {
+  return text.replace(/\*\*/g, "\x00BOLD\x00")
+    .replace(/\*/g, "\\*")
+    .replace(/\x00BOLD\x00/g, "**");
+}
+
+export function TurnBubble({ turn, queryResult, selectedAims, runningAim, loading, onToggleAction, onScrollToTurn, onRerunAim, datasets }: {
   turn: Turn;
   queryResult?: QueryResultState;
-  completedActions?: Record<string, string>;
   selectedAims?: { aim: string }[];
   runningAim?: string | null;
   loading?: boolean;
@@ -25,6 +31,7 @@ export function TurnBubble({ turn, queryResult, completedActions, selectedAims, 
   datasets?: DatasetInfo[];
 }) {
   const t = useT();
+  const completedActions = useSessionStore((s) => s.completedActions);
   const hasDetail = turn.description || turn.benefits || (turn.columns && turn.columns.length > 0);
   const hasActions = turn.analysis_actions && turn.analysis_actions.length > 0;
 
@@ -35,7 +42,7 @@ export function TurnBubble({ turn, queryResult, completedActions, selectedAims, 
         {turn.analysis_actions!.map((action, i) => {
           const key = `${turn.created_at}:${action.name}`;
           const isThisLoading = runningAim === action.name;
-          const isCompleted = completedActions && completedActions[action.name] !== undefined;
+          const isCompleted = completedActions[action.name] !== undefined;
           const isAttached = selectedAims?.some(a => a.aim === action.name);
 
           if (isThisLoading) {
@@ -159,7 +166,7 @@ export function TurnBubble({ turn, queryResult, completedActions, selectedAims, 
                 {t("turn.iteration", { count: idx + 1 })}
               </div>
               <div className="prose-custom text-sm text-text/90 mb-3">
-                <ReactMarkdown remarkPlugins={[remarkGfm, remarkBreaks]}>{iter.explanation}</ReactMarkdown>
+                <ReactMarkdown remarkPlugins={[remarkGfm, remarkBreaks]}>{escapeAsterisks(iter.explanation)}</ReactMarkdown>
               </div>
               <QueryActions queryResult={iterResult} />
             </div>
@@ -177,7 +184,7 @@ export function TurnBubble({ turn, queryResult, completedActions, selectedAims, 
         {parsedSuggestions ? (
           <>
             {parsedSuggestions.intro && (
-              <ReactMarkdown remarkPlugins={[remarkGfm, remarkBreaks]}>{parsedSuggestions.intro}</ReactMarkdown>
+              <ReactMarkdown remarkPlugins={[remarkGfm, remarkBreaks]}>{escapeAsterisks(parsedSuggestions.intro)}</ReactMarkdown>
             )}
             <div className="mt-2">
               {parsedSuggestions.suggestions.map((s, i) => (
@@ -186,7 +193,7 @@ export function TurnBubble({ turn, queryResult, completedActions, selectedAims, 
             </div>
           </>
         ) : (
-          <ReactMarkdown remarkPlugins={[remarkGfm, remarkBreaks]}>{turn.agent}</ReactMarkdown>
+          <ReactMarkdown remarkPlugins={[remarkGfm, remarkBreaks]}>{escapeAsterisks(turn.agent)}</ReactMarkdown>
         )}
       </div>
       {deepIterationBlocks}

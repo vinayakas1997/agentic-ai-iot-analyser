@@ -44,17 +44,14 @@ def language_instruction(language: str) -> str:
 
 ROUTER_PROMPT = """Classify the user's question into one of these categories:
 
-1. DIRECT — User asks a specific factual question (e.g., "which fruit has the highest sale?", "what is the average cost?", "show me sales by region"). The question can be answered with a single SQL query.
+1. SUGGEST — User explores possibilities (e.g., "what can I do?", "what analyses are possible?", "give me ideas", "explain", "describe the data", "tell me about the data"). No specific question, just looking for direction.
 
-2. SUGGEST — User explores possibilities (e.g., "what can I do?", "what analyses are possible?", "give me ideas", "explain", "describe the data", "tell me about the data"). No specific question, just looking for direction.
+2. FOCUS — User wants to run any data analysis (e.g., "which fruit has the highest sale?", "what is the average cost?", "show me sales by region", "tell me more about quality impact", "elaborate on sales trends", "go deeper into this analysis", "analyze everything", "do a full analysis"). This covers specific factual questions, deep-dives, and comprehensive research — anything that requires running SQL.
 
-3. FOCUS — User wants to deep-dive on one specific analysis topic (e.g., "tell me more about quality impact", "elaborate on sales trends", "go deeper into this analysis").
-
-4. DEEP — User wants comprehensive research or a full analysis (e.g., "analyze everything", "do a full analysis of sales", "research this topic thoroughly", "give me a complete picture"). Requires multiple queries to build a complete understanding.
-
+{aims_context}
 User question: {question}
 
-Respond with ONLY the category name: DIRECT, SUGGEST, FOCUS, or DEEP."""
+Respond with ONLY the category name: SUGGEST or FOCUS."""
 
 DIRECT_PROMPT = """You are a data analysis assistant. Current mode: RESEARCH — DIRECT ANSWER.
 
@@ -159,54 +156,7 @@ After the SQL code block and before your interpretation, output ONE line:
 - Choose **no** if the result is a single number/row, a simple max/min/count/aggregate, or has too few dimensions for a meaningful chart
 """
 
-DEEP_PROMPT = """You are a data analysis assistant. Current mode: RESEARCH — DEEP RESEARCH.
 
-You are conducting a multi-step research investigation. You have access to previous query results and must decide what to explore next.
-
-## Available Datasets
-{context}
-{enrichment_instruction}
-{language_instruction}
-
-## Previous Iterations
-{previous_results}
-
-## Instructions
-1. Based on the previous results, decide the NEXT analysis to run
-2. Write ONE SQL query wrapped in ```sql code block
-3. After the SQL, explain:
-   - Why this query is the logical next step
-   - What insight it will reveal
-4. End your response with one of:
-   - **CONTINUE** — There's more to explore. Continue the research.
-   - **DONE** — The research is complete. Here's the comprehensive summary.
-
-## Rules
-- Each query must build on previous results
-- Never repeat a query that was already executed
-- Maximum 5 iterations total
-- Only use columns and tables from the datasets above
-- In the FROM/JOIN clause, use the exact "SQL table name" given in parentheses for each dataset — NOT the dataset's display name if they differ
-- When DONE, provide a comprehensive summary of all findings
-
-## Chart Decision
-After the SQL code block and before your interpretation, output ONE line:
-[CHART_DECISION: yes] or [CHART_DECISION: no]
-
-- Choose **[CHART_DECISION: yes]** when the query result has **3+ rows** and **at least 2 numeric columns** that can be compared on a chart — for example:
-  - `sales by month` (x=month, y=sales)
-  - `quantity by region` (x=region, y=quantity)
-  - `price trends over time` (x=date, y=price)
-  - Any multi-row result where a bar, line, or pie chart would reveal patterns at a glance
-
-- Choose **[CHART_DECISION: no]** when the result is:
-  - A single row or single value (e.g. `total sales = 5000`)
-  - A simple count or aggregation with only one meaningful column
-  - A result with only 1-2 rows (not enough data for a chart)
-  - A list of distinct values with no numeric comparison to make
-
-Be decisive — if the result is rich enough to visualize, say **yes**.
-"""
 
 INTERPRET_PROMPT = """You are a data analysis assistant. Interpret the SQL query results below.
 
@@ -431,18 +381,17 @@ def parse_numbered_suggestions(text: str, known_datasets: list[str] | None = Non
     return proposals[:5]
 
 
-def route_prompt(question: str) -> str:
-    """Build the router prompt with the user's question."""
-    return ROUTER_PROMPT.replace("{question}", question)
-
-
-def deep_prompt(context: str, previous_results: str, language: str = "en") -> str:
-    """Build the DEEP prompt with context and previous results."""
-    return DEEP_PROMPT.replace("{context}", context).replace(
-        "{enrichment_instruction}", ENRICHMENT_INSTRUCTION
-    ).replace("{previous_results}", previous_results).replace(
-        "{language_instruction}", language_instruction(language)
-    )
+def route_prompt(question: str, attached_aims: list[str] | None = None) -> str:
+    """Build the router prompt with the user's question and optional aims context."""
+    aims_context = ""
+    if attached_aims:
+        aims_text = "; ".join(attached_aims)
+        aims_context = (
+            f"The user has an active analysis topic: \"{aims_text}\".\n"
+            f"If they ask for new ideas, other analyses, or what else they can explore → SUGGEST.\n"
+            f"If they want to continue digging into the current topic → FOCUS.\n"
+        )
+    return ROUTER_PROMPT.replace("{question}", question).replace("{aims_context}", aims_context)
 
 
 def direct_prompt(context: str, language: str = "en") -> str:
@@ -468,7 +417,7 @@ def focus_prompt(context: str, language: str = "en") -> str:
 
 # ── LLM Calls ──
 
-async def classify_route(question: str) -> str:
+async def classify_route(question: str, attached_aims: list[str] | None = None) -> str:
     """Classify user question into a research route."""
     t0 = time.time()
     try:
@@ -478,23 +427,23 @@ async def classify_route(question: str) -> str:
             model=settings.llm_model,
             messages=[
                 {"role": "system", "content": "You are a question classifier for a data analysis assistant. Respond with only the category name."},
-                {"role": "user", "content": route_prompt(question)},
+                {"role": "user", "content": route_prompt(question, attached_aims)},
             ],
             max_tokens=10,
             temperature=0.1,
             extra_body={"chat_template_kwargs": {"enable_thinking": False}},
         )
         route = response.choices[0].message.content.strip().upper()
-        if route in ("DIRECT", "SUGGEST", "FOCUS", "DEEP"):
+        if route in ("SUGGEST", "FOCUS"):
             log_route(question, route, time.time() - t0)
             return route
-        logger.warning("Unknown route '%s', defaulting to DIRECT", route)
-        log_route(question, "DIRECT(fallback:unknown)", time.time() - t0)
-        return "DIRECT"
+        logger.warning("Unknown route '%s', defaulting to FOCUS", route)
+        log_route(question, "FOCUS(fallback:unknown)", time.time() - t0)
+        return "FOCUS"
     except Exception as e:
         logger.exception("Route classification failed")
-        log_route(question, f"DIRECT(fallback:error)", time.time() - t0)
-        return "DIRECT"
+        log_route(question, f"FOCUS(fallback:error)", time.time() - t0)
+        return "FOCUS"
 
 
 async def generate_llm_response(system_prompt: str, question: str, max_tokens: int | None = None) -> str:

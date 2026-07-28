@@ -90,6 +90,8 @@ export const translations: Record<Language, Record<string, string>> = {
     "output.noResultsHint": "Run an aim from the chat to collect analysis results here",
     "output.title": "Analysis Results",
     "output.clearAll": "Clear all",
+    "output.summarize": "Summarize",
+    "output.summarizing": "Summarizing...",
     "output.added": "Added",
     "output.addLabel": "+ Add",
     "output.addedTooltip": "Added for analysis — click to detach",
@@ -101,6 +103,8 @@ export const translations: Record<Language, Record<string, string>> = {
     "output.showContext": "ℹ Show Context",
     "output.enrichmentContextFor": 'Enrichment context for "{aim}"',
     "output.noPriorContext": "No prior context for this aim.",
+    "output.nothingToShow": "Nothing to show yet — results from analysis will appear here",
+    "output.proposals": "Other Proposals",
 
     // QueryActions
     "query.generating": "Generating query...",
@@ -273,6 +277,8 @@ export const translations: Record<Language, Record<string, string>> = {
     "output.noResultsHint": "チャットから分析目的を実行すると、ここに分析結果が表示されます",
     "output.title": "分析結果",
     "output.clearAll": "すべてクリア",
+    "output.summarize": "要約",
+    "output.summarizing": "要約中...",
     "output.added": "追加済み",
     "output.addLabel": "+ 追加",
     "output.addedTooltip": "分析に追加済み — クリックで取り外す",
@@ -284,6 +290,8 @@ export const translations: Record<Language, Record<string, string>> = {
     "output.showContext": "ℹ コンテキストを表示",
     "output.enrichmentContextFor": "「{aim}」のコンテキスト",
     "output.noPriorContext": "この分析目的の過去のコンテキストはありません。",
+    "output.nothingToShow": "まだ何も表示されていません — 分析結果がここに表示されます",
+    "output.proposals": "その他の提案",
 
     "query.generating": "クエリを生成中...",
     "query.sqlQuery": "SQLクエリ",

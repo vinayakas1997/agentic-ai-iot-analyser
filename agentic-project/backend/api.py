@@ -10,10 +10,10 @@ from fastapi import APIRouter, HTTPException, UploadFile, File, Form
 from pydantic import BaseModel
 
 from resolve import resolve_line_lookup, fetch_datasets, save_task_definition
-from aims import generate_chat_response, generate_sql, fix_sql, criticize_sql, extract_aims_from_text, extract_analysis_actions, suggest_charts, _fallback_chart_configs, generate_aim
+from aims import generate_chat_response, generate_sql, fix_sql, criticize_sql, extract_aims_from_text, extract_analysis_actions, _fallback_chart_configs, _enrich_multi_dim_configs, generate_aim
 from llm_client import parse_numbered_suggestions
 from logger import log_route, log_llm_call, log_sql, log_aims, log_response, log_full_prompt
-from llm_client import summarize_turns, classify_route, extract_sql, extract_sql_fallback, generate_llm_response, interpret_results, direct_prompt, suggest_prompt, focus_prompt, deep_prompt, language_instruction
+from llm_client import summarize_turns, classify_route, extract_sql, extract_sql_fallback, generate_llm_response, interpret_results, direct_prompt, suggest_prompt, focus_prompt, language_instruction
 from focus_agent import run_focus_agent, normalize_halfwidth
 from sql_executor import validate_sql
 from sql_executor import execute_sql
@@ -237,28 +237,19 @@ class ConfirmRegistryEntryRequest(BaseModel):
 # ── Helpers ──
 
 async def _build_chart_suggestions(result: dict) -> ChartSuggestions | None:
-    """Build chart suggestions from SQL result, falling back to rules on failure."""
+    """Build chart suggestions from SQL result — rule-based + LLM-enriched for multi-dim charts."""
     if not result.get("columns") or not result.get("rows"):
         return None
-    try:
-        suggestions_raw = await suggest_charts(
-            columns=result["columns"],
-            column_types=result.get("column_types", []),
-            rows=result["rows"],
-        )
-        return ChartSuggestions(
-            advanced=[ChartConfig(**c) for c in suggestions_raw.get("advanced", [])],
-            basic=[ChartConfig(**c) for c in suggestions_raw.get("basic", [])],
-        )
-    except Exception as chart_err:
-        logger.warning("Chart suggestion failed: %s", str(chart_err)[:200])
-        fallback = _fallback_chart_configs(
-            result["columns"], result.get("column_types", []), result["rows"]
-        )
-        return ChartSuggestions(
-            advanced=[ChartConfig(**c) for c in fallback.get("advanced", [])],
-            basic=[ChartConfig(**c) for c in fallback.get("basic", [])],
-        )
+    raw = _fallback_chart_configs(
+        result["columns"], result.get("column_types", []), result["rows"]
+    )
+    raw = await _enrich_multi_dim_configs(
+        result["columns"], result.get("column_types", []), result["rows"], raw
+    )
+    return ChartSuggestions(
+        advanced=[ChartConfig(**c) for c in raw.get("advanced", [])],
+        basic=[ChartConfig(**c) for c in raw.get("basic", [])],
+    )
 
 # ── Enrichment ──
 
@@ -1112,11 +1103,7 @@ async def _handle_focus_multi(
         aim_question = f"{message}\n\nFocus specifically on this aim: {aim}" + (f" — {desc}" if desc else "")
         raw = await generate_llm_response(system_prompt=system_prompt, question=aim_question)
 
-        chart_decision = re.search(r'\[CHART_DECISION:\s*(yes|no)\]', raw, re.IGNORECASE)
-        chart_needed = chart_decision and chart_decision.group(1).lower() == "yes"
-        clean_raw = re.sub(r'\s*\[CHART_DECISION:\s*(yes|no)\]\s*', ' ', raw).strip()
-
-        sql = extract_sql(clean_raw) or extract_sql_fallback(clean_raw)
+        sql = extract_sql(raw) or extract_sql_fallback(raw)
         if not sql:
             per_aim_summaries.append(f"### {aim}\n{clean_raw}")
             continue
@@ -1128,10 +1115,8 @@ async def _handle_focus_multi(
             per_aim_summaries.append(f"### {aim}\nCould not complete this analysis: {str(e)[:200]}")
             continue
 
-        chart_suggestions = None
-        if chart_needed:
-            cs = await _build_chart_suggestions(result)
-            chart_suggestions = cs.model_dump() if hasattr(cs, "model_dump") else cs
+        cs = await _build_chart_suggestions(result)
+        chart_suggestions = cs.model_dump() if hasattr(cs, "model_dump") else cs
 
         interpretation = await interpret_results(
             question=aim_question, sql=result.get("sql", ""), result=result, language=language
@@ -1211,6 +1196,7 @@ async def _handle_focus(
                     "query_result": None,
                 }
 
+    # Agentic tool-calling loop (handles everything — simple queries, deep-dives, comprehensive analysis)
     context = await _build_context(dataset_names, datasets_data, attached_aims, aim_descriptions, include_samples=False)
     agent_result = await run_focus_agent(
         message=message,
@@ -1230,9 +1216,7 @@ async def _handle_focus(
             "query_result": None,
         }
 
-    chart_suggestions = None
-    if agent_result["chart_needed"]:
-        chart_suggestions = await _build_chart_suggestions(result)
+    chart_suggestions = await _build_chart_suggestions(result)
     result_with_charts = {**result, "chart_suggestions": chart_suggestions}
 
     result_uuid = str(uuid.uuid4())
@@ -1240,130 +1224,6 @@ async def _handle_focus(
         "agent_message": agent_result["agent_message"],
         "result_uuid": result_uuid,
         "query_result": result_with_charts,
-    }
-
-
-async def _handle_deep(
-    message: str,
-    dataset_names: list[str],
-    datasets_data: list[dict],
-    attached_aims: list[str],
-    enrichment_block: str = "",
-    max_iterations: int = 3,
-    aim_descriptions: dict[str, str] | None = None,
-    session_state: dict | None = None,
-    language: str = "en",
-):
-    """DEEP route: multi-iteration research — loop SQL → execute → analyze for N rounds."""
-    all_results = []
-    current_message = message
-    context = await _build_context(dataset_names, datasets_data, attached_aims, aim_descriptions)
-    final_msg = ""
-    last_clean = ""
-    deep_iterations = []
-    if enrichment_block:
-        context += f"\n\n## Previous Context\n{enrichment_block}"
-
-    for iteration in range(max_iterations):
-        prev_str = ""
-        if all_results:
-            prev_str = "; ".join(
-                f"Iter {r['iteration']}: {r.get('row_count', 0)} rows"
-                if r.get("result") else f"Iter {r['iteration']}: error/empty"
-                for r in all_results
-            )
-
-        raw = await generate_llm_response(
-            system_prompt=deep_prompt(
-                context=context,
-                previous_results=prev_str,
-                language=language,
-            ),
-            question=current_message,
-        )
-
-        chart_match = re.search(r'\[CHART_DECISION:\s*(yes|no)\]', raw, re.IGNORECASE)
-        chart_decision = chart_match.group(1).lower() if chart_match else "no"
-        clean = re.sub(r'\s*\[CHART_DECISION:\s*(yes|no)\]\s*', ' ', raw).strip()
-        last_clean = clean
-
-        if "**DONE**" in clean:
-            final_msg = clean
-            break
-
-        if iteration == max_iterations - 1:
-            final_msg = clean
-            break
-
-        sql = extract_sql(clean)
-        if not sql:
-            all_results.append({
-                "iteration": iteration,
-                "response": clean,
-                "sql": None,
-                "result": None,
-            })
-            continue
-
-        try:
-            sql = validate_sql(sql)
-        except ValueError as e:
-            all_results.append({
-                "iteration": iteration,
-                "response": clean,
-                "sql": sql,
-                "error": f"Validation: {str(e)}",
-                "result": None,
-            })
-            continue
-
-        try:
-            result = await execute_sql(sql)
-        except Exception as e:
-            all_results.append({
-                "iteration": iteration,
-                "response": clean,
-                "sql": sql,
-                "error": str(e)[:200],
-                "result": None,
-            })
-            continue
-
-        all_results.append({
-            "iteration": iteration,
-            "response": clean,
-            "sql": sql,
-            "result": result,
-            "row_count": result.get("row_count", 0),
-        })
-
-        # Build iteration block for frontend
-        chart_suggestions = None
-        if chart_decision == "yes" and result:
-            chart_suggestions = await _build_chart_suggestions(result)
-            if chart_suggestions:
-                chart_suggestions = chart_suggestions.model_dump() if hasattr(chart_suggestions, "model_dump") else chart_suggestions
-
-        deep_iterations.append({
-            "iteration": iteration,
-            "result_uuid": str(uuid.uuid4()),
-            "explanation": clean,
-            "sql": sql,
-            "columns": result.get("columns", []),
-            "column_types": result.get("column_types", []),
-            "rows": result.get("rows", []),
-            "row_count": result.get("row_count", 0),
-            "chart_suggestions": chart_suggestions,
-        })
-
-        current_message = f"My previous analysis found {result.get('row_count', 0)} rows. Given these results, what deeper insight can you uncover? Continue the multi-step research."
-
-    result_uuid = str(uuid.uuid4()) if deep_iterations else None
-    return {
-        "agent_message": final_msg or last_clean,
-        "result_uuid": result_uuid,
-        "query_result": None,
-        "deep_iterations": deep_iterations,
     }
 
 
@@ -1527,12 +1387,8 @@ async def send_message(req: MessageRequest):
     # RESEARCH mode: classify route and dispatch
     if req.route_override:
         route = req.route_override.lower()
-    elif req.attached_aims:
-        # An aim is pinned — the user wants a focused deep-dive on it, not generic
-        # suggestions or a plain factual lookup. Skip the text classifier entirely.
-        route = "focus"
     else:
-        route = await classify_route(question=req.message)
+        route = await classify_route(question=req.message, attached_aims=req.attached_aims)
 
     session_state = dict(session.state_json or {})
     enrichment_block = build_enrichment_block(
@@ -1551,15 +1407,9 @@ async def send_message(req: MessageRequest):
         else:
             enrichment_block = "## Conversation History\n" + conv_history
 
-    route_handlers = {
-        "direct": _handle_direct,
-        "suggest": _handle_suggest,
-        "focus": _handle_focus,
-        "deep": _handle_deep,
-    }
-    handler = route_handlers.get(route.lower(), _handle_suggest)
+    route = route.lower()
 
-    handler_result = await handler(
+    handler_kwargs = dict(
         message=req.message,
         dataset_names=dataset_names,
         datasets_data=datasets_data,
@@ -1569,6 +1419,11 @@ async def send_message(req: MessageRequest):
         session_state=session_state,
         language=req.language,
     )
+
+    if route == "suggest":
+        handler_result = await _handle_suggest(**handler_kwargs)
+    else:
+        handler_result = await _handle_focus(**handler_kwargs)
 
     agent_msg = handler_result["agent_message"]
     result_uuid = handler_result.get("result_uuid")
@@ -1611,9 +1466,9 @@ async def send_message(req: MessageRequest):
         and p.datasets
         and any(ds in known_set for ds in p.datasets)
     ]
-    # DIRECT route: extract actions from agent response text via secondary LLM call
+    # FOCUS/DIRECT/DEEP routes: extract actions from agent response text via secondary LLM call
     analysis_actions_raw = []
-    if dataset_names and route in ("direct",):
+    if dataset_names and route in ("direct", "focus", "deep"):
         analysis_actions_raw = await extract_analysis_actions(agent_msg, dataset_names)
     # SUGGEST route: map parsed proposals directly to analysis_actions (no extra LLM call)
     elif route.lower() == "suggest" and handler_proposals:

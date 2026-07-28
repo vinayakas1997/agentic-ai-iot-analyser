@@ -36,7 +36,7 @@ export default function ChatSection() {
   const chatQueryResults = useSessionStore((s) => s.chatQueryResults);
   const enrichmentMode = useSessionStore((s) => s.enrichmentMode);
   const contextSummaries = useSessionStore((s) => s.contextSummaries);
-  const setEnrichmentMode = useSessionStore((s) => s.setEnrichmentMode);
+
 
   const storeSelected = useDatasetStore((s) => s.selected);
   const storeToggle = useDatasetStore((s) => s.toggle);
@@ -52,7 +52,6 @@ export default function ChatSection() {
   const [input, setInput] = useState("");
   const [previewAim, setPreviewAim] = useState<Aim | null>(null);
   const selectedAims = useSessionStore((s) => s.selectedAims);
-  const storeCompletedActions = useSessionStore((s) => s.completedActions);
   const [expandedDataset, setExpandedDataset] = useState<string | null>(null);
   const [showSearch, setShowSearch] = useState(true);
   const [queryResults, setQueryResults] = useState<Record<string, QueryResultState>>({});
@@ -62,7 +61,6 @@ export default function ChatSection() {
   const uploadingCsv = useUploadStore((s) => s.isProcessing);
   const [aimResults, setAimResults] = useState<Record<string, QueryResultState>>({});
   const [runningAim, setRunningAim] = useState<string | null>(null);
-  const [completedActions, setCompletedActions] = useState<Record<string, string>>({});
   const [viewingResult, setViewingResult] = useState<{ aim: string; description?: string; datasets?: string[]; result: QueryResultState } | null>(null);
   const viewingResultRef = useRef(viewingResult);
   viewingResultRef.current = viewingResult;
@@ -189,7 +187,6 @@ export default function ChatSection() {
         useSessionStore.setState((s) => ({
           completedActions: { ...s.completedActions, [action.name]: res.result_uuid! },
         }));
-        setCompletedActions((prev) => ({ ...prev, [action.name]: res.result_uuid! }));
         persistTurns();
       }
     }
@@ -233,27 +230,13 @@ export default function ChatSection() {
     }
   }, [sessionId]);
 
-  // Debounced summary trigger — mode-aware
+  // Auto-summarize turns in groups of 5 per tag
   useEffect(() => {
     if (summaryTimerRef.current) clearTimeout(summaryTimerRef.current);
     if (!turns.length) return;
 
-    if (enrichmentMode === "summary") {
-      const allTimestamps = turns.map((t) => t.created_at).filter(Boolean) as string[];
-      if (allTimestamps.length > 0 && allTimestamps.length % 5 === 0) {
-        const tag = "__all__";
-        const existingEntries = contextSummaries[tag] || [];
-        const alreadyCovered = existingEntries.some((e) =>
-          allTimestamps.every((ts) => e.turn_timestamps.includes(ts))
-        );
-        if (!alreadyCovered) {
-          const group = allTimestamps.slice(-5);
-          summaryTimerRef.current = setTimeout(() => triggerSummary(tag, group), 2000);
-        }
-      }
-    } else {
-      const tagTurnCount: Record<string, string[]> = {};
-      for (const t of turns) {
+    const tagTurnCount: Record<string, string[]> = {};
+    for (const t of turns) {
         for (const aim of (t.aims || [])) {
           const tag = `aim:${aim}`;
           if (!tagTurnCount[tag]) tagTurnCount[tag] = [];
@@ -276,7 +259,6 @@ export default function ChatSection() {
           summaryTimerRef.current = setTimeout(() => triggerSummary(tag, group), 2000);
         }
       }
-    }
   }, [turns, enrichmentMode, contextSummaries, summarizingTags, triggerSummary]);
 
   const persistTurns = useCallback(() => {
@@ -319,7 +301,7 @@ export default function ChatSection() {
     }
     const msg = `Run analysis: ${aimDef.description || aimDef.aim}`;
     const lineName = useDatasetStore.getState().attached.join(",");
-    const res = await sendUserMessage(msg, lineName, [aimDef.aim], enrichmentMode, "deep", aimDef.description ? { [aimDef.aim]: aimDef.description } : undefined);
+    const res = await sendUserMessage(msg, lineName, [aimDef.aim], enrichmentMode, "focus", aimDef.description ? { [aimDef.aim]: aimDef.description } : undefined);
     if (res?.result_uuid && res?.query_result) {
       const resultState: QueryResultState = { loading: false, ...res.query_result } as QueryResultState;
       useOutputStore.getState().addResult({
@@ -331,7 +313,6 @@ export default function ChatSection() {
       useSessionStore.setState((s) => ({
         completedActions: { ...s.completedActions, [aimDef.aim]: res.result_uuid },
       }));
-      setCompletedActions((prev) => ({ ...prev, [aimDef.aim]: res.result_uuid! }));
       persistTurns();
     } else if (res?.deep_iterations?.length) {
       // DEEP route: multiple refinement steps for this one aim — add each as its own card.
@@ -359,7 +340,6 @@ export default function ChatSection() {
         useSessionStore.setState((s) => ({
           completedActions: { ...s.completedActions, [aimDef.aim]: lastUuid! },
         }));
-        setCompletedActions((prev) => ({ ...prev, [aimDef.aim]: lastUuid! }));
       }
       persistTurns();
     }
@@ -375,11 +355,10 @@ export default function ChatSection() {
     }, 1500);
   }, []);
 
-  // Restore persisted results and completed actions on session change
+  // Restore persisted results on session change
   useEffect(() => {
     if (sessionId) {
       setQueryResults(chatQueryResults);
-      setCompletedActions(storeCompletedActions);
     }
   }, [sessionId]);
 
@@ -393,6 +372,11 @@ export default function ChatSection() {
       }
     }
   }, [sessionId]);
+
+  // Auto-scroll to bottom when new turns arrive or pendingTurn changes
+  useEffect(() => {
+    scrollToBottom();
+  }, [turns.length, pendingTurn, scrollToBottom]);
 
   // Persist selectedAims to backend whenever it changes
   useEffect(() => {
@@ -410,10 +394,24 @@ export default function ChatSection() {
     const aimDescriptions = Object.fromEntries(selectedAims.filter((a) => a.description).map((a) => [a.aim, a.description!]));
     const res = await sendUserMessage(msg, lineName, aimNames, enrichmentMode, undefined, aimDescriptions);
     if (res?.result_uuid && res?.query_result) {
+      const resultState: QueryResultState = { loading: false, ...res.query_result } as QueryResultState;
       setQueryResults((prev) => ({
         ...prev,
-        [res.result_uuid!]: res.query_result! as QueryResultState,
+        [res.result_uuid!]: resultState,
       }));
+      // Push single-aim FOCUS results to output panel
+      if (aimNames.length > 0) {
+        useOutputStore.getState().addResult({
+          aim: aimNames[0],
+          description: selectedAims.find((a) => a.aim === aimNames[0])?.description,
+          datasets: selectedAims.find((a) => a.aim === aimNames[0])?.datasets,
+          result: resultState,
+        });
+        useSessionStore.setState((s) => ({
+          completedActions: { ...s.completedActions, [aimNames[0]]: res.result_uuid! },
+        }));
+        persistTurns();
+      }
     } else if (res?.deep_iterations?.length) {
       // Multi-aim FOCUS: one result per attached aim — add each as its own Output panel card.
       const newCompleted: Record<string, string> = {};
@@ -441,7 +439,6 @@ export default function ChatSection() {
         useSessionStore.setState((s) => ({
           completedActions: { ...s.completedActions, ...newCompleted },
         }));
-        setCompletedActions((prev) => ({ ...prev, ...newCompleted }));
       }
       persistTurns();
     }
@@ -505,7 +502,6 @@ export default function ChatSection() {
 
   return (
     <section className={`${panelClass} order-2 lg:order-none`}>
-      {enrichmentMode === "research" && (
       <div className="rounded-xl border-2 border-border bg-surface-1 p-3 mb-4">
         <div className="flex items-center gap-2 mb-2">
           <button
@@ -643,7 +639,6 @@ export default function ChatSection() {
           </div>
         )}
       </div>
-      )}
 
       <div ref={chatScrollRef} className="flex-1 overflow-y-auto min-h-0 pr-1">
         {turns.length === 0 && !pendingTurn ? (
@@ -670,7 +665,6 @@ export default function ChatSection() {
                 key={t.created_at}
                 turn={t}
                 queryResult={queryResults[t.result_uuid ?? ""] || queryResults[t.created_at ?? ""]}
-                completedActions={completedActions}
                 selectedAims={selectedAims}
                 runningAim={runningAim}
                 loading={loading}
@@ -709,7 +703,7 @@ export default function ChatSection() {
         )}
       </div>
 
-      {enrichmentMode === "research" && storeAttached.length > 0 && (
+      {storeAttached.length > 0 && (
         <div className="flex flex-wrap gap-1.5 mb-2 shrink-0">
           {storeAttached.map((ds) => (
             <span
@@ -732,33 +726,9 @@ export default function ChatSection() {
         </div>
       )}
 
-      {/* LLM-proposed aims — only in RESEARCH mode */}
-      {enrichmentMode === "research" && aimProposals.length > 0 && (
-        <div className="rounded-xl border-2 border-border bg-surface-1 p-3 mb-3">
-          <div className="flex items-center gap-1.5 text-[10.5px] font-semibold tracking-wider uppercase text-muted mb-2">
-            <IconTarget size={12} />
-            {t("chat.suggestedByLlm")}
-          </div>
-          <div className="flex flex-wrap gap-1.5">
-            {aimProposals.filter((p) => !selectedAims.some((a) => a.aim === p.aim)).map((p, i) => (
-              <button
-                key={i}
-                type="button"
-                className={`text-[11px] px-2.5 py-1 rounded-full border transition-colors ${loading ? "cursor-not-allowed opacity-50" : "bg-ic-violet-soft/20 text-ic-violet border-ic-violet/20 hover:bg-ic-violet-soft/40"}`}
-                onClick={() => !loading && useAim({ aim: p.aim, description: p.description, datasets: p.datasets })}
-              >
-                + {p.aim}
-              </button>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {enrichmentMode === "research" && (
       <AimBar
         selectedAims={selectedAims}
         aimResults={aimResults}
-        completedActions={completedActions}
         runningAim={runningAim}
         loading={loading}
         onRunSql={handleRunAimSql}
@@ -767,35 +737,14 @@ export default function ChatSection() {
         onRemove={removeAim}
         onPreview={setPreviewAim}
       />
-      )}
 
       <div className="shrink-0 mt-3 space-y-2">
-        {/* Mode toggle */}
-        <div className="flex items-center gap-2">
-          <span className="text-[10.5px] font-semibold tracking-wider uppercase text-muted">{t("chat.modeLabel")}</span>
-          <div className="flex rounded-full border-2 border-border overflow-hidden">
-              <button
-                type="button"
-                className={`text-[11px] font-medium px-3 py-1 transition-colors ${loading ? "cursor-not-allowed opacity-50" : ""} ${enrichmentMode === "research" ? "bg-accent text-white" : "bg-surface-1 text-muted hover:text-text"}`}
-                onClick={() => !loading && setEnrichmentMode("research")}
-              >
-                {t("chat.modeResearch")}
-              </button>
-            <button
-              type="button"
-              className={`text-[11px] font-medium px-3 py-1 transition-colors ${loading ? "cursor-not-allowed opacity-50" : ""} ${enrichmentMode === "summary" ? "bg-accent text-white" : "bg-surface-1 text-muted hover:text-text"}`}
-              onClick={() => !loading && setEnrichmentMode("summary")}
-            >
-              {t("chat.modeSummary")}
-            </button>
-          </div>
-        </div>
         {/* Composer */}
         <div className="flex gap-2 items-end">
           <textarea
             ref={composerRef}
             className="flex-1 rounded-xl border-2 border-border bg-surface-1 text-text text-sm px-3 py-2.5 resize-none overflow-y-auto focus:outline-none focus:border-accent transition-colors min-h-[42px] max-h-[120px]"
-            placeholder={enrichmentMode === "research" ? t("chat.composerResearchPlaceholder") : t("chat.composerSummaryPlaceholder")}
+            placeholder={t("chat.composerResearchPlaceholder")}
             rows={1}
             value={input}
             onChange={(e) => setInput(e.target.value)}

@@ -344,254 +344,270 @@ async def generate_chat_response(
         logger.exception("generate_chat_response: LLM failed")
         return f"I encountered an error while processing your request. Please try again. ({str(e)[:200]})"
 
-CHART_SELECTION_PROMPT = """You are a data visualization expert. Given the schema and sample data below, recommend charts that each reveal a unique insight.
-
-## Supported Chart Types
-ADVANCED (shown prominently above basic charts — prefer these when data supports multi-dimensional or mixed views):
-- "composed": mixed views — stacked bars with a trend line overlay (needs 2+ numeric yKeys)
-- "stackedArea": volume over time with multiple series stacked (needs 2+ numeric yKeys + time/category xKey)
-- "treemap": proportional breakdown by category (needs 1 category + 1 numeric value)
-- "radialBar": circular multi-metric comparison (needs 1 category + 1+ numeric values)
-- "funnel": conversion or drop-off pipeline (needs 1 stage/label column + 1 numeric value)
-- "sunburst": hierarchical nested categories (needs 2+ category columns + 1 numeric value)
-- "scatter": correlation between two numeric variables (needs 2+ numeric columns)
-- "radar": multi-dimensional comparison profiles (needs 1 label + 2+ numeric metrics)
-
-BASIC (always available):
-- "bar": comparing categories or groups
-- "line": trends over time or ordered sequences
-- "area": volume/magnitude over time (filled line)
-- "pie": proportions of a whole (max 8 slices)
-
-## Decision Guide
-- If data has 2+ numeric columns → MUST include at least one of: composed, stackedArea, scatter, radar
-- If data has 1 category + 1 numeric → consider treemap or funnel or radialBar
-- If data has 2+ category columns + 1 numeric → consider sunburst
-- If data looks like stages/pipeline → consider funnel
-- Always return 1-2 ADVANCED and 2-3 BASIC charts
-
-## Column Schema
-{column_schema}
-
-## Sample Data (first {sample_count} rows)
-{sample_data}
-
-## Rules
-- Return 1-2 ADVANCED chart types if the data supports multi-dimensional or mixed views
-- Return 2-3 BASIC chart types — always include these
-- Each chart must reveal a DIFFERENT perspective on the same data
-- Validate all referenced columns exist in the schema
-- Return ONLY valid JSON — no markdown, no code fences
-
-## Output Format
-{{
-  "advanced": [
-    {{
-      "chartType": "composed|stackedArea|treemap|radialBar|funnel|sunburst|scatter|radar",
-      "xKey": "<column for x-axis>",
-      "yKeys": ["<columns for y-axis>"],
-      "reason": "<1-sentence: what insight this chart reveals>",
-      "xLabel": "<human-readable x-axis label, e.g. 'Supplier' or 'Month'>",
-      "yLabel": "<human-readable y-axis label, e.g. 'Average Score' or 'Revenue ($)'>",
-      "howToRead": "<1-2 sentences of general reading guidance: typical value ranges, what's notable, what to look for — NOT exact analysis of the specific numbers>"
-    }}
-  ],
-  "basic": [
-    {{
-      "chartType": "bar|line|area|pie",
-      "xKey": "<column for x-axis>",
-      "yKeys": ["<columns for y-axis>"],
-      "reason": "<1-sentence: what insight this chart reveals>",
-      "xLabel": "<human-readable x-axis label>",
-      "yLabel": "<human-readable y-axis label>",
-      "howToRead": "<1-2 sentences of general reading guidance>"
-    }}
-  ]
-}}"""
-
-
-CHART_RETRY_PROMPT = """Your previous chart configuration was invalid.
-
-Error: {error_message}
-Column schema: {column_schema}
-Your previous response: {previous_response}
-
-Please fix the issues above and return a valid JSON object with "advanced" and "basic" arrays.
-Common fixes:
-- chartType must be one of: composed, stackedArea, treemap, radialBar, funnel, sunburst, scatter, radar, bar, line, area, pie
-- xKey and yKeys must reference exact column names from the schema
-- Each chart must have a "reason" field explaining the insight
-- Each chart must have "xLabel" and "yLabel" (human-readable axis labels)
-- Each chart must have "howToRead" (1-2 sentences of general reading guidance)
-- advanced and basic must be arrays (use [] if none)"""
-
-
 VALID_CHART_TYPES = {"composed", "stackedArea", "treemap", "radialBar", "funnel", "sunburst", "scatter", "radar",
                      "bar", "line", "area", "pie"}
 
 
-def _validate_chart_config(cfg: dict, columns: list[str]) -> bool:
-    """Validate a single chart config has valid type, column references, and labels."""
-    if not isinstance(cfg, dict):
-        return False
-    if cfg.get("chartType") not in VALID_CHART_TYPES:
-        return False
-    if not cfg.get("xKey") or not isinstance(cfg.get("yKeys"), list):
-        return False
-    if cfg["xKey"] not in columns:
-        return False
-    if not all(yk in columns for yk in cfg["yKeys"]):
-        return False
-    if not cfg.get("xLabel") or not isinstance(cfg.get("xLabel"), str):
-        cfg["xLabel"] = cfg["xKey"].replace("_", " ").title()
-    if not cfg.get("yLabel") or not isinstance(cfg.get("yLabel"), str):
-        cfg["yLabel"] = (cfg["yKeys"][0] if cfg["yKeys"] else "Value").replace("_", " ").title()
-    if not cfg.get("howToRead") or not isinstance(cfg.get("howToRead"), str):
-        cfg["howToRead"] = ""
-    return True
+def _human_label(col: str) -> str:
+    return col.replace("_", " ").title()
+
+
+def _pick_best_x_key(candidates: list[str], rows: list[dict]) -> str:
+    """Pick the column with the most distinct values from first 20 rows."""
+    if not candidates:
+        return ""
+    best = candidates[0]
+    best_count = -1
+    for col in candidates:
+        vals = set(str(r.get(col, "")) for r in rows[:20])
+        if len(vals) > best_count:
+            best = col
+            best_count = len(vals)
+    return best
+
+
+def _column_distinct_profile(columns: list[str], column_types: list[str], rows: list[dict]) -> str:
+    """Build: column name | type | distinct count | first 5 sample values."""
+    type_map = dict(zip(columns, column_types))
+    lines = []
+    for col in columns:
+        t = type_map.get(col, "text")
+        seen: list[str] = []
+        seen_set: set[str] = set()
+        for r in rows:
+            v = str(r.get(col, ""))
+            if v not in seen_set:
+                seen_set.add(v)
+                seen.append(v)
+            if len(seen) >= 5:
+                break
+        vals_display = ", ".join(repr(v) for v in seen)
+        lines.append(f"- {col} ({t}, {len(seen_set)} distinct): {vals_display}")
+    return "\n".join(lines)
+
+
+MULTI_DIM_PROMPT = """You are a data visualization expert. Given the column profile and sample data below, recommend xKey and yKeys for each compatible multi-dim chart type.
+
+## Column Profile (name | type | distinct count | sample values)
+{column_profile}
+
+## Sample Rows (first 3)
+{sample_rows}
+
+## Chart Types & Requirements
+- **composed**: mixed bars + line overlay — needs 1 category/date xKey + 2+ numeric yKeys (last yKey becomes the line)
+- **stackedArea**: stacked volumes — needs 1 category/date xKey + 2+ numeric yKeys
+- **sunburst**: nested hierarchy — needs 1 top-level category xKey + yKeys must be [numeric_value, sub_category_1, sub_category_2, ...]
+- Set a chart type to null if the data doesn't support it
+- xKey should be the most meaningful axis (date or category with many distinct values)
+- yKeys must reference existing column names exactly
+- Each chart needs a unique 1-sentence "reason" explaining the insight
+
+## Output Format — JSON only, no markdown, no code fences
+{{
+  "composed": {{"xKey": "...", "yKeys": [...], "reason": "..."}} | null,
+  "stackedArea": {{"xKey": "...", "yKeys": [...], "reason": "..."}} | null,
+  "sunburst": {{"xKey": "...", "yKeys": [...], "reason": "..."}} | null
+}}"""
+
+
+async def _enrich_multi_dim_configs(
+    columns: list[str],
+    column_types: list[str],
+    rows: list[dict],
+    configs: dict,
+) -> dict:
+    """Batch LLM call to improve xKey/yKeys for composed, stackedArea, sunburst.
+    Falls back to original configs on failure."""
+    existing = {c["chartType"]: c for c in configs.get("advanced", [])
+                if c["chartType"] in ("composed", "stackedArea", "sunburst")}
+    if not existing:
+        return configs
+
+    profile = _column_distinct_profile(columns, column_types, rows)
+    sample = json.dumps(rows[:3], default=str, indent=2)
+    prompt = MULTI_DIM_PROMPT.format(column_profile=profile, sample_rows=sample)
+
+    raw = await call_llm(prompt)
+    raw = raw.strip()
+    if raw.startswith("```"):
+        raw = raw.split("\n", 1)[-1]
+        raw = raw.rsplit("```", 1)[0].strip()
+
+    try:
+        mapping = json.loads(raw)
+    except (json.JSONDecodeError, ValueError):
+        logger.warning("_enrich_multi_dim_configs: LLM returned invalid JSON, keeping defaults")
+        return configs
+
+    for chart_type, m in mapping.items():
+        if m is None or chart_type not in existing:
+            continue
+        if not isinstance(m, dict):
+            continue
+        if m.get("xKey") not in columns or not m.get("yKeys"):
+            continue
+        if not all(k in columns for k in m["yKeys"]):
+            continue
+        existing[chart_type].update({
+            "xKey": m["xKey"],
+            "yKeys": m["yKeys"],
+            "reason": m.get("reason", existing[chart_type]["reason"]),
+            "xLabel": _human_label(m["xKey"]),
+            "yLabel": _human_label(m["yKeys"][0]) if m["yKeys"] else existing[chart_type]["yLabel"],
+        })
+
+    return configs
 
 
 def _fallback_chart_configs(columns: list[str], column_types: list[str], rows: list[dict]) -> dict:
-    """Rule-based fallback: generate basic + advanced charts when LLM fails."""
+    """Rule-based: generate all valid chart types for the given data columns."""
+    if not columns:
+        return {"advanced": [], "basic": []}
+
     numeric_cols = [c for c, t in zip(columns, column_types)
                     if t in ("integer", "float", "decimal", "numeric", "bigint", "smallint")]
     date_cols = [c for c, t in zip(columns, column_types)
                  if t in ("date", "timestamp", "timestamptz")]
-    x_key = date_cols[0] if date_cols else columns[0]
+    cat_candidates = [c for c in columns if c not in numeric_cols]
+    cat_cols = [c for c in cat_candidates if c not in date_cols]
+    if not cat_cols:
+        cat_cols = cat_candidates[:]
+
+    x_key = _pick_best_x_key(date_cols + cat_cols, rows) or columns[0]
     y_keys = numeric_cols[:3] if numeric_cols else [columns[-1]]
 
-    def _human_label(col: str) -> str:
-        return col.replace("_", " ").title()
-
-    basic = [
-        {"chartType": "bar", "xKey": x_key, "yKeys": y_keys, "reason": "Compare values across categories",
-         "xLabel": _human_label(x_key), "yLabel": _human_label(y_keys[0]) if y_keys else "Value", "howToRead": ""},
-    ]
-    if date_cols:
-        basic.append({"chartType": "line", "xKey": x_key, "yKeys": y_keys, "reason": "Show trends over time",
-                      "xLabel": _human_label(x_key), "yLabel": _human_label(y_keys[0]) if y_keys else "Value", "howToRead": ""})
-        basic.append({"chartType": "area", "xKey": x_key, "yKeys": y_keys, "reason": "Show volume over time",
-                      "xLabel": _human_label(x_key), "yLabel": _human_label(y_keys[0]) if y_keys else "Value", "howToRead": ""})
-    if len(numeric_cols) == 1 and len(columns) >= 2:
-        pie_x = columns[0] if columns[0] != numeric_cols[0] else columns[-1]
-        basic.append({"chartType": "pie", "xKey": pie_x, "yKeys": [numeric_cols[0]], "reason": "Show proportional distribution",
-                      "xLabel": _human_label(pie_x), "yLabel": _human_label(numeric_cols[0]), "howToRead": ""})
-
+    basic = []
     advanced = []
+
+    basic.append({
+        "chartType": "bar",
+        "xKey": x_key,
+        "yKeys": y_keys,
+        "reason": f"Compare {_human_label(y_keys[0])} across different {_human_label(x_key)} categories",
+        "xLabel": _human_label(x_key),
+        "yLabel": _human_label(y_keys[0]) if y_keys else "Value",
+        "howToRead": f"Look at the relative bar heights — taller means higher {_human_label(y_keys[0])}. Compare categories side by side to spot the highest and lowest values.",
+    })
+    basic.append({
+        "chartType": "line",
+        "xKey": x_key,
+        "yKeys": y_keys,
+        "reason": f"Track how {_human_label(y_keys[0])} changes over {_human_label(x_key)}",
+        "xLabel": _human_label(x_key),
+        "yLabel": _human_label(y_keys[0]) if y_keys else "Value",
+        "howToRead": f"Follow the line trajectory over time — upward slopes mean increasing {_human_label(y_keys[0])}, downward means decreasing. Look for peaks, troughs, and trend reversals.",
+    })
+    basic.append({
+        "chartType": "area",
+        "xKey": x_key,
+        "yKeys": y_keys,
+        "reason": f"Visualize the magnitude of {_human_label(y_keys[0])} over {_human_label(x_key)}",
+        "xLabel": _human_label(x_key),
+        "yLabel": _human_label(y_keys[0]) if y_keys else "Value",
+        "howToRead": f"The filled area emphasizes the volume of {_human_label(y_keys[0])} over time. Wider or taller sections represent higher activity or volume during that period.",
+    })
+    if numeric_cols and cat_cols:
+        pie_x = _pick_best_x_key(cat_cols, rows)
+        basic.append({
+            "chartType": "pie",
+            "xKey": pie_x,
+            "yKeys": [numeric_cols[0]],
+            "reason": f"Show how {_human_label(numeric_cols[0])} is distributed across {_human_label(pie_x)} categories",
+            "xLabel": _human_label(pie_x),
+            "yLabel": _human_label(numeric_cols[0]),
+            "howToRead": f"Each slice represents a {_human_label(pie_x)} category — larger slices indicate a greater share. Compare slice sizes to see which categories dominate.",
+        })
+    if numeric_cols and cat_cols:
+        cat_x = _pick_best_x_key(cat_cols, rows)
+        advanced.append({
+            "chartType": "treemap",
+            "xKey": cat_x,
+            "yKeys": [numeric_cols[0]],
+            "reason": f"Show proportional breakdown of {_human_label(numeric_cols[0])} by {_human_label(cat_x)} as nested rectangles",
+            "xLabel": _human_label(cat_x),
+            "yLabel": _human_label(numeric_cols[0]),
+            "howToRead": f"Each rectangle represents a {_human_label(cat_x)} — the larger the area, the larger its {_human_label(numeric_cols[0])}. Compare rectangle sizes at a glance to identify the biggest contributors.",
+        })
+        advanced.append({
+            "chartType": "radialBar",
+            "xKey": cat_x,
+            "yKeys": [numeric_cols[0]],
+            "reason": f"Compare {_human_label(numeric_cols[0])} across {_human_label(cat_x)} in a circular layout",
+            "xLabel": _human_label(cat_x),
+            "yLabel": _human_label(numeric_cols[0]),
+            "howToRead": f"Each arc represents a {_human_label(cat_x)} — the longer the arc, the higher its {_human_label(numeric_cols[0])}. The circular layout makes it easy to compare values around the ring.",
+        })
+    if len(cat_cols) >= 2 and numeric_cols:
+        advanced.append({
+            "chartType": "sunburst",
+            "xKey": cat_cols[0],
+            "yKeys": [numeric_cols[0]] + cat_cols[1:3],
+            "reason": f"Hierarchical breakdown of {_human_label(numeric_cols[0])} across {_human_label(cat_cols[0])} and {_human_label(cat_cols[1])}",
+            "xLabel": _human_label(cat_cols[0]),
+            "yLabel": _human_label(numeric_cols[0]),
+            "howToRead": f"The inner ring represents top-level {_human_label(cat_cols[0])}, outer rings break down further by {_human_label(cat_cols[1])}. Compare arc sizes at each level to understand nested proportions.",
+        })
     if len(numeric_cols) >= 2:
+        advanced.append({
+            "chartType": "scatter",
+            "xKey": numeric_cols[0],
+            "yKeys": numeric_cols[1:3],
+            "reason": f"Explore correlation between {_human_label(numeric_cols[0])} and {_human_label(numeric_cols[1])}",
+            "xLabel": _human_label(numeric_cols[0]),
+            "yLabel": _human_label(numeric_cols[1]),
+            "howToRead": f"Each dot represents a data point — its position shows the relationship between {_human_label(numeric_cols[0])} (x-axis) and {_human_label(numeric_cols[1])} (y-axis). Clusters, trends, and outliers are easy to spot.",
+        })
+        advanced.append({
+            "chartType": "composed",
+            "xKey": x_key,
+            "yKeys": numeric_cols[:3],
+            "reason": f"Multi-metric view — bars for {_human_label(numeric_cols[0])} with trend lines for other metrics",
+            "xLabel": _human_label(x_key),
+            "yLabel": _human_label(numeric_cols[0]),
+            "howToRead": f"Bars show {_human_label(numeric_cols[0])} over time, while overlaid lines show trends in other metrics. This combined view reveals how multiple measures move together or diverge.",
+        })
         advanced.append({
             "chartType": "stackedArea",
             "xKey": x_key,
             "yKeys": numeric_cols[:3],
-            "reason": "Compare volume trends across multiple metrics",
-            "xLabel": _human_label(x_key), "yLabel": _human_label(numeric_cols[0]), "howToRead": ""
+            "reason": f"Stacked view of how multiple metrics contribute to the total over {_human_label(x_key)}",
+            "xLabel": _human_label(x_key),
+            "yLabel": _human_label(numeric_cols[0]),
+            "howToRead": f"Each colored layer represents a different metric — the total height shows the combined value. Watch how layers grow or shrink over time to see shifting contributions.",
         })
-        if date_cols:
-            advanced.append({
-                "chartType": "composed",
-                "xKey": x_key,
-                "yKeys": numeric_cols[:3],
-                "reason": "Mixed view: stacked bars with trend overlay",
-                "xLabel": _human_label(x_key), "yLabel": _human_label(numeric_cols[0]), "howToRead": ""
-            })
-    if len(numeric_cols) >= 1 and len(columns) >= 3:
-        cat_cols = [c for c in columns if c not in numeric_cols]
-        if len(cat_cols) >= 2:
-            advanced.append({
-                "chartType": "sunburst",
-                "xKey": cat_cols[0],
-                "yKeys": [numeric_cols[0]],
-                "reason": "Hierarchical breakdown across nested categories",
-                "xLabel": _human_label(cat_cols[0]), "yLabel": _human_label(numeric_cols[0]), "howToRead": ""
-            })
+    if cat_cols and len(numeric_cols) >= 3:
+        cat_x = _pick_best_x_key(cat_cols, rows)
+        advanced.append({
+            "chartType": "radar",
+            "xKey": cat_x,
+            "yKeys": numeric_cols[:6],
+            "reason": f"Multi-dimensional profile comparing {_human_label(cat_x)} across {len(numeric_cols[:6])} metrics",
+            "xLabel": _human_label(cat_x),
+            "yLabel": _human_label(numeric_cols[0]),
+            "howToRead": f"Each spoke represents a metric — the further from center, the higher the value. Compare polygon shapes across different {_human_label(cat_x)} to identify strengths and weaknesses in each profile.",
+        })
+    if len(cat_cols) >= 1 and numeric_cols and len(rows) >= 2:
+        cat_x = _pick_best_x_key(cat_cols, rows)
+        advanced.append({
+            "chartType": "funnel",
+            "xKey": cat_x,
+            "yKeys": [numeric_cols[0]],
+            "reason": f"Show progression or drop-off across {_human_label(cat_x)} stages",
+            "xLabel": _human_label(cat_x),
+            "yLabel": _human_label(numeric_cols[0]),
+            "howToRead": f"Each funnel stage represents a step in the progression — narrower sections indicate drop-off. Compare adjacent stages to see where the largest decline happens.",
+        })
 
-    return {"advanced": advanced[:2], "basic": basic}
-
-
-async def suggest_charts(
-    columns: list[str],
-    column_types: list[str],
-    rows: list[dict],
-    max_retries: int = 2,
-) -> dict:
-    """Call LLM to recommend chart types for result data.
-
-    Returns: {"advanced": [...], "basic": [...]}
-    Retries up to max_retries times on invalid output.
-    Falls back to rule-based defaults on persistent failure.
-    """
-    if not columns or not rows:
-        return _fallback_chart_configs(columns, column_types, rows)
-
-    # Build schema string
-    type_lookup = dict(zip(columns, column_types))
-    schema_lines = []
-    for col in columns:
-        t = type_lookup.get(col, "text")
-        schema_lines.append(f"- {col} ({t})")
-    column_schema = "\n".join(schema_lines)
-
-    # Sample first 5 rows
-    sample = rows[:5]
-    sample_str = json.dumps(sample, default=str, indent=2)
-
-    prompt = CHART_SELECTION_PROMPT.format(
-        column_schema=column_schema,
-        sample_count=len(sample),
-        sample_data=sample_str,
-    )
-
-    last_error = None
-    for attempt in range(max_retries + 1):
-        raw = await call_llm(prompt)
-        raw = raw.strip()
-
-        if raw.startswith("```"):
-            raw = raw.split("\n", 1)[-1]
-            raw = raw.rsplit("```", 1)[0].strip()
-
-        try:
-            result = json.loads(raw)
-            if not isinstance(result, dict):
-                raise ValueError("Response is not a JSON object")
-
-            advanced = result.get("advanced", [])
-            basic = result.get("basic", [])
-
-            if not isinstance(advanced, list) or not isinstance(basic, list):
-                raise ValueError("advanced and basic must be arrays")
-
-            valid_advanced = [c for c in advanced if _validate_chart_config(c, columns)]
-            valid_basic = [c for c in basic if _validate_chart_config(c, columns)]
-
-            if len(valid_basic) >= 1:
-                return {"advanced": valid_advanced[:2], "basic": valid_basic[:3]}
-
-            raise ValueError("No valid basic chart configs found")
-
-        except (json.JSONDecodeError, ValueError) as e:
-            last_error = str(e)
-            logger.warning("suggest_charts attempt %d/%d failed: %s", attempt + 1, max_retries + 1, e)
-            if attempt < max_retries:
-                prompt = (
-                    CHART_RETRY_PROMPT.format(
-                        error_message=last_error,
-                        column_schema=column_schema,
-                        previous_response=raw[:1000],
-                    )
-                    + f"\n\n## Column Schema\n{column_schema}\n\n## Sample Data\n{sample_str}"
-                )
-
-    logger.warning("suggest_charts all attempts failed, using fallback: %s", last_error)
-    return _fallback_chart_configs(columns, column_types, rows)
+    return {"advanced": advanced, "basic": basic}
 
 
 EXTRACT_ACTIONS_PROMPT = """Extract exactly 5 interactive analysis actions from the response text below. Return ONLY a JSON array — no markdown, no code fences.
 
 Each object in the array must have:
 - "name": short actionable label (e.g., "Compare quality scores by supplier")
-- "description": what this analysis reveals (1 sentence)
-- "datasets": list of dataset names to use
+- "description": natural paragraph (3-4 sentences) explaining what this analysis reveals, including which columns are examined and what insight to expect — extract the full text from the source without truncation
+- "datasets": list of dataset names to use — ONLY from this allowed list: {datasets}
 
 If no clear actions, return [].
 
@@ -604,7 +620,7 @@ async def extract_analysis_actions(text: str, dataset_names: list[str]) -> list[
     if not text.strip():
         return []
 
-    prompt = EXTRACT_ACTIONS_PROMPT.format(text=text[:2000])
+    prompt = EXTRACT_ACTIONS_PROMPT.format(text=text[:8000], datasets=json.dumps(dataset_names))
     try:
         raw = (await call_llm(prompt)).strip()
         if not raw:
@@ -615,11 +631,14 @@ async def extract_analysis_actions(text: str, dataset_names: list[str]) -> list[
         actions = json.loads(raw)
         if not isinstance(actions, list):
             return []
+        real = set(dataset_names)
         for a in actions:
             if isinstance(a, str):
                 a = {"name": a, "description": "", "datasets": dataset_names}
             if "datasets" not in a or not a["datasets"]:
                 a["datasets"] = dataset_names
+            elif real:
+                a["datasets"] = [d for d in a["datasets"] if d in real] or dataset_names
             if "description" not in a:
                 a["description"] = ""
         return actions[:5]
@@ -694,7 +713,7 @@ async def extract_aims_from_text(text: str, dataset_names: list[str]) -> list[di
     if not text.strip():
         return []
 
-    prompt = EXTRACT_AIMS_PROMPT.format(text=text[:2000])
+    prompt = EXTRACT_AIMS_PROMPT.format(text=text[:8000])
     try:
         raw = (await call_llm(prompt)).strip()
         if not raw:

@@ -107,19 +107,7 @@ You have two tools available:
 Once you have enough information, respond with plain text (no more tool calls):
 - If this is a factual question ("what/which/how many..."), give the direct answer, 1-2 notable observations, and one follow-up question.
 - If this is an advisory question (e.g. "what can be done to improve/increase/fix..."), you MUST give 2-3 concrete, actionable recommendations grounded in the data you gathered — not just a restatement of the numbers, and not only a deflecting question.
-- End your final answer with one line: [CHART_DECISION: yes] or [CHART_DECISION: no] — yes if the data you used has 3+ rows and multiple columns worth comparing, no otherwise.
 """
-
-
-def _extract_chart_decision(text: str) -> tuple[bool, str]:
-    # Defensive: some chat templates leak a literal <tool_call> attempt into content
-    # when no tools are offered (e.g. the forced final round) — strip it rather than
-    # show broken XML-like text to the user.
-    text = re.sub(r'<tool_call>.*?(</tool_call>|$)', '', text, flags=re.DOTALL | re.IGNORECASE).strip()
-    match = re.search(r'\[CHART_DECISION:\s*(yes|no)\]', text, re.IGNORECASE)
-    chart_needed = bool(match and match.group(1).lower() == "yes")
-    clean = re.sub(r'\s*\[CHART_DECISION:\s*(yes|no)\]\s*', ' ', text, flags=re.IGNORECASE).strip()
-    return chart_needed, clean
 
 
 def _topic_label(turn: dict) -> str:
@@ -284,7 +272,7 @@ async def run_focus_agent(
 ) -> dict:
     """Agentic FOCUS loop: the LLM chooses between querying fresh data and recalling
     a previously fetched result in this session, across up to max_rounds tool-call turns.
-    Returns {agent_message, chart_needed, query_result} — query_result is the raw dict
+    Returns {agent_message, chart_needed (always True), query_result} — query_result is the raw dict
     from execute_sql (no chart_suggestions attached yet), or None if no query ran."""
     settings = get_settings()
     client = get_llm_client()
@@ -349,8 +337,7 @@ async def run_focus_agent(
         msg = response.choices[0].message
 
         if not msg.tool_calls:
-            chart_needed, clean = _extract_chart_decision(msg.content or "")
-            return {"agent_message": clean, "chart_needed": chart_needed, "query_result": last_query_result}
+            return {"agent_message": msg.content or "", "chart_needed": True, "query_result": last_query_result}
 
         messages.append({
             "role": "assistant",
@@ -405,7 +392,8 @@ async def run_focus_agent(
         if m.get("role") == "assistant" and m.get("content"):
             last_content = m["content"]
             break
-    chart_needed, clean = _extract_chart_decision(
-        last_content or "I wasn't able to complete this within the allotted steps — could you rephrase or narrow the question?"
-    )
-    return {"agent_message": clean, "chart_needed": chart_needed, "query_result": last_query_result}
+    return {
+        "agent_message": last_content or "I wasn't able to complete this within the allotted steps — could you rephrase or narrow the question?",
+        "chart_needed": True,
+        "query_result": last_query_result,
+    }

@@ -1,9 +1,10 @@
-import { useState, useEffect } from "react";
-import { panelClass, btnSecondary, resultCardClass, resultTagClass, resultBadgeClass, miniTableClass, insightNoteClass } from "../lib/styles";
+import { useState, useEffect, useCallback } from "react";
+import { panelClass, resultCardClass, resultTagClass, resultBadgeClass, miniTableClass, insightNoteClass } from "../lib/styles";
 import { useOutputStore } from "../stores/outputStore";
 import { useSessionStore } from "../stores/sessionStore";
+import { useDatasetStore } from "../stores/datasetStore";
 import { QueryActions } from "./QueryActions";
-import { IconDatabase, IconTarget, IconClock } from "../lib/icons";
+import { IconDatabase, IconTarget, IconClock, IconChart } from "../lib/icons";
 import { t, useT, tCount } from "../lib/i18n";
 
 function relativeTime(timestamp: number): string {
@@ -32,44 +33,101 @@ export default function OutputPanel() {
     return () => clearInterval(timer);
   }, []);
 
+  const sessionId = useSessionStore((s) => s.sessionId);
+  const sendUserMessage = useSessionStore((s) => s.sendUserMessage);
+  const loading = useSessionStore((s) => s.loading);
+  const storeAttached = useDatasetStore((s) => s.attached);
+  const [summarizing, setSummarizing] = useState(false);
+
+  const handleSummarize = useCallback(async () => {
+    if (!sessionId || summarizing) return;
+    setSummarizing(true);
+    try {
+      const lineName = storeAttached.join(",");
+      const msg = "Provide a comprehensive summary of all analysis findings so far: what was analyzed, what were the key findings, patterns discovered, and any recommendations. Cover all datasets and aims that have been explored.";
+      await sendUserMessage(msg, lineName, [], "summary");
+    } finally {
+      setSummarizing(false);
+    }
+  }, [sessionId, summarizing, storeAttached, sendUserMessage]);
+
+  const aimProposals = useSessionStore((s) => s.aimProposals);
   const resultCount = results.length;
 
-  if (resultCount === 0) {
-    return (
-      <section className={`${panelClass} order-3 lg:order-none text-sm`}>
-        <div className="flex flex-col items-center justify-center h-full text-center px-6">
-          <span className="inline-flex items-center justify-center w-12 h-12 rounded-2xl bg-stage-execution-soft text-stage-execution mb-4">
-            <IconDatabase size={22} />
-          </span>
-          <h3 className="text-base font-semibold text-text mb-1">{t("output.noResults")}</h3>
-          <p className="text-sm text-muted max-w-xs">
-            {t("output.noResultsHint")}
-          </p>
-        </div>
-      </section>
-    );
-  }
+  const runProposal = async (p: { aim: string; description: string; datasets?: string[] }) => {
+    useSessionStore.setState((s) => ({
+      selectedAims: s.selectedAims.some((a) => a.aim === p.aim)
+        ? s.selectedAims
+        : [...s.selectedAims, { aim: p.aim, description: p.description, datasets: p.datasets }],
+      aimProposals: s.aimProposals.filter((a) => a.aim.toLowerCase() !== p.aim.toLowerCase()),
+    }));
+    if (p.datasets && p.datasets.length > 0) {
+      const store = useDatasetStore.getState();
+      store.addMultiple(p.datasets);
+      store.attachMultiple(p.datasets);
+    }
+    const lineName = useDatasetStore.getState().attached.join(",");
+    const msg = `Run analysis: ${p.description || p.aim}`;
+    const res = await sendUserMessage(msg, lineName, [p.aim], "research", "focus", { [p.aim]: p.description });
+    if (res?.result_uuid && res?.query_result) {
+      useOutputStore.getState().addResult({
+        aim: p.aim,
+        description: p.description,
+        datasets: p.datasets,
+        result: res.query_result,
+      });
+      useSessionStore.setState((s) => ({
+        completedActions: { ...s.completedActions, [p.aim]: res.result_uuid! },
+      }));
+    }
+  };
 
   return (
-    <section className={`${panelClass} order-3 lg:order-none text-sm`}>
-      <div className="flex items-center justify-between mb-3">
+    <section className={`${panelClass} order-3 lg:order-none text-sm flex flex-col`}>
+      <div className="flex items-center justify-between mb-3 shrink-0">
         <div className="flex items-center gap-2">
           <h2 className="font-display text-xs font-semibold tracking-wider uppercase text-muted">{t("output.title")}</h2>
-          <span className="text-[11px] font-medium px-2 py-0.5 rounded-full bg-surface-2 text-text border border-border/50">
-            {resultCount}
-          </span>
+          {resultCount > 0 && (
+            <span className="text-[11px] font-medium px-2 py-0.5 rounded-full bg-surface-2 text-text border border-border/50">
+              {resultCount}
+            </span>
+          )}
         </div>
-        <button
-          type="button"
-          className="text-[11px] font-medium px-2 py-1 rounded-full border border-border/50 text-muted hover:text-ic-red hover:border-ic-red/30 transition-colors"
-          onClick={clearResults}
-        >
-          {t("output.clearAll")}
-        </button>
+        <div className="flex items-center gap-1.5">
+          <button
+            type="button"
+            className={`text-[11px] font-bold px-2.5 py-1 rounded-full border transition-colors ${summarizing ? "opacity-50 cursor-not-allowed" : "bg-amber-500/80 text-black border-amber-500/60 hover:bg-amber-500"} border-border/50`}
+            onClick={handleSummarize}
+            disabled={summarizing}
+          >
+            <span className="flex items-center gap-1">
+              {summarizing ? (
+                <IconChart size={12} className="animate-spin" />
+              ) : (
+                <svg viewBox="0 0 24 24" fill="currentColor" width="12" height="12"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/></svg>
+              )}
+              {summarizing ? t("output.summarizing") : t("output.summarize")}
+            </span>
+          </button>
+          <button
+            type="button"
+            className="text-[11px] font-medium px-2 py-1 rounded-full border border-border/50 text-muted hover:text-ic-red hover:border-ic-red/30 transition-colors"
+            onClick={clearResults}
+          >
+            {t("output.clearAll")}
+          </button>
+        </div>
       </div>
 
-      <div className="flex-1 overflow-y-auto min-h-0 pr-1 space-y-2.5">
-        {results.map((r) => {
+      {resultCount === 0 ? (
+        <div className="flex flex-col items-center justify-center flex-1 text-center px-6">
+          <p className="text-sm text-muted max-w-xs">
+            {t("output.nothingToShow")}
+          </p>
+        </div>
+      ) : (
+        <div className="flex-1 overflow-y-auto min-h-0 pr-1 space-y-2.5">
+          {results.map((r) => {
           const isExpanded = expandedId === r.id;
           const rowCount = r.result.row_count ?? 0;
           return (
@@ -217,6 +275,34 @@ export default function OutputPanel() {
           );
         })}
       </div>
+      )}
+
+      {aimProposals.length > 0 && (
+        <div className="flex-[0_0_20%] border-t border-border pt-2 mt-2 overflow-y-auto min-h-0">
+          <div className="flex items-center gap-1.5 text-[10.5px] font-semibold tracking-wider uppercase text-muted mb-2">
+            <IconTarget size={12} />
+            {t("output.proposals")}
+            <span className="text-[11px] font-medium px-1.5 py-0.5 rounded-full bg-surface-2 text-text border border-border/50">
+              {aimProposals.length}
+            </span>
+          </div>
+          <div className="flex flex-col gap-1">
+            {aimProposals
+              .filter((p) => !selectedAims.some((a) => a.aim === p.aim))
+              .map((p, i) => (
+                <button
+                  key={i}
+                  type="button"
+                  disabled={loading}
+                  className={`text-[11px] px-2 py-0.5 rounded-full border transition-colors ${loading ? "cursor-not-allowed opacity-50" : "bg-ic-violet-soft/20 text-ic-violet border-ic-violet/20 hover:bg-ic-violet-soft/40"}`}
+                  onClick={() => runProposal(p)}
+                >
+                  + {p.aim}
+                </button>
+              ))}
+          </div>
+        </div>
+      )}
     </section>
   );
 }

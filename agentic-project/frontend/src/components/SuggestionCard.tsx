@@ -7,12 +7,18 @@ import type { ParsedSuggestion } from "../lib/parseSuggestions";
 import type { DatasetInfo } from "../types";
 import { useT } from "../lib/i18n";
 
+function escapeAsterisks(text: string): string {
+  return text.replace(/\*\*/g, "\x00BOLD\x00")
+    .replace(/\*/g, "\\*")
+    .replace(/\x00BOLD\x00/g, "**");
+}
+
 // Renders a single line of markdown (bold/italic) inline, without the block-level <p> wrapper
 // react-markdown normally adds — the model often bolds column names inline (e.g. "grouping by **fruits_name**").
 function InlineMarkdown({ text }: { text: string }) {
   return (
     <ReactMarkdown remarkPlugins={[remarkGfm]} components={{ p: ({ children }) => <>{children}</> }}>
-      {text}
+      {escapeAsterisks(text)}
     </ReactMarkdown>
   );
 }

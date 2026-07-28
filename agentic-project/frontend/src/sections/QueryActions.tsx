@@ -1,4 +1,4 @@
-import { useState, useRef, useMemo, useEffect } from "react";
+import { useState, useMemo } from "react";
 import { monoClass } from "../lib/styles";
 import { IconGrid, IconChart } from "../lib/icons";
 import { useT, tCount } from "../lib/i18n";
@@ -40,11 +40,12 @@ export interface QueryResultState {
 const CHART_COLORS = ["#06b6d4", "#f59e0b", "#8b5cf6", "#3b82f6", "#ef4444", "#ec4899", "#f97316", "#22c55e", "#14b8a6", "#a855f7"];
 const VALID_CHART_TYPES = new Set(["composed", "stackedArea", "treemap", "radialBar", "funnel", "sunburst", "scatter", "radar", "bar", "line", "area", "pie"]);
 
-function sanitizeSuggestions(raw: ChartSuggestions | undefined): ChartSuggestions {
+function sanitizeSuggestions(raw: ChartSuggestions | undefined): { advanced: ChartConfig[]; basic: ChartConfig[] } {
   if (!raw) return { advanced: [], basic: [] };
+  const isGood = (c: ChartConfig) => VALID_CHART_TYPES.has(c.chartType) && c.xKey && c.yKeys?.length;
   return {
-    advanced: raw.advanced.filter(c => VALID_CHART_TYPES.has(c.chartType) && c.xKey && c.yKeys?.length),
-    basic: raw.basic.filter(c => VALID_CHART_TYPES.has(c.chartType) && c.xKey && c.yKeys?.length),
+    advanced: raw.advanced.filter(isGood),
+    basic: raw.basic.filter(isGood),
   };
 }
 
@@ -173,7 +174,7 @@ function renderFunnelChart(cfg: ChartConfig, rows: Record<string, unknown>[]) {
     fill: CHART_COLORS[i % CHART_COLORS.length],
   }));
   return (
-    <FunnelChart>
+    <FunnelChart width={400} height={250}>
       <Tooltip {...tooltipStyle()} />
       <Funnel dataKey="value" nameKey="name" data={data} isAnimationActive />
     </FunnelChart>
@@ -198,207 +199,176 @@ function renderSunburstChart(cfg: ChartConfig, rows: Record<string, unknown>[]) 
   );
 }
 
-// ── Basic chart renderers ──
+// ── Unified chart dispatch ──
 
-function renderBasicChart(type: string, columns: string[], rows: Record<string, unknown>[], cfg?: ChartConfig) {
-  const numericCols = columns.filter(c => rows.some(r => typeof r[c] === "number"));
-  const xKey = columns[0];
-  const yKeys = numericCols.length > 0 ? numericCols : [columns[columns.length - 1]];
-
-  switch (type) {
-    case "pie": {
-      const pieData = rows.map((r, i) => ({ name: String(r[xKey] ?? `Item ${i}`), value: Number(r[yKeys[0]] || 0) }));
-      return (
-        <PieChart>
-          <Pie data={pieData} dataKey="value" nameKey="name" cx="50%" cy="50%" outerRadius={80}
-            label={({ name, percent }) => `${name} ${((percent ?? 0) * 100).toFixed(0)}%`}>
-            {pieData.map((_, i) => <Cell key={i} fill={CHART_COLORS[i % CHART_COLORS.length]} />)}
-          </Pie>
-          <Tooltip {...tooltipStyle()} />
-        </PieChart>
-      );
-    }
-    case "line":
-      return (
-        <LineChart data={rows}>
-          <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.06)" />
-          <XAxis dataKey={xKey} {...axisLabelStyles()} label={cfg?.xLabel ? { value: cfg.xLabel, position: "bottom", offset: -5, style: { fill: "#999", fontSize: 10 } } : undefined} />
-          <YAxis {...axisLabelStyles()} label={cfg?.yLabel ? { value: cfg.yLabel, angle: -90, position: "insideLeft", style: { fill: "#999", fontSize: 10 } } : undefined} />
-          <Tooltip {...tooltipStyle()} />
-          <Legend wrapperStyle={{ fontSize: 11 }} />
-          {yKeys.map((k, i) => (
-            <Line key={k} type="monotone" dataKey={k} stroke={CHART_COLORS[i % CHART_COLORS.length]} strokeWidth={2} dot={{ r: 3 }} />
-          ))}
-        </LineChart>
-      );
-    case "area":
-      return (
-        <AreaChart data={rows}>
-          <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.06)" />
-          <XAxis dataKey={xKey} {...axisLabelStyles()} label={cfg?.xLabel ? { value: cfg.xLabel, position: "bottom", offset: -5, style: { fill: "#999", fontSize: 10 } } : undefined} />
-          <YAxis {...axisLabelStyles()} label={cfg?.yLabel ? { value: cfg.yLabel, angle: -90, position: "insideLeft", style: { fill: "#999", fontSize: 10 } } : undefined} />
-          <Tooltip {...tooltipStyle()} />
-          <Legend wrapperStyle={{ fontSize: 11 }} />
-          {yKeys.map((k, i) => (
-            <Area key={k} type="monotone" dataKey={k} stroke={CHART_COLORS[i % CHART_COLORS.length]} fill={CHART_COLORS[i % CHART_COLORS.length]} fillOpacity={0.15} />
-          ))}
-        </AreaChart>
-      );
-    default:
-      return (
-        <BarChart data={rows}>
-          <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.06)" />
-          <XAxis dataKey={xKey} {...axisLabelStyles()} label={cfg?.xLabel ? { value: cfg.xLabel, position: "bottom", offset: -5, style: { fill: "#999", fontSize: 10 } } : undefined} />
-          <YAxis {...axisLabelStyles()} label={cfg?.yLabel ? { value: cfg.yLabel, angle: -90, position: "insideLeft", style: { fill: "#999", fontSize: 10 } } : undefined} />
-          <Tooltip {...tooltipStyle()} />
-          <Legend wrapperStyle={{ fontSize: 11 }} />
-          {yKeys.map((k, i) => (
-            <Bar key={k} dataKey={k} fill={CHART_COLORS[i % CHART_COLORS.length]} radius={[4, 4, 0, 0]} />
-          ))}
-        </BarChart>
-      );
+function renderChartByType(cfg: ChartConfig, rows: Record<string, unknown>[]) {
+  switch (cfg.chartType) {
+    case "composed": return renderComposedChart(cfg, rows);
+    case "stackedArea": return renderStackedAreaChart(cfg, rows);
+    case "treemap": return renderTreemapChart(cfg, rows);
+    case "radialBar": return renderRadialBarChart(cfg, rows);
+    case "funnel": return renderFunnelChart(cfg, rows);
+    case "sunburst": return renderSunburstChart(cfg, rows);
+    case "scatter": return renderScatterChart(cfg, rows);
+    case "radar": return renderRadarChart(cfg, rows);
+    case "bar": return renderBarChart(cfg, rows);
+    case "line": return renderLineChart(cfg, rows);
+    case "area": return renderAreaChart(cfg, rows);
+    case "pie": return renderPieChart(cfg, rows);
+    default: return null;
   }
 }
 
-// ── ChartView main component ──
+function renderBarChart(cfg: ChartConfig, rows: Record<string, unknown>[]) {
+  return (
+    <BarChart data={rows}>
+      <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.06)" />
+      <XAxis dataKey={cfg.xKey} {...axisLabelStyles()} label={cfg.xLabel ? { value: cfg.xLabel, position: "bottom", offset: -5, style: { fill: "#999", fontSize: 10 } } : undefined} />
+      <YAxis {...axisLabelStyles()} label={cfg.yLabel ? { value: cfg.yLabel, angle: -90, position: "insideLeft", style: { fill: "#999", fontSize: 10 } } : undefined} />
+      <Tooltip {...tooltipStyle()} />
+      <Legend wrapperStyle={{ fontSize: 11 }} />
+      {cfg.yKeys.map((k, i) => (
+        <Bar key={k} dataKey={k} fill={CHART_COLORS[i % CHART_COLORS.length]} radius={[4, 4, 0, 0]} />
+      ))}
+    </BarChart>
+  );
+}
 
-function ChartView({ columns, rows, chart_suggestions }: {
-  columns: string[];
+function renderLineChart(cfg: ChartConfig, rows: Record<string, unknown>[]) {
+  return (
+    <LineChart data={rows}>
+      <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.06)" />
+      <XAxis dataKey={cfg.xKey} {...axisLabelStyles()} label={cfg.xLabel ? { value: cfg.xLabel, position: "bottom", offset: -5, style: { fill: "#999", fontSize: 10 } } : undefined} />
+      <YAxis {...axisLabelStyles()} label={cfg.yLabel ? { value: cfg.yLabel, angle: -90, position: "insideLeft", style: { fill: "#999", fontSize: 10 } } : undefined} />
+      <Tooltip {...tooltipStyle()} />
+      <Legend wrapperStyle={{ fontSize: 11 }} />
+      {cfg.yKeys.map((k, i) => (
+        <Line key={k} type="monotone" dataKey={k} stroke={CHART_COLORS[i % CHART_COLORS.length]} strokeWidth={2} dot={{ r: 3 }} />
+      ))}
+    </LineChart>
+  );
+}
+
+function renderAreaChart(cfg: ChartConfig, rows: Record<string, unknown>[]) {
+  return (
+    <AreaChart data={rows}>
+      <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.06)" />
+      <XAxis dataKey={cfg.xKey} {...axisLabelStyles()} label={cfg.xLabel ? { value: cfg.xLabel, position: "bottom", offset: -5, style: { fill: "#999", fontSize: 10 } } : undefined} />
+      <YAxis {...axisLabelStyles()} label={cfg.yLabel ? { value: cfg.yLabel, angle: -90, position: "insideLeft", style: { fill: "#999", fontSize: 10 } } : undefined} />
+      <Tooltip {...tooltipStyle()} />
+      <Legend wrapperStyle={{ fontSize: 11 }} />
+      {cfg.yKeys.map((k, i) => (
+        <Area key={k} type="monotone" dataKey={k} stroke={CHART_COLORS[i % CHART_COLORS.length]} fill={CHART_COLORS[i % CHART_COLORS.length]} fillOpacity={0.15} />
+      ))}
+    </AreaChart>
+  );
+}
+
+function renderPieChart(cfg: ChartConfig, rows: Record<string, unknown>[]) {
+  const pieData = rows.map((r, i) => ({
+    name: String(r[cfg.xKey] ?? `Item ${i}`),
+    value: Number(r[cfg.yKeys[0]] || 0),
+  }));
+  return (
+    <PieChart>
+      <Pie data={pieData} dataKey="value" nameKey="name" cx="50%" cy="50%" outerRadius={80}
+        label={({ name, percent }) => `${name} ${((percent ?? 0) * 100).toFixed(0)}%`}>
+        {pieData.map((_, i) => <Cell key={i} fill={CHART_COLORS[i % CHART_COLORS.length]} />)}
+      </Pie>
+      <Tooltip {...tooltipStyle()} />
+    </PieChart>
+  );
+}
+
+// ── ChartView main component (advanced gallery + basic toggle) ──
+
+function ChartView({ rows, chart_suggestions }: {
   rows: Record<string, unknown>[];
   chart_suggestions?: ChartSuggestions | null;
 }) {
   const t = useT();
-  const [activeBasic, setActiveBasic] = useState<"bar" | "line" | "area" | "pie">("bar");
-  const [renderError, setRenderError] = useState<string | null>(null);
-  const chartRef = useRef<HTMLDivElement>(null);
+  const [expandedSet, setExpandedSet] = useState<Set<number>>(new Set());
+  const [activeBasic, setActiveBasic] = useState<string>("bar");
 
   const suggestions = useMemo(() => sanitizeSuggestions(chart_suggestions ?? undefined), [chart_suggestions]);
-  const hasAdvanced = suggestions.advanced.length > 0;
-  const activeBasicCfg = useMemo(() => suggestions.basic.find(c => c.chartType === activeBasic), [suggestions.basic, activeBasic]);
+  const advanced = suggestions.advanced;
+  const basicCfg = useMemo(() => suggestions.basic.find(c => c.chartType === activeBasic), [suggestions.basic, activeBasic]);
 
-  // Reset error on data change
-  useEffect(() => { setRenderError(null); }, [rows, chart_suggestions]);
-
-  const handleDownloadPng = () => {
-    const container = chartRef.current;
-    if (!container) return;
-    const svg = container.querySelector("svg");
-    if (!svg) return;
-    const svgData = new XMLSerializer().serializeToString(svg);
-    const svgBlob = new Blob([svgData], { type: "image/svg+xml;charset=utf-8" });
-    const url = URL.createObjectURL(svgBlob);
-    const canvas = document.createElement("canvas");
-    canvas.width = svg.clientWidth * 2;
-    canvas.height = svg.clientHeight * 2;
-    const ctx = canvas.getContext("2d");
-    const img = new window.Image();
-    img.onload = () => {
-      if (ctx) ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-      URL.revokeObjectURL(url);
-      const pngUrl = canvas.toDataURL("image/png");
-      const a = document.createElement("a");
-      a.href = pngUrl;
-      a.download = "chart.png";
-      a.click();
-    };
-    img.src = url;
+  const toggleExpand = (i: number) => {
+    setExpandedSet(prev => {
+      const next = new Set(prev);
+      if (next.has(i)) next.delete(i);
+      else next.add(i);
+      return next;
+    });
   };
 
-  if (rows.length === 0) return null;
-
-  if (renderError) {
-    return (
-      <div className="mt-3 text-xs text-ic-red bg-ic-red/5 border border-ic-red/10 rounded-lg px-3 py-2 flex items-center gap-2">
-        <span>{t("query.chartError", { message: renderError })}</span>
-        <button onClick={() => setRenderError(null)} className="underline hover:text-text transition-colors">{t("common.retry")}</button>
-      </div>
-    );
-  }
-
-  const pngBtn = (
-    <button
-      type="button"
-      className="text-[10px] font-medium px-1.5 py-0.5 rounded-full border border-border/50 text-muted hover:text-text transition-colors flex items-center gap-1 ml-auto"
-      onClick={handleDownloadPng}
-      title={t("query.downloadPng")}
-    >
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" width="9" height="9" strokeWidth="2.2">
-        <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4" /><polyline points="7 10 12 15 17 10" /><line x1="12" y1="15" x2="12" y2="3" />
-      </svg>
-      {t("query.png")}
-    </button>
-  );
+  if (rows.length === 0 || (advanced.length === 0 && !basicCfg)) return null;
 
   return (
-    <div ref={chartRef} className="mt-3 space-y-3">
-      {/* Advanced charts — stacked vertically */}
-      {suggestions.advanced.map((cfg, i) => (
-        <div key={`adv-${i}`}>
-          {cfg.reason && (
-            <div className="text-[10px] text-ic-violet mb-1">
-              {cfg.reason}
-            </div>
-          )}
-          <div className="rounded-lg border border-border/50 bg-black/20 p-3">
-            <div className="flex items-center justify-end mb-1">
-              <div className="text-[10px] font-medium px-1.5 py-0.5 rounded bg-ic-violet-soft/20 text-ic-violet">{cfg.chartType}</div>
-              {pngBtn}
-            </div>
-            <ResponsiveContainer width="100%" height={250}>
-              {cfg.chartType === "composed" ? renderComposedChart(cfg, rows) :
-               cfg.chartType === "stackedArea" ? renderStackedAreaChart(cfg, rows) :
-               cfg.chartType === "treemap" ? renderTreemapChart(cfg, rows) :
-               cfg.chartType === "radialBar" ? renderRadialBarChart(cfg, rows) :
-               cfg.chartType === "funnel" ? renderFunnelChart(cfg, rows) :
-               cfg.chartType === "sunburst" ? renderSunburstChart(cfg, rows) :
-               cfg.chartType === "scatter" ? renderScatterChart(cfg, rows) :
-               cfg.chartType === "radar" ? renderRadarChart(cfg, rows) : null}
-            </ResponsiveContainer>
-          </div>
-          {cfg.howToRead && (
-            <div className="text-[10px] italic text-amber-400/80 mt-1 px-1">
-              {cfg.howToRead}
-            </div>
-          )}
+    <div className="mt-3 space-y-3">
+      {/* Advanced gallery */}
+      {advanced.length > 0 && (
+        <div className="space-y-2">
+          {advanced.map((cfg, i) => {
+            const expanded = expandedSet.has(i);
+            return (
+              <div key={i} className="rounded-lg border border-border/50 bg-black/20 overflow-hidden transition-all duration-200">
+                <div
+                  className="flex items-center gap-2 px-3 py-2 cursor-pointer hover:bg-white/[0.03] transition-colors"
+                  onClick={() => toggleExpand(i)}
+                >
+                  <div className="text-[10px] font-medium px-1.5 py-0.5 rounded bg-ic-violet-soft/20 text-ic-violet shrink-0">{cfg.chartType}</div>
+                  <div className="text-xs text-text/70 flex-1 truncate">{cfg.reason}</div>
+                  <svg className={`w-3 h-3 text-muted transition-transform shrink-0 ${expanded ? 'rotate-180' : ''}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2">
+                    <polyline points="6 9 12 15 18 9" />
+                  </svg>
+                </div>
+                {expanded && (
+                  <div className="px-3 pb-3 space-y-2">
+                    <ResponsiveContainer width="100%" height={280}>
+                      {renderChartByType(cfg, rows)}
+                    </ResponsiveContainer>
+                    {cfg.howToRead && (
+                      <div className="text-[10px] italic text-amber-400/80">{cfg.howToRead}</div>
+                    )}
+                  </div>
+                )}
+              </div>
+            );
+          })}
         </div>
-      ))}
-
-      {/* Divider if both exist */}
-      {hasAdvanced && suggestions.basic.length > 0 && (
-        <div className="border-t border-border/30" />
       )}
 
-      {/* Basic chart toggle + render */}
-      <div>
-        <div className="flex gap-2 mb-2">
-          {(["bar", "line", "area", "pie"] as const).map(t => (
-            <button
-              key={t}
-              type="button"
-              className={`text-[10px] font-medium px-2 py-0.5 rounded-full border transition-colors ${activeBasic === t ? "bg-ic-violet-soft/20 text-ic-violet border-ic-violet/30" : "text-muted border-border/50 hover:text-text"}`}
-              onClick={() => setActiveBasic(t)}
-            >
-              {t}
-            </button>
-          ))}
-          {pngBtn}
-        </div>
-        {activeBasicCfg?.reason && (
-          <div className="text-[10px] text-tertiary mb-1">
-            {activeBasicCfg.reason}
+      {/* Basic toggle */}
+      {suggestions.basic.length > 0 && (
+        <div>
+          <div className="flex gap-1.5 mb-2">
+            {(["bar", "line", "area", "pie"] as const).map(t => (
+              <button
+                key={t}
+                type="button"
+                className={`text-[10px] font-medium px-2 py-0.5 rounded-full border transition-colors ${
+                  activeBasic === t ? "bg-ic-violet-soft/20 text-ic-violet border-ic-violet/30" : "text-muted border-border/50 hover:text-text"
+                }`}
+                onClick={() => setActiveBasic(t)}
+              >
+                {t}
+              </button>
+            ))}
           </div>
-        )}
-        <div className="rounded-lg border border-border/50 bg-black/20 p-3">
-          <ResponsiveContainer width="100%" height={250}>
-            {renderBasicChart(activeBasic, columns, rows, activeBasicCfg)}
-          </ResponsiveContainer>
+          {basicCfg && (
+            <div className="rounded-lg border border-border/50 bg-black/20 p-3">
+              <ResponsiveContainer width="100%" height={250}>
+                {renderChartByType(basicCfg, rows)}
+              </ResponsiveContainer>
+              {basicCfg.howToRead && (
+                <div className="text-[10px] italic text-amber-400/80 mt-1">{basicCfg.howToRead}</div>
+              )}
+            </div>
+          )}
         </div>
-        {activeBasicCfg?.howToRead && (
-          <div className="text-[10px] italic text-amber-400/80 mt-1 px-1">
-            {activeBasicCfg.howToRead}
-          </div>
-        )}
-      </div>
+      )}
     </div>
   );
 }
@@ -475,7 +445,7 @@ export function QueryActions({ queryResult }: { queryResult?: QueryResultState }
             </svg>
             {t("query.csv")}
           </button>
-          <div className="flex gap-1.5 ml-auto">
+          <div className="flex gap-1.5">
             <button
               type="button"
               className={`text-[11px] font-medium px-2 py-0.5 rounded-full border transition-colors flex items-center gap-1 ${!showChart ? "bg-accent text-white border-accent" : "text-muted border-border/50 hover:text-text"}`}
@@ -495,7 +465,7 @@ export function QueryActions({ queryResult }: { queryResult?: QueryResultState }
           </div>
         </div>
         {showChart ? (
-          <ChartView columns={queryResult.columns} rows={queryResult.rows} chart_suggestions={queryResult.chart_suggestions} />
+          <ChartView rows={queryResult.rows} chart_suggestions={queryResult.chart_suggestions} />
         ) : (
           <>
             <div className="overflow-x-auto rounded-lg border border-border/50">
