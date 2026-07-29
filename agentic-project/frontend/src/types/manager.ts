@@ -156,12 +156,14 @@ export interface DeepIteration {
 }
 
 export interface ChartConfig {
-  chartType: string;
+  chartType: "composed" | "stackedArea" | "treemap" | "radialBar" | "funnel" | "sunburst" | "scatter" | "radar" | "bar" | "line" | "area" | "pie";
   xKey: string;
   yKeys: string[];
   reason: string;
   xLabel: string;
   yLabel: string;
   howToRead: string;
+  xFormat?: string;
+  rows?: Record<string, unknown>[];
 }
 

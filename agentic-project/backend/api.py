@@ -10,7 +10,7 @@ from fastapi import APIRouter, HTTPException, UploadFile, File, Form
 from pydantic import BaseModel
 
 from resolve import resolve_line_lookup, fetch_datasets, save_task_definition
-from aims import generate_chat_response, generate_sql, fix_sql, criticize_sql, extract_aims_from_text, extract_analysis_actions, _fallback_chart_configs, _enrich_multi_dim_configs, generate_aim
+from aims import generate_chat_response, generate_sql, fix_sql, criticize_sql, extract_aims_from_text, extract_analysis_actions, _fallback_chart_configs, _llm_chart_configs, _compute_diagnostics, BASIC_CHART_TYPES, generate_aim, _pivot_data, _crosstab_chart_configs, _aggregate_chart_rows
 from llm_client import parse_numbered_suggestions
 from logger import log_route, log_llm_call, log_sql, log_aims, log_response, log_full_prompt
 from llm_client import summarize_turns, classify_route, extract_sql, extract_sql_fallback, generate_llm_response, interpret_results, direct_prompt, suggest_prompt, focus_prompt, language_instruction
@@ -129,6 +129,8 @@ class ChartConfig(BaseModel):
     xLabel: str = ""
     yLabel: str = ""
     howToRead: str = ""
+    xFormat: str = "auto"
+    rows: list[dict] | None = None
 
 class ChartSuggestions(BaseModel):
     advanced: list[ChartConfig] = []
@@ -242,19 +244,95 @@ class ConfirmRegistryEntryRequest(BaseModel):
 
 # ── Helpers ──
 
-async def _build_chart_suggestions(result: dict) -> ChartSuggestions | None:
-    """Build chart suggestions from SQL result — rule-based + LLM-enriched for multi-dim charts."""
-    if not result.get("columns") or not result.get("rows"):
+def _column_meanings_from_datasets(datasets_data: list[dict] | None) -> dict[str, str]:
+    """Flatten column_definitions across all attached datasets into name -> meaning,
+    so the chart-selection prompt knows what a column actually represents
+    (not just its SQL name/type)."""
+    meanings: dict[str, str] = {}
+    for ds in datasets_data or []:
+        for c in ds.get("column_definitions") or []:
+            name = c.get("name")
+            meaning = c.get("meaning")
+            if name and meaning and name not in meanings:
+                meanings[name] = meaning
+    return meanings
+
+
+async def _build_chart_suggestions(result: dict, datasets_data: list[dict] | None = None) -> ChartSuggestions | None:
+    """Build chart suggestions from SQL result.
+
+    Primary path: one LLM call grounded in the chart types' actual meaning,
+    each column's real business meaning (from the dataset registry), AND
+    precomputed per-column data diagnostics (distinct count, nulls,
+    zero/dominant-value ratios, hierarchy checks) — so chart choice reflects
+    whether the data structurally AND semantically fits, not just whether
+    the column types match.
+    Falls back to the deterministic rule-based generator (which applies the
+    same diagnostic guards) if the LLM call fails or returns nothing usable.
+
+    Always merges LLM + fallback + crosstab configs so users see full variety.
+    """
+    columns = result.get("columns")
+    rows = result.get("rows")
+    if not columns or not rows:
         return None
-    raw = _fallback_chart_configs(
-        result["columns"], result.get("column_types", []), result["rows"]
-    )
-    raw = await _enrich_multi_dim_configs(
-        result["columns"], result.get("column_types", []), result["rows"], raw
-    )
+    column_types = result.get("column_types", [])
+
+    diagnostics = _compute_diagnostics(columns, column_types, rows)
+    column_meanings = _column_meanings_from_datasets(datasets_data)
+    proposals = await _llm_chart_configs(columns, column_types, rows, diagnostics, column_meanings)
+    raw = _fallback_chart_configs(columns, column_types, rows)
+    crosstab = _crosstab_chart_configs(columns, column_types, rows)
+
+    def key(c: dict) -> tuple:
+        return (c["chartType"], c["xKey"], str(c.get("yKeys", [])))
+
+    # Basic charts: deduplicate by chartType only (keep one per type, prefer LLM)
+    seen_basic: set[str] = set()
+    basic_items: list[dict] = []
+    for c in (proposals or []):
+        ct = c["chartType"]
+        if ct in BASIC_CHART_TYPES and ct not in seen_basic:
+            seen_basic.add(ct)
+            basic_items.append(c)
+    for c in (raw.get("basic", [])):
+        ct = c["chartType"]
+        if ct in BASIC_CHART_TYPES and ct not in seen_basic:
+            seen_basic.add(ct)
+            basic_items.append(c)
+
+    # Advanced charts: dedup by full key (chartType + xKey + yKeys), LLM first
+    merged_adv: dict[tuple, dict] = {}
+    for c in (proposals or []):
+        if c["chartType"] not in BASIC_CHART_TYPES:
+            merged_adv[key(c)] = c
+    for c in (raw.get("advanced", [])):
+        k = key(c)
+        if k not in merged_adv:
+            merged_adv[k] = c
+
+    # Crosstab configs always added to advanced
+    crosstab_keys = set()
+    for c in crosstab:
+        k = key(c)
+        merged_adv[k] = c
+        crosstab_keys.add(k)
+
+    advanced = list(merged_adv.values())
+    basic = basic_items
+
+    numeric_cols = [c for c, t in zip(columns, column_types)
+                    if t in ("integer", "float", "decimal", "numeric", "bigint", "smallint")]
+    for c in advanced + basic:
+        if c.get("rows"):
+            continue
+        agg_rows = _aggregate_chart_rows(c["chartType"], c["xKey"], c["yKeys"], rows, numeric_cols)
+        if agg_rows:
+            c["rows"] = agg_rows
+
     return ChartSuggestions(
-        advanced=[ChartConfig(**c) for c in raw.get("advanced", [])],
-        basic=[ChartConfig(**c) for c in raw.get("basic", [])],
+        advanced=[ChartConfig(**c) for c in advanced],
+        basic=[ChartConfig(**c) for c in basic],
     )
 
 # ── Enrichment ──
@@ -494,7 +572,7 @@ async def execute_query(req: ExecuteQueryRequest):
                 break
             # Chart suggestions are best-effort — never block the response
             try:
-                chart_suggestions = await _build_chart_suggestions(result)
+                chart_suggestions = await _build_chart_suggestions(result, datasets_data)
             except Exception:
                 chart_suggestions = None
             return ExecuteQueryResponse(
@@ -528,7 +606,7 @@ async def execute_query(req: ExecuteQueryRequest):
             detail="Failed to generate a working query. Try rephrasing your request.",
         )
     try:
-        chart_suggestions = await _build_chart_suggestions(result)
+        chart_suggestions = await _build_chart_suggestions(result, datasets_data)
     except Exception:
         chart_suggestions = None
     return ExecuteQueryResponse(session_id=req.session_id, **result, chart_suggestions=chart_suggestions)
@@ -970,7 +1048,13 @@ async def _handle_direct(
             raw = raw2  # Use the retry response for interpretation
 
     if not sql:
-        proposals = parse_numbered_suggestions(raw, known_datasets=dataset_names)
+        known_columns = {
+            c.get("name", "")
+            for ds in datasets_data
+            for c in ds.get("column_definitions", [])
+            if c.get("name")
+        }
+        proposals = parse_numbered_suggestions(raw, known_datasets=dataset_names, known_columns=known_columns)
         return {
             "agent_message": raw,
             "result_uuid": None,
@@ -1015,7 +1099,7 @@ async def _handle_direct(
             "query_result": error_result,
         }
 
-    chart_suggestions = await _build_chart_suggestions(result)
+    chart_suggestions = await _build_chart_suggestions(result, datasets_data)
     result_with_charts = {**result, "chart_suggestions": chart_suggestions}
 
     interpretation = await interpret_results(
@@ -1063,7 +1147,13 @@ async def _handle_suggest(
     # Include table names alongside user-facing dataset names for proposal validation
     table_names = [ds.get("table", "") for ds in datasets_data if ds.get("table")]
     known_datasets = list(set(dataset_names + table_names))
-    proposals = parse_numbered_suggestions(raw, known_datasets=known_datasets)
+    known_columns = {
+        c.get("name", "")
+        for ds in datasets_data
+        for c in ds.get("column_definitions", [])
+        if c.get("name")
+    }
+    proposals = parse_numbered_suggestions(raw, known_datasets=known_datasets, known_columns=known_columns)
 
     # Build the "what each dataset offers" preamble deterministically — the LLM
     # reliably ignores a prompt-only ask for this, so we render it ourselves.
@@ -1121,7 +1211,7 @@ async def _handle_focus_multi(
             per_aim_summaries.append(f"### {aim}\nCould not complete this analysis: {str(e)[:200]}")
             continue
 
-        cs = await _build_chart_suggestions(result)
+        cs = await _build_chart_suggestions(result, datasets_data)
         chart_suggestions = cs.model_dump() if hasattr(cs, "model_dump") else cs
 
         interpretation = await interpret_results(
@@ -1222,7 +1312,7 @@ async def _handle_focus(
             "query_result": None,
         }
 
-    chart_suggestions = await _build_chart_suggestions(result)
+    chart_suggestions = await _build_chart_suggestions(result, datasets_data)
     result_with_charts = {**result, "chart_suggestions": chart_suggestions}
 
     result_uuid = str(uuid.uuid4())

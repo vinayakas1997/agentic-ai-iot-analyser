@@ -74,7 +74,7 @@ The user asked a specific factual question. You MUST generate a SQL query to ans
 - If the question is ambiguous and you cannot write SQL, respond with exactly: NONE
 
 ## SQL Rules
-- Only use columns and tables from the datasets above
+- Only use columns and tables from the datasets above — never invent column names
 - In the FROM/JOIN clause, use the exact "SQL table name" given in parentheses for each dataset — NOT the dataset's display name if they differ
 - Always include LIMIT 100 unless the user asks for all results
 - Use explicit JOIN conditions when combining datasets
@@ -118,7 +118,7 @@ Start with 1-2 sentences of conversational text acknowledging the user's questio
 - Then list exactly 3 numbered suggestions in the format shown above
 - Put each field on its own line
 - Use **bold** around field names for visual highlighting
-- Reference only columns and datasets from the context above
+- Reference only columns and datasets from the context above — never invent column names
 - Do NOT generate SQL — just describe the analysis approach
 - Keep each suggestion concise (2-3 sentences)
 - Make each idea distinct — explore different angles
@@ -287,14 +287,19 @@ def extract_sql_fallback(text: str) -> str | None:
     return None
 
 
-def parse_numbered_suggestions(text: str, known_datasets: list[str] | None = None) -> list[dict]:
+def parse_numbered_suggestions(
+    text: str,
+    known_datasets: list[str] | None = None,
+    known_columns: set[str] | None = None,
+) -> list[dict]:
     """Parse numbered suggestions from LLM text into structured aim proposals.
 
     Handles formats like:
     1. **Name**: X  **Goal**: Y  **Datasets**: Z  **Columns**: C  **Explanation**: E  **Expected Insight**: W
-    1. Name: X - Goal: Y - Datasets: Z - Columns: C - Explanation: E - Expected Insight: W
+    1. Name: X - Goal: Y - Datasets: Z - Columns: C - Explanation: E - Expected Insight: F
 
     If known_datasets is provided, parsed dataset names are validated against it.
+    If known_columns is provided, parsed column names are validated against it.
     """
     proposals = []
     known_set = set(known_datasets) if known_datasets else None
@@ -334,13 +339,26 @@ def parse_numbered_suggestions(text: str, known_datasets: list[str] | None = Non
             goal = goal_match.group(1).strip().rstrip('*').replace('<br>', '')
             description = goal
 
-        # Columns (extract as list, also append to description for backward compat)
+        # Columns (extract as list, validate against known_columns, also append to description)
         cols_match = re.search(r'\*{0,2}Columns?\*{0,2}\s*[:\-–]\s*(.+?)(?:\n|$)', item, re.IGNORECASE)
         if cols_match:
             cols_text = cols_match.group(1).strip().rstrip('*').replace('<br>', '')
             if cols_text:
                 columns_list = [c.strip() for c in cols_text.split(',') if c.strip()]
-                description += f"\nColumns: {cols_text}"
+                # Validate against known columns if provided
+                if known_columns is not None:
+                    valid_cols = [c for c in columns_list if c in known_columns]
+                    # If no valid columns found, don't discard entirely — keep original but
+                    # the description will lack a clean "Columns:" line so the user can still
+                    # read what the LLM proposed.
+                    if valid_cols:
+                        columns_list = valid_cols
+                        cols_text = ", ".join(valid_cols)
+                    else:
+                        columns_list = []
+                        cols_text = ""
+                if cols_text:
+                    description += f"\nColumns: {cols_text}"
 
         # Explanation
         expl_match = re.search(r'\*{0,2}Explanation\*{0,2}\s*[:\-–]\s*(.+?)(?:\n|$)', item, re.IGNORECASE)

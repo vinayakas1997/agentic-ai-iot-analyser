@@ -1,4 +1,4 @@
-import { useState, useMemo, useRef } from "react";
+import { useState, useMemo, useRef, useEffect } from "react";
 import { monoClass } from "../lib/styles";
 import { IconGrid, IconChart } from "../lib/icons";
 import { useT, tCount } from "../lib/i18n";
@@ -20,6 +20,8 @@ export interface ChartConfig {
   xLabel?: string;
   yLabel?: string;
   howToRead?: string;
+  xFormat?: string;
+  rows?: Record<string, unknown>[];
 }
 
 export interface ChartSuggestions {
@@ -55,11 +57,44 @@ function axisLabelStyles() {
     tick: { fontSize: 10, fill: "#999" },
     axisLine: { stroke: "rgba(255,255,255,0.08)" },
     tickLine: false,
+    interval: "preserveStartEnd" as const,
   };
 }
 
 function tooltipStyle() {
   return { contentStyle: { background: "#1a1a2e", border: "1px solid rgba(255,255,255,0.1)", borderRadius: 8, fontSize: 12 } };
+}
+
+const ISO_DATETIME_RE = /^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}/;
+const TIME_ONLY_RE = /^\d{1,2}:\d{2}(:\d{2})?$/;
+const DATE_ONLY_RE = /^\d{4}-\d{2}-\d{2}$/;
+
+function smartTickFormatter(value: unknown, xFormat?: string): string {
+  if (value == null) return "";
+  const s = String(value);
+
+  if (xFormat === "time" || xFormat === "auto") {
+    if (ISO_DATETIME_RE.test(s)) {
+      const d = new Date(s);
+      if (!isNaN(d.getTime())) {
+        const h = d.getHours().toString().padStart(2, "0");
+        const m = d.getMinutes().toString().padStart(2, "0");
+        return `${h}:${m}`;
+      }
+    }
+    if (TIME_ONLY_RE.test(s)) {
+      return s.slice(0, 5);
+    }
+    if (DATE_ONLY_RE.test(s)) {
+      const d = new Date(s + "T00:00:00");
+      if (!isNaN(d.getTime())) {
+        return d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+      }
+    }
+  }
+
+  if (s.length > 20) return s.slice(0, 17) + "…";
+  return s;
 }
 
 // ── Advanced chart renderers ──
@@ -82,10 +117,10 @@ function renderComposedChart(cfg: ChartConfig, rows: Record<string, unknown>[]) 
   return (
     <ComposedChart data={rows}>
       <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.06)" />
-      <XAxis dataKey={cfg.xKey} {...axisLabelStyles()} label={cfg.xLabel ? { value: cfg.xLabel, position: "bottom", offset: -5, style: { fill: "#999", fontSize: 10 } } : undefined} />
+      <XAxis dataKey={cfg.xKey} {...axisLabelStyles()} tickFormatter={(v) => smartTickFormatter(v, cfg.xFormat)} label={cfg.xLabel ? { value: cfg.xLabel, position: "bottom", offset: -5, style: { fill: "#999", fontSize: 10 } } : undefined} />
       <YAxis {...axisLabelStyles()} label={cfg.yLabel ? { value: cfg.yLabel, angle: -90, position: "insideLeft", style: { fill: "#999", fontSize: 10 } } : undefined} />
       <Tooltip {...tooltipStyle()} />
-      <Legend wrapperStyle={{ fontSize: 11 }} />
+      <Legend wrapperStyle={{ fontSize: 11 }} onClick={() => {}} />
       {values && (
         <>
           <ReferenceLine y={values.max} stroke="#ef4444" strokeDasharray="3 3" label={{ value: `Max: ${values.max.toFixed(1)}`, position: "insideTopRight", fill: "#ef4444", fontSize: 10 }} />
@@ -106,7 +141,7 @@ function renderScatterChart(cfg: ChartConfig, rows: Record<string, unknown>[]) {
   return (
     <ScatterChart>
       <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.06)" />
-      <XAxis dataKey={cfg.xKey} {...axisLabelStyles()} name={cfg.xKey} label={cfg.xLabel ? { value: cfg.xLabel, position: "bottom", offset: -5, style: { fill: "#999", fontSize: 10 } } : undefined} />
+      <XAxis dataKey={cfg.xKey} {...axisLabelStyles()} name={cfg.xKey} tickFormatter={(v) => smartTickFormatter(v, cfg.xFormat)} label={cfg.xLabel ? { value: cfg.xLabel, position: "bottom", offset: -5, style: { fill: "#999", fontSize: 10 } } : undefined} />
       <YAxis dataKey={cfg.yKeys[0] || ""} {...axisLabelStyles()} name={cfg.yKeys[0] || ""} label={cfg.yLabel ? { value: cfg.yLabel, angle: -90, position: "insideLeft", style: { fill: "#999", fontSize: 10 } } : undefined} />
       <Tooltip {...tooltipStyle()} cursor={{ strokeDasharray: "3 3" }} />
       <Scatter data={rows} fill={CHART_COLORS[0]} />
@@ -123,7 +158,7 @@ function renderRadarChart(cfg: ChartConfig, rows: Record<string, unknown>[]) {
       {cfg.yKeys.map((k, i) => (
         <Radar key={k} name={k} dataKey={k} stroke={CHART_COLORS[i % CHART_COLORS.length]} fill={CHART_COLORS[i % CHART_COLORS.length]} fillOpacity={0.2} />
       ))}
-      <Legend wrapperStyle={{ fontSize: 11 }} />
+      <Legend wrapperStyle={{ fontSize: 11 }} onClick={() => {}} />
     </RadarChart>
   );
 }
@@ -132,10 +167,10 @@ function renderStackedAreaChart(cfg: ChartConfig, rows: Record<string, unknown>[
   return (
     <AreaChart data={rows}>
       <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.06)" />
-      <XAxis dataKey={cfg.xKey} {...axisLabelStyles()} label={cfg.xLabel ? { value: cfg.xLabel, position: "bottom", offset: -5, style: { fill: "#999", fontSize: 10 } } : undefined} />
+      <XAxis dataKey={cfg.xKey} {...axisLabelStyles()} tickFormatter={(v) => smartTickFormatter(v, cfg.xFormat)} label={cfg.xLabel ? { value: cfg.xLabel, position: "bottom", offset: -5, style: { fill: "#999", fontSize: 10 } } : undefined} />
       <YAxis {...axisLabelStyles()} label={cfg.yLabel ? { value: cfg.yLabel, angle: -90, position: "insideLeft", style: { fill: "#999", fontSize: 10 } } : undefined} />
       <Tooltip {...tooltipStyle()} />
-      <Legend wrapperStyle={{ fontSize: 11 }} />
+      <Legend wrapperStyle={{ fontSize: 11 }} onClick={() => {}} />
       {cfg.yKeys.map((k, i) => (
         <Area key={k} type="monotone" dataKey={k} stackId="stack" stroke={CHART_COLORS[i % CHART_COLORS.length]} fill={CHART_COLORS[i % CHART_COLORS.length]} fillOpacity={0.5} />
       ))}
@@ -163,7 +198,7 @@ function renderRadialBarChart(cfg: ChartConfig, rows: Record<string, unknown>[])
   return (
     <RadialBarChart innerRadius="20%" outerRadius="80%" barSize={12} data={data}>
       <RadialBar dataKey={cfg.yKeys[0] || ""} cornerRadius={6} label={{ position: "insideStart", fill: "#fff", fontSize: 9 }} />
-      <Legend wrapperStyle={{ fontSize: 11 }} />
+      <Legend wrapperStyle={{ fontSize: 11 }} onClick={() => {}} />
     </RadialBarChart>
   );
 }
@@ -231,10 +266,10 @@ function renderBarChart(cfg: ChartConfig, rows: Record<string, unknown>[]) {
   return (
     <BarChart data={rows}>
       <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.06)" />
-      <XAxis dataKey={cfg.xKey} {...axisLabelStyles()} label={cfg.xLabel ? { value: cfg.xLabel, position: "bottom", offset: -5, style: { fill: "#999", fontSize: 10 } } : undefined} />
+      <XAxis dataKey={cfg.xKey} {...axisLabelStyles()} tickFormatter={(v) => smartTickFormatter(v, cfg.xFormat)} label={cfg.xLabel ? { value: cfg.xLabel, position: "bottom", offset: -5, style: { fill: "#999", fontSize: 10 } } : undefined} />
       <YAxis {...axisLabelStyles()} label={cfg.yLabel ? { value: cfg.yLabel, angle: -90, position: "insideLeft", style: { fill: "#999", fontSize: 10 } } : undefined} />
       <Tooltip {...tooltipStyle()} />
-      <Legend wrapperStyle={{ fontSize: 11 }} />
+      <Legend wrapperStyle={{ fontSize: 11 }} onClick={() => {}} />
       {cfg.yKeys.map((k, i) => (
         <Bar key={k} dataKey={k} fill={CHART_COLORS[i % CHART_COLORS.length]} radius={[4, 4, 0, 0]} />
       ))}
@@ -246,10 +281,10 @@ function renderLineChart(cfg: ChartConfig, rows: Record<string, unknown>[]) {
   return (
     <LineChart data={rows}>
       <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.06)" />
-      <XAxis dataKey={cfg.xKey} {...axisLabelStyles()} label={cfg.xLabel ? { value: cfg.xLabel, position: "bottom", offset: -5, style: { fill: "#999", fontSize: 10 } } : undefined} />
+      <XAxis dataKey={cfg.xKey} {...axisLabelStyles()} tickFormatter={(v) => smartTickFormatter(v, cfg.xFormat)} label={cfg.xLabel ? { value: cfg.xLabel, position: "bottom", offset: -5, style: { fill: "#999", fontSize: 10 } } : undefined} />
       <YAxis {...axisLabelStyles()} label={cfg.yLabel ? { value: cfg.yLabel, angle: -90, position: "insideLeft", style: { fill: "#999", fontSize: 10 } } : undefined} />
       <Tooltip {...tooltipStyle()} />
-      <Legend wrapperStyle={{ fontSize: 11 }} />
+      <Legend wrapperStyle={{ fontSize: 11 }} onClick={() => {}} />
       {cfg.yKeys.map((k, i) => (
         <Line key={k} type="monotone" dataKey={k} stroke={CHART_COLORS[i % CHART_COLORS.length]} strokeWidth={2} dot={{ r: 3 }} />
       ))}
@@ -261,10 +296,10 @@ function renderAreaChart(cfg: ChartConfig, rows: Record<string, unknown>[]) {
   return (
     <AreaChart data={rows}>
       <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.06)" />
-      <XAxis dataKey={cfg.xKey} {...axisLabelStyles()} label={cfg.xLabel ? { value: cfg.xLabel, position: "bottom", offset: -5, style: { fill: "#999", fontSize: 10 } } : undefined} />
+      <XAxis dataKey={cfg.xKey} {...axisLabelStyles()} tickFormatter={(v) => smartTickFormatter(v, cfg.xFormat)} label={cfg.xLabel ? { value: cfg.xLabel, position: "bottom", offset: -5, style: { fill: "#999", fontSize: 10 } } : undefined} />
       <YAxis {...axisLabelStyles()} label={cfg.yLabel ? { value: cfg.yLabel, angle: -90, position: "insideLeft", style: { fill: "#999", fontSize: 10 } } : undefined} />
       <Tooltip {...tooltipStyle()} />
-      <Legend wrapperStyle={{ fontSize: 11 }} />
+      <Legend wrapperStyle={{ fontSize: 11 }} onClick={() => {}} />
       {cfg.yKeys.map((k, i) => (
         <Area key={k} type="monotone" dataKey={k} stroke={CHART_COLORS[i % CHART_COLORS.length]} fill={CHART_COLORS[i % CHART_COLORS.length]} fillOpacity={0.15} />
       ))}
@@ -313,7 +348,14 @@ function ChartView({ rows, chart_suggestions }: {
 
   const suggestions = useMemo(() => sanitizeSuggestions(chart_suggestions ?? undefined), [chart_suggestions]);
   const advanced = suggestions.advanced;
+  const availableBasicTypes = useMemo(() => suggestions.basic.map(c => c.chartType), [suggestions.basic]);
   const basicCfg = useMemo(() => suggestions.basic.find(c => c.chartType === activeBasic), [suggestions.basic, activeBasic]);
+
+  useEffect(() => {
+    if (availableBasicTypes.length > 0 && !(availableBasicTypes as string[]).includes(activeBasic)) {
+      setActiveBasic(availableBasicTypes[0]);
+    }
+  }, [availableBasicTypes, activeBasic]);
 
   const toggleExpand = (i: number) => {
     setExpandedSet(prev => {
@@ -362,7 +404,7 @@ function ChartView({ rows, chart_suggestions }: {
                 {expanded && (
                   <div className="px-3 pb-3 space-y-2">
                     <ResponsiveContainer width="100%" height={280}>
-                      {renderChartByType(cfg, rows)}
+                      {renderChartByType(cfg, cfg.rows ?? rows)}
                     </ResponsiveContainer>
                     {cfg.howToRead && (
                       <div className="text-[10px] italic text-amber-400/80">{cfg.howToRead}</div>
@@ -379,7 +421,7 @@ function ChartView({ rows, chart_suggestions }: {
       {suggestions.basic.length > 0 && (
         <div>
           <div className="flex items-center gap-1.5 mb-2 flex-wrap">
-            {(["bar", "line", "area", "pie"] as const).map(type => {
+            {availableBasicTypes.map(type => {
               const active = activeBasic === type;
               return (
                 <div key={type} className="flex items-stretch">
@@ -413,7 +455,7 @@ function ChartView({ rows, chart_suggestions }: {
           {basicCfg && (
             <div ref={basicChartRef} className="rounded-lg border border-border/50 bg-black/20 p-3">
               <ResponsiveContainer width="100%" height={250}>
-                {renderChartByType(basicCfg, rows)}
+                {renderChartByType(basicCfg, basicCfg.rows ?? rows)}
               </ResponsiveContainer>
               {basicCfg.howToRead && (
                 <div className="text-[10px] italic text-amber-400/80 mt-1">{basicCfg.howToRead}</div>
