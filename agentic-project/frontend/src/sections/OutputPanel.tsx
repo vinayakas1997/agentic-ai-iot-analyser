@@ -1,4 +1,7 @@
 import { useState, useEffect, useCallback } from "react";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
+import remarkBreaks from "remark-breaks";
 import { panelClass, resultCardClass, resultTagClass, resultBadgeClass, miniTableClass, insightNoteClass } from "../lib/styles";
 import { useOutputStore } from "../stores/outputStore";
 import { useSessionStore } from "../stores/sessionStore";
@@ -215,7 +218,9 @@ export default function OutputPanel() {
                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" width="12" height="12" strokeWidth="2.2"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg>
                         {t("common.description")}
                       </div>
-                      <p className="text-sm text-text leading-relaxed">{r.description}</p>
+                      <div className="prose-custom text-sm text-text leading-relaxed">
+                        <ReactMarkdown remarkPlugins={[remarkGfm, remarkBreaks]}>{r.description}</ReactMarkdown>
+                      </div>
                     </div>
                   )}
                   {r.datasets && r.datasets.length > 0 && (

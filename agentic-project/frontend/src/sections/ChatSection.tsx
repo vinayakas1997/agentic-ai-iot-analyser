@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo, useRef, useCallback, KeyboardEvent } from "react";
-import { panelClass, btnPrimary } from "../lib/styles";
+import { panelClass, btnPrimary, btnGlass } from "../lib/styles";
 import { useSessionStore } from "../stores/sessionStore";
 import { useOutputStore } from "../stores/outputStore";
 import { listDatasets, updateSessionState, summarizeContext, uploadCsvFiles } from "../api/client";
@@ -519,7 +519,7 @@ export default function ChatSection() {
           </button>
           <button
             type="button"
-            className="flex items-center gap-1.5 text-[11px] font-medium text-accent hover:text-accent/80 transition-colors shrink-0 disabled:opacity-50"
+            className={`flex items-center gap-1.5 text-[11px] font-semibold text-accent rounded-lg px-2.5 py-1.5 shrink-0 ${btnGlass}`}
             onClick={() => csvInputRef.current?.click()}
             disabled={uploadingCsv}
           >

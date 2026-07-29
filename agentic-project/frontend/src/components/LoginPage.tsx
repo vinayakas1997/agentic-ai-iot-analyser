@@ -1,15 +1,24 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useAuthStore } from "../stores/authStore";
 import { login } from "../api/client";
 import { useT } from "../lib/i18n";
 import { btnPrimary } from "../lib/styles";
 
-export default function LoginPage() {
+export default function LoginPage({ onClose }: { onClose?: () => void }) {
   const t = useT();
   const doLogin = useAuthStore((s) => s.login);
   const [userId, setUserId] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
+
+  useEffect(() => {
+    if (!onClose) return;
+    const handleKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", handleKey);
+    return () => window.removeEventListener("keydown", handleKey);
+  }, [onClose]);
 
   const handleSubmit = async () => {
     if (!userId.trim()) return;
@@ -26,9 +35,14 @@ export default function LoginPage() {
   };
 
   return (
-    <div className="flex items-center justify-center h-screen bg-bg-deep text-text">
-      <div className="rounded-2xl border-2 border-border bg-surface-1 p-8 w-full max-w-sm">
-        <div className="text-lg font-semibold mb-1">EDAS</div>
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-bg-deep/40 backdrop-blur-sm text-text"
+      onMouseDown={(e) => {
+        if (e.target === e.currentTarget) onClose?.();
+      }}
+    >
+      <div className="rounded-2xl border-2 border-border bg-surface-1 p-8 w-full max-w-sm shadow-2xl">
+        <div className="text-lg font-semibold mb-1">Agentic IoT Data Analyser</div>
         <div className="text-base font-semibold text-text mb-1">{t("login.title")}</div>
         <div className="text-sm text-muted mb-4">{t("login.subtitle")}</div>
         <input

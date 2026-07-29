@@ -241,3 +241,117 @@ body {
 @media (prefers-reduced-motion: reduce) {
   .chart-bar, .chart-dot { animation: none !important; }
 }
+
+/* ── Landing page ── */
+@keyframes sensor-blink {
+  0%, 100% { opacity: 0.15; transform: scale(0.8); }
+  50% { opacity: 0.9; transform: scale(1.15); }
+}
+.animate-sensor-blink { animation: sensor-blink 3.4s ease-in-out infinite; }
+
+@keyframes landing-blink { 50% { opacity: 0; } }
+.landing-cursor {
+  display: inline-block;
+  width: 2px;
+  height: 14px;
+  background: var(--color-stage-execution);
+  margin-left: 1px;
+  transform: translateY(2px);
+  animation: landing-blink 0.9s step-end infinite;
+}
+
+.landing-connector {
+  position: relative;
+  flex: 0 0 64px;
+  align-self: center;
+  height: 2px;
+  margin: 0 -1px;
+}
+.landing-connector .base-line { position: absolute; inset: 0; background: var(--color-border); }
+.landing-connector .flow-line {
+  position: absolute; inset: 0;
+  background: repeating-linear-gradient(90deg, var(--flow-color, var(--color-accent)) 0 8px, transparent 8px 18px);
+  background-size: 26px 100%;
+  box-shadow: 0 0 10px 0 var(--flow-color, var(--color-accent));
+  opacity: 0;
+  transition: opacity 0.3s ease;
+}
+.landing-connector.active .flow-line { opacity: 1; animation: landing-dash-flow 0.7s linear infinite; }
+.landing-connector.pulse .flow-line { opacity: 1; animation: none; background: var(--flow-color, var(--color-accent)); }
+@keyframes landing-dash-flow { to { background-position: 26px 0; } }
+
+@media (max-width: 820px) {
+  .landing-connector { flex: 0 0 40px; width: 2px; height: auto; margin: 0; }
+  .landing-connector .base-line { left: 50%; right: auto; width: 2px; transform: translateX(-50%); }
+  .landing-connector .flow-line {
+    left: 50%; right: auto; width: 2px; transform: translateX(-50%);
+    background: repeating-linear-gradient(180deg, var(--flow-color, var(--color-accent)) 0 8px, transparent 8px 18px);
+    background-size: 100% 26px;
+  }
+  @keyframes landing-dash-flow { to { background-position: 0 26px; } }
+}
+
+@keyframes landing-chip-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(124,111,239,0); }
+  50% { box-shadow: 0 0 16px 0 rgba(124,111,239,0.45); }
+}
+.landing-chip { animation: landing-chip-pulse 2.6s ease-in-out infinite; }
+.landing-chip:nth-child(2) { animation-delay: 0.6s; }
+
+@keyframes landing-thumb-collapse {
+  0%, 55% { transform: scaleX(1); opacity: 1; }
+  72%, 100% { transform: scaleX(0.15); opacity: 0; }
+}
+.landing-thumb { animation: landing-thumb-collapse 3.4s ease-in-out infinite; }
+.landing-thumb:nth-child(1) { animation-delay: 0s; }
+.landing-thumb:nth-child(2) { animation-delay: 0.15s; }
+.landing-thumb:nth-child(3) { animation-delay: 0.3s; }
+
+@keyframes landing-sline-grow {
+  0%, 50% { transform: scaleX(0); opacity: 0; }
+  68%, 100% { transform: scaleX(1); opacity: 1; }
+}
+.landing-sline { transform-origin: left; animation: landing-sline-grow 3.4s ease-in-out infinite; }
+.landing-sline:nth-child(1) { animation-delay: 1.9s; }
+.landing-sline:nth-child(2) { animation-delay: 2.05s; }
+.landing-sline:nth-child(3) { animation-delay: 2.2s; }
+
+@keyframes landing-glyph-cycle {
+  0%, 82%, 100% { color: var(--color-tertiary); background: transparent; border-color: transparent; }
+  8% { color: var(--color-stage-execution); background: var(--color-stage-execution-soft); border-color: var(--color-stage-execution-line); box-shadow: 0 0 14px -2px var(--color-stage-execution); transform: translateY(-2px); }
+}
+.landing-glyph { animation: landing-glyph-cycle 6.4s ease-in-out infinite; border: 1px solid transparent; }
+.landing-glyph:nth-child(1) { animation-delay: 0s; }
+.landing-glyph:nth-child(2) { animation-delay: 0.8s; }
+.landing-glyph:nth-child(3) { animation-delay: 1.6s; }
+.landing-glyph:nth-child(4) { animation-delay: 2.4s; }
+.landing-glyph:nth-child(5) { animation-delay: 3.2s; }
+.landing-glyph:nth-child(6) { animation-delay: 4s; }
+.landing-glyph:nth-child(7) { animation-delay: 4.8s; }
+.landing-glyph:nth-child(8) { animation-delay: 5.6s; }
+
+.landing-grid-bg {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  opacity: 0.5;
+  background-image:
+    linear-gradient(rgba(255,255,255,0.035) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255,255,255,0.035) 1px, transparent 1px);
+  background-size: 56px 56px;
+  mask-image: radial-gradient(ellipse 80% 60% at 50% 0%, black 40%, transparent 85%);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .landing-cursor,
+  .landing-connector .flow-line,
+  .animate-sensor-blink,
+  .landing-chip,
+  .landing-thumb,
+  .landing-sline,
+  .landing-glyph {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+  }
+}

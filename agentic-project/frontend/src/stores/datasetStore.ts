@@ -8,6 +8,7 @@ interface DatasetSelection {
   attach: (name: string) => void;
   detach: (name: string) => void;
   remove: (name: string) => void;
+  removeWithAims: (name: string) => void;
   addMultiple: (names: string[]) => void;
   attachMultiple: (names: string[]) => void;
   clear: () => void;
@@ -42,6 +43,12 @@ export const useDatasetStore = create<DatasetSelection>((set) => ({
     set((s) => ({
       selected: s.selected.filter((n) => n !== name),
       attached: s.attached.filter((n) => n !== name),
+    })),
+  removeWithAims: (name) =>
+    set((s) => ({
+      selected: s.selected.filter((n) => n !== name),
+      attached: s.attached.filter((n) => n !== name),
+      lockedByAims: s.lockedByAims.filter((n) => n !== name),
     })),
   addMultiple: (names) =>
     set((s) => ({

@@ -41,6 +41,17 @@ export default function ColumnClarifyView() {
     });
   });
 
+  useEffect(() => {
+    setEditedColumns(null);
+    setIndex(0);
+    setDescription("");
+    setConfirmedNames([]);
+    setError("");
+    setDefinitionsFileName("");
+    setDefinitionsError("");
+    setDefinitionsApplying(false);
+  }, [pendingDrafts]);
+
   if (pendingDrafts.length === 0) {
     if (failures.length === 0) return null;
     return (

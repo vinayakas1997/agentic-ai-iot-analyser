@@ -2,6 +2,7 @@ import { useState, useRef, useEffect, useMemo } from "react";
 import { useSessionStore } from "../stores/sessionStore";
 import { useDatasetStore } from "../stores/datasetStore";
 import { useUploadStore } from "../stores/uploadStore";
+import { useOutputStore } from "../stores/outputStore";
 import type { SessionMeta } from "../types/manager";
 import { panelClass, monoClass } from "../lib/styles";
 import { IconDatabase, IconEdit, IconTrash } from "../lib/icons";
@@ -27,6 +28,11 @@ export default function ContextSection() {
   const storeAttach = useDatasetStore((s) => s.attach);
   const storeDetach = useDatasetStore((s) => s.detach);
   const lockedByAims = useDatasetStore((s) => s.lockedByAims);
+  const storeRemoveWithAims = useDatasetStore((s) => s.removeWithAims);
+  const selectedAims = useSessionStore((s) => s.selectedAims);
+  const loading = useSessionStore((s) => s.loading);
+
+  const [deletingDataset, setDeletingDataset] = useState<PersonalDataset | null>(null);
 
   const [datasets, setDatasets] = useState<DatasetInfo[]>([]);
   const [personalDatasets, setPersonalDatasets] = useState<PersonalDataset[]>([]);
@@ -47,16 +53,49 @@ export default function ContextSection() {
       .catch((err) => console.error("Failed to load personal datasets:", err));
   }, [personalDatasetsVersion]);
 
-  const handleDeletePersonalDataset = async (ds: PersonalDataset) => {
+  const doDeletePersonalDataset = async (ds: PersonalDataset) => {
     try {
       await deleteUserDataset(ds.id);
       setPersonalDatasets((prev) => prev.filter((d) => d.id !== ds.id));
-      storeDetach(ds.dataset_name);
-      storeRemove(ds.dataset_name);
+      storeRemoveWithAims(ds.dataset_name);
     } catch (err) {
       console.error("Failed to delete personal dataset:", err);
     }
   };
+
+  const handleDeletePersonalDataset = (ds: PersonalDataset) => {
+    const isInUse = storeAttached.includes(ds.dataset_name) ||
+      selectedAims.some((a) => a.datasets?.includes(ds.dataset_name));
+    if (isInUse) {
+      setDeletingDataset(ds);
+    } else {
+      doDeletePersonalDataset(ds);
+    }
+  };
+
+  const handleConfirmDeletePersonalDataset = async () => {
+    if (!deletingDataset) return;
+    const ds = deletingDataset;
+    const dsName = ds.dataset_name;
+
+    const aimsToRemove = selectedAims
+      .filter((a) => a.datasets?.includes(dsName))
+      .map((a) => a.aim);
+
+    if (aimsToRemove.length > 0) {
+      useSessionStore.setState((s) => ({
+        selectedAims: s.selectedAims.filter((a) => !aimsToRemove.includes(a.aim)),
+      }));
+      useOutputStore.setState((s) => ({
+        results: s.results.filter((r) => !aimsToRemove.includes(r.aim)),
+      }));
+    }
+
+    await doDeletePersonalDataset(ds);
+    setDeletingDataset(null);
+  };
+
+  const handleCancelDelete = () => setDeletingDataset(null);
 
   useEffect(() => {
     if (editingTitle && titleInputRef.current) {
@@ -294,9 +333,20 @@ export default function ContextSection() {
                   </button>
                   <button
                     type="button"
-                    className="w-5 h-5 rounded-md bg-white/[0.04] hover:bg-ic-amber/15 hover:text-ic-amber border border-border/20 transition-all shrink-0 flex items-center justify-center"
-                    onClick={() => handleDeletePersonalDataset(ds)}
-                    title={t("context.deleteDatasetTitle")}
+                    className={`w-5 h-5 rounded-md bg-white/[0.04] border border-border/20 transition-all shrink-0 flex items-center justify-center ${
+                      loading && selectedAims.some((a) => a.datasets?.includes(ds.dataset_name))
+                        ? "text-muted/30 cursor-not-allowed"
+                        : "hover:bg-ic-amber/15 hover:text-ic-amber"
+                    }`}
+                    onClick={() => {
+                      if (loading && selectedAims.some((a) => a.datasets?.includes(ds.dataset_name))) return;
+                      handleDeletePersonalDataset(ds);
+                    }}
+                    title={
+                      loading && selectedAims.some((a) => a.datasets?.includes(ds.dataset_name))
+                        ? t("context.deleteWhileRunning")
+                        : t("context.deleteDatasetTitle")
+                    }
                   >
                     <IconTrash size={13} />
                   </button>
@@ -319,6 +369,38 @@ export default function ContextSection() {
 
       {editingDataset && (
         <EditColumnsDialog dataset={editingDataset} onClose={() => setEditingDataset(null)} />
+      )}
+
+      {deletingDataset && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
+          <div className="rounded-xl border border-border bg-surface-1 p-5 shadow-2xl max-w-sm w-full mx-4">
+            <div className="flex items-center gap-3 mb-3">
+              <span className="inline-flex items-center justify-center w-8 h-8 rounded-xl bg-ic-amber/15 text-ic-amber">
+                <IconTrash size={16} />
+              </span>
+              <h3 className="text-sm font-semibold text-text">{t("context.deleteModalTitle")}</h3>
+            </div>
+            <p className="text-sm text-muted mb-5 whitespace-pre-line">
+              {t("context.deleteWarning")}
+            </p>
+            <div className="flex justify-end gap-2">
+              <button
+                type="button"
+                className="px-3 py-1.5 text-sm rounded-lg border border-border text-muted hover:text-text transition-colors"
+                onClick={handleCancelDelete}
+              >
+                {t("context.deleteCancelBtn")}
+              </button>
+              <button
+                type="button"
+                className="px-3 py-1.5 text-sm rounded-lg bg-ic-amber/15 text-ic-amber border border-ic-amber/25 hover:bg-ic-amber/25 transition-colors font-medium"
+                onClick={handleConfirmDeletePersonalDataset}
+              >
+                {t("context.deleteConfirmBtn")}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </section>
   );

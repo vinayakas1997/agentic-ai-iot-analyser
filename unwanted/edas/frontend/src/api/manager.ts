@@ -31,3 +31,15 @@ export async function sendMessage(
   });
   return data;
 }
+
+export async function uploadCSV(
+  sessionId: string,
+  file: File
+): Promise<{ message: string }> {
+  const formData = new FormData();
+  formData.append("file", file);
+  const { data } = await managerClient.post(`/manager/sessions/${sessionId}/upload`, formData, {
+    headers: { "Content-Type": "multipart/form-data" },
+  });
+  return data;
+}

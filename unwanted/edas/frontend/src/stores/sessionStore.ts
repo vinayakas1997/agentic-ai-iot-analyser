@@ -1,6 +1,6 @@
 import { create } from "zustand";
-import { createSession, getSession, listSessions, sendMessage } from "../api/manager";
-import type { MessageResponse, SessionListItem, SessionMeta, Turn } from "../types/manager";
+import { createSession, getSession, listSessions, sendMessage, uploadCSV } from "../api/manager";
+import type { MessageResponse, SessionDetail, SessionListItem } from "../types/manager";
 import { useUiStore } from "./uiStore";
 
 function turnFromResponse(res: MessageResponse, userMessage: string): Turn {
@@ -39,6 +39,7 @@ interface SessionState {
   switchSession: (id: string) => Promise<void>;
   newSession: () => Promise<void>;
   sendUserMessage: (text: string, lineName?: string) => Promise<MessageResponse | undefined>;
+  uploadCSV: (file: File) => Promise<void>;
   setError: (error: string | null) => void;
 }
 
@@ -157,6 +158,22 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   },
 
   setError: (error) => set({ error }),
+
+  uploadCSV: async (file) => {
+    const { sessionId } = get();
+    if (!sessionId) return;
+
+    set({ error: null, loading: true });
+    try {
+      await uploadCSV(sessionId, file);
+      set({ loading: false });
+      await get().refreshSessions();
+    } catch (e) {
+      set({ error: getErrorMessage(e) });
+      set({ loading: false });
+      throw e;
+    }
+  },
 }));
 
 export function useSelectedTurn(): Turn | null {

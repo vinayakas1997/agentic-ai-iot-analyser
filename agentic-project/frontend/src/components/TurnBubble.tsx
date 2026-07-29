@@ -270,7 +270,9 @@ export function TurnBubble({ turn, queryResult, selectedAims, runningAim, loadin
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" width="12" height="12" strokeWidth="2.2"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg>
             {t("common.description")}
           </div>
-          <p className="text-sm text-text leading-relaxed">{turn.description}</p>
+          <div className="prose-custom text-sm text-text leading-relaxed">
+            <ReactMarkdown remarkPlugins={[remarkGfm, remarkBreaks]}>{escapeAsterisks(turn.description)}</ReactMarkdown>
+          </div>
         </div>
       )}
       {turn.benefits && (

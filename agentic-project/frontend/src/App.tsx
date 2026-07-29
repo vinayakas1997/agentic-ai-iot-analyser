@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import Navbar from "./components/Navbar";
 import LoginPage from "./components/LoginPage";
+import LandingPage from "./components/LandingPage";
 import { useSessionStore } from "./stores/sessionStore";
 import { useUploadStore } from "./stores/uploadStore";
 import { useAuthStore } from "./stores/authStore";
@@ -32,7 +33,9 @@ export default function App() {
   const startPoller = useSessionStore((s) => s.startPoller);
   const stopPoller = useSessionStore((s) => s.stopPoller);
   const role = useAuthStore((s) => s.role);
-  const [viewingDashboard, setViewingDashboard] = useState(false);
+  const viewingDashboard = useAuthStore((s) => s.viewingDashboard);
+  const setViewingDashboard = useAuthStore((s) => s.setViewingDashboard);
+  const [showLogin, setShowLogin] = useState(false);
 
   useEffect(() => {
     bootstrap();
@@ -41,7 +44,14 @@ export default function App() {
   }, [bootstrap, startPoller, stopPoller]);
 
   if (!role) {
-    return <LoginPage />;
+    return (
+      <>
+        <div className={`transition-[filter] duration-200 ${showLogin ? "blur-sm pointer-events-none select-none" : ""}`}>
+          <LandingPage onGetStarted={() => setShowLogin(true)} />
+        </div>
+        {showLogin && <LoginPage onClose={() => setShowLogin(false)} />}
+      </>
+    );
   }
 
   if (role === "iot" && !viewingDashboard) {

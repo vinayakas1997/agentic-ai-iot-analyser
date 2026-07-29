@@ -79,6 +79,11 @@ export const translations: Record<Language, Record<string, string>> = {
     "context.personalDatasets": "Personal Datasets",
     "context.noPersonalDatasets": 'No uploaded CSVs yet. Use "Upload CSV" in the center panel to test your own data.',
     "context.deleteDatasetTitle": "Delete this dataset",
+    "context.deleteWarning": "This dataset is in use by the composer.\nRemove it and all related analysis aims?",
+    "context.deleteConfirmBtn": "Yes, remove all",
+    "context.deleteCancelBtn": "Cancel",
+    "context.deleteModalTitle": "Delete dataset?",
+    "context.deleteWhileRunning": "Analysis in progress - please wait",
 
     // OutputPanel
     "output.justNow": "just now",
@@ -267,6 +272,11 @@ export const translations: Record<Language, Record<string, string>> = {
     "context.personalDatasets": "個人用データセット",
     "context.noPersonalDatasets": "まだアップロードされたCSVはありません。中央パネルの「CSVをアップロード」から自分のデータを試せます。",
     "context.deleteDatasetTitle": "このデータセットを削除",
+    "context.deleteWarning": "このデータセットはコンポーザーで使用中です。\n削除して関連する分析目的もすべて削除しますか？",
+    "context.deleteConfirmBtn": "はい、すべて削除",
+    "context.deleteCancelBtn": "キャンセル",
+    "context.deleteModalTitle": "データセットを削除しますか？",
+    "context.deleteWhileRunning": "分析実行中 -お待ちください",
 
     "output.justNow": "たった今",
     "output.secAgo": "{count} 秒前",

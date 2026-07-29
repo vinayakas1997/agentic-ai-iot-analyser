@@ -12,6 +12,7 @@ services:
       interval: 5s
       timeout: 3s
       retries: 5
+    restart: unless-stopped
     networks:
       - edas-net
 
@@ -47,6 +48,7 @@ services:
         condition: service_healthy
       db-init:
         condition: service_completed_successfully
+    restart: unless-stopped
     networks:
       - edas-net
 
@@ -59,6 +61,7 @@ services:
       - "7008:80"
     depends_on:
       - backend
+    restart: unless-stopped
     networks:
       - edas-net
 

@@ -61,7 +61,7 @@ interface SessionState {
   statusMessage: string | null;
   error: string | null;
   pendingTurn: PendingTurn | null;
-  aimProposals: { aim: string; description: string; datasets: string[] }[];
+  aimProposals: { aim: string; description: string; datasets: string[]; goal?: string; columns?: string[]; insight?: string }[];
   selectedAims: { aim: string; description?: string; datasets?: string[] }[];
   outputResults: CollectedResult[];
   chatQueryResults: Record<string, QueryResultState>;
@@ -377,7 +377,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       // Replace aimProposals with latest turn's proposals
       const latestProposals = res.aim_proposals?.length
         ? res.aim_proposals
-        : res.analysis_actions?.map((a) => ({ aim: a.name, description: a.description, datasets: a.datasets }));
+        : res.analysis_actions?.map((a) => ({ aim: a.name, description: a.description, datasets: a.datasets, goal: a.goal, columns: a.columns, insight: a.insight }));
       if (latestProposals?.length) {
         set({ aimProposals: latestProposals });
       }

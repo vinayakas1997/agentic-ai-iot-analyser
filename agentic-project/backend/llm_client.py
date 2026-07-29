@@ -310,6 +310,9 @@ def parse_numbered_suggestions(text: str, known_datasets: list[str] | None = Non
         name = None
         description = ""
         datasets = []
+        goal = None
+        columns_list = []
+        insight = None
 
         # Name
         name_match = re.search(r'\*{0,2}(?:Name|Title)\*{0,2}\s*[:\-–]\s*(.+?)(?:\n|$)', item, re.IGNORECASE)
@@ -325,16 +328,18 @@ def parse_numbered_suggestions(text: str, known_datasets: list[str] | None = Non
             else:
                 continue
 
-        # Goal
+        # Goal (separate field)
         goal_match = re.search(r'\*{0,2}Goal\*{0,2}\s*[:\-–]\s*(.+?)(?:\n|$)', item, re.IGNORECASE)
         if goal_match:
-            description = goal_match.group(1).strip().rstrip('*').replace('<br>', '')
+            goal = goal_match.group(1).strip().rstrip('*').replace('<br>', '')
+            description = goal
 
-        # Columns
+        # Columns (extract as list, also append to description for backward compat)
         cols_match = re.search(r'\*{0,2}Columns?\*{0,2}\s*[:\-–]\s*(.+?)(?:\n|$)', item, re.IGNORECASE)
         if cols_match:
             cols_text = cols_match.group(1).strip().rstrip('*').replace('<br>', '')
             if cols_text:
+                columns_list = [c.strip() for c in cols_text.split(',') if c.strip()]
                 description += f"\nColumns: {cols_text}"
 
         # Explanation
@@ -344,11 +349,12 @@ def parse_numbered_suggestions(text: str, known_datasets: list[str] | None = Non
             if expl_text:
                 description += f"\nExplanation: {expl_text}"
 
-        # Expected Insight
+        # Expected Insight (separate field)
         insight_match = re.search(r'\*{0,2}Expected\s*Insight\*{0,2}\s*[:\-–]\s*(.+?)(?:\n|$)', item, re.IGNORECASE)
         if insight_match:
             insight_text = insight_match.group(1).strip().rstrip('*').replace('<br>', '')
             if insight_text:
+                insight = insight_text
                 description += f"\nExpected Insight: {insight_text}"
 
         # Datasets (no fallback to Columns/Data since Columns is its own field)
@@ -376,9 +382,12 @@ def parse_numbered_suggestions(text: str, known_datasets: list[str] | None = Non
             "aim": name[:60],
             "description": description[:400],
             "datasets": datasets,
+            "goal": goal,
+            "columns": columns_list,
+            "insight": insight,
         })
 
-    return proposals[:5]
+    return proposals[:3]
 
 
 def route_prompt(question: str, attached_aims: list[str] | None = None) -> str:

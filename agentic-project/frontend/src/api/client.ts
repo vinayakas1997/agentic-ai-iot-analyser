@@ -124,8 +124,8 @@ export async function sendMessage(sessionId: string, message: string, lineName =
     ui?: any;
     schema?: any;
     done?: boolean;
-    aim_proposals?: { aim: string; description: string; datasets: string[] }[];
-    analysis_actions?: { name: string; description: string; datasets: string[] }[];
+    aim_proposals?: { aim: string; description: string; datasets: string[]; goal?: string; columns?: string[]; insight?: string }[];
+    analysis_actions?: { name: string; description: string; datasets: string[]; goal?: string; columns?: string[]; insight?: string }[];
     result_uuid?: string;
     route?: string;
     query_result?: {

@@ -1,4 +1,4 @@
-import { FormEvent, KeyboardEvent, Fragment, useState } from "react";
+import { FormEvent, KeyboardEvent, Fragment, useState, useRef } from "react";
 import { btnPrimary, panelClass } from "../lib/styles";
 import { useSessionStore, useIsDone, useIsLive } from "../stores/sessionStore";
 import { useUiStore } from "../stores/uiStore";
@@ -7,14 +7,38 @@ export default function ChatSection() {
   const turns = useSessionStore((s) => s.turns);
   const loading = useSessionStore((s) => s.loading);
   const sendUserMessage = useSessionStore((s) => s.sendUserMessage);
+  const uploadCSV = useSessionStore((s) => s.uploadCSV);
   const selectedTurnIndex = useUiStore((s) => s.selectedTurnIndex);
   const selectTurn = useUiStore((s) => s.selectTurn);
   const isLive = useIsLive();
   const isDone = useIsDone();
   const [input, setInput] = useState("");
+  const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const handleFileSelect = () => {
+    fileInputRef.current?.click();
+  };
+
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      setSelectedFile(file);
+    }
+  };
 
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
+    if (selectedFile) {
+      try {
+        await uploadCSV(selectedFile);
+        setSelectedFile(null);
+        fileInputRef.current!.value = "";
+      } catch (err) {
+        console.error("CSV upload failed:", err);
+      }
+      return;
+    }
     if (!input.trim() || loading || isDone) return;
     const text = input;
     setInput("");
@@ -83,10 +107,29 @@ export default function ChatSection() {
           placeholder={isDone ? "Session complete" : "Ask anything…"}
           value={input}
           onChange={(e) => setInput(e.target.value)}
-          disabled={loading || isDone || !isLive}
+          disabled={loading || isDone || !isLive || !!selectedFile}
         />
-        <button type="submit" className={btnPrimary} disabled={loading || isDone || !input.trim()}>
-          Send
+        <input
+          type="file"
+          accept=".csv"
+          ref={fileInputRef}
+          className="hidden"
+          onChange={handleFileChange}
+        />
+        <button
+          type="button"
+          onClick={handleFileSelect}
+          disabled={loading || isDone || !isLive}
+          className="bg-accent hover:bg-[#1d8cf0] text-white rounded-lg px-3 py-2 text-sm font-medium shadow-[0_4px_0_0_#0f5fa3] active:translate-y-1 active:shadow-[0_1px_0_0_#0f5fa3] transition-all duration-75 disabled:opacity-50 disabled:cursor-not-allowed shrink-0"
+        >
+          {selectedFile ? selectedFile.name : "Upload CSV"}
+        </button>
+        <button
+          type="submit"
+          className={btnPrimary}
+          disabled={loading || isDone || (!input.trim() && !selectedFile)}
+        >
+          {selectedFile ? "Upload" : "Send"}
         </button>
       </form>
       {!isLive && turns.length > 0 && (
