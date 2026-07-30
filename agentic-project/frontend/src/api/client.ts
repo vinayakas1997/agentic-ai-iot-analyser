@@ -185,6 +185,12 @@ export async function executeQuery(sessionId: string, message: string, lineName 
   }));
 }
 
+export async function getProgress(sessionId: string) {
+  return request<{ steps: { step: string; status: string; detail: string; ts: number }[] }>(
+    `/api/v2/sessions/${sessionId}/progress`
+  );
+}
+
 export async function summarizeContext(sessionId: string, tag: string, turnTimestamps: string[]) {
   return withRetry(() => request<{
     tag: string;

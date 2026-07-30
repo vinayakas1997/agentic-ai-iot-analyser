@@ -50,6 +50,13 @@ interface PendingTurn {
   loading: boolean;
 }
 
+interface ProcessingStep {
+  step: string;
+  status: string;
+  detail: string;
+  ts: number;
+}
+
 interface SessionState {
   sessionId: string | null;
   isLocalSession: boolean;
@@ -58,6 +65,7 @@ interface SessionState {
   turns: Turn[];
   sessionMeta: SessionMeta | null;
   loading: boolean;
+  progressSteps: ProcessingStep[];
   statusMessage: string | null;
   error: string | null;
   pendingTurn: PendingTurn | null;
@@ -98,6 +106,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   turns: [],
   sessionMeta: null,
   loading: false,
+  progressSteps: [],
   statusMessage: null,
   error: null,
   pendingTurn: null,
@@ -270,21 +279,18 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     if (!sessionId || !text.trim() || isDone) return;
 
     const userText = text.trim();
-    set({ error: null, loading: true, statusMessage: "Analyzing your request...", pendingTurn: null });
+    set({ error: null, loading: true, progressSteps: [], statusMessage: "Processing...", pendingTurn: null });
     get().setPendingTurn(userText);
 
-    const statusSteps = [
-      "Analyzing your request...",
-      "Resolving line and time...",
-      "Fetching data schema...",
-      "Building analysis plan...",
-      "Generating response...",
-    ];
-    let stepIndex = 0;
-    const statusTimer = setInterval(() => {
-      stepIndex = (stepIndex + 1) % statusSteps.length;
-      set({ statusMessage: statusSteps[stepIndex] });
-    }, 3000);
+    // Progress polling — fetches live steps from backend while message is being processed
+    const progressTimer = setInterval(async () => {
+      const sid = get().sessionId;
+      if (!sid) return;
+      try {
+        const res = await api.getProgress(sid);
+        set({ progressSteps: res.steps });
+      } catch { /* ignore poll errors */ }
+    }, 600);
 
     try {
       let activeSessionId = sessionId;
@@ -314,7 +320,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       // History built server-side from stored turns (via enrichment block + conv history)
       const language = useUiStore.getState().language;
       const res = await api.sendMessage(activeSessionId, userText, lineName, attachedAims, enrichmentMode, [], routeOverride, aimDescriptions, language);
-      clearInterval(statusTimer);
+      clearInterval(progressTimer);
       set({ statusMessage: "Response received" });
 
       // If user switched sessions during loading, show toast instead of updating UI
@@ -386,15 +392,14 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       await get().refreshSessions();
       return res;
     } catch (e) {
-      clearInterval(statusTimer);
-      // Only show error if still on the same session
+      clearInterval(progressTimer);
       if (get().sessionId === origSessionId || !origSessionId) {
         set({ error: getErrorMessage(e), pendingTurn: null });
       }
       throw e;
     } finally {
-      clearInterval(statusTimer);
-      set({ loading: false, statusMessage: null });
+      clearInterval(progressTimer);
+      set({ loading: false, progressSteps: [], statusMessage: null });
     }
   },
 

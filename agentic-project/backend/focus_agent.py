@@ -271,6 +271,7 @@ async def run_focus_agent(
     max_rounds: int = 6,
     datasets_data: list[dict] | None = None,
     language: str = "en",
+    on_progress: callable = None,
 ) -> dict:
     """Agentic FOCUS loop: the LLM chooses between querying fresh data and recalling
     a previously fetched result in this session, across up to max_rounds tool-call turns.
@@ -310,6 +311,8 @@ async def run_focus_agent(
 
     for round_num in range(max_rounds):
         is_last_round = round_num == max_rounds - 1
+        if on_progress:
+            on_progress(f"round_{round_num}", "running", f"Round {round_num+1}/{max_rounds}")
         if is_last_round:
             # Force a final text answer using whatever was gathered so far — without
             # this, a model that second-guesses itself can burn every round re-calling
@@ -335,10 +338,16 @@ async def run_focus_agent(
         if not is_last_round:
             create_kwargs["tools"] = TOOLS
             create_kwargs["tool_choice"] = "auto"
+        if on_progress:
+            on_progress(f"round_{round_num}_llm", "running", "Thinking...")
         response = await client.chat.completions.create(**create_kwargs)
         msg = response.choices[0].message
+        if on_progress:
+            on_progress(f"round_{round_num}_llm", "done", "Response received")
 
         if not msg.tool_calls:
+            if on_progress:
+                on_progress(f"round_{round_num}", "done", "Answer ready")
             return {"agent_message": msg.content or "", "chart_needed": True, "query_result": last_query_result}
 
         messages.append({
@@ -355,6 +364,21 @@ async def run_focus_agent(
         })
 
         for tc in msg.tool_calls:
+            tool_detail = tc.function.name[:30]
+            if tc.function.name == "query_data":
+                try:
+                    tool_args = json.loads(tc.function.arguments or "{}")
+                    tool_detail += f": {tool_args.get('sql', '')[:80]}"
+                except json.JSONDecodeError:
+                    pass
+            elif tc.function.name == "recall_result":
+                try:
+                    tool_args = json.loads(tc.function.arguments or "{}")
+                    tool_detail += f": {tool_args.get('reference', '')[:60]}"
+                except json.JSONDecodeError:
+                    pass
+            if on_progress:
+                on_progress(f"round_{round_num}_tool", "running", tool_detail)
             try:
                 args = json.loads(tc.function.arguments or "{}")
             except json.JSONDecodeError:
@@ -386,9 +410,17 @@ async def run_focus_agent(
                 "tool_call_id": tc.id,
                 "content": json.dumps(tool_result, default=str)[:4000],
             })
+            if on_progress:
+                status = "done" if tool_result.get("ok") or tool_result.get("found") else "error"
+                detail = tool_detail
+                if not tool_result.get("ok") and tool_result.get("error"):
+                    detail += f" — {tool_result['error'][:60]}"
+                on_progress(f"round_{round_num}_tool", status, detail)
 
     # Round cap exhausted without a final plain-text answer — degrade gracefully,
     # same shape as today's "no SQL found" fallback in _handle_focus.
+    if on_progress:
+        on_progress(f"round_{round_num}", "done", "Max rounds reached")
     last_content = ""
     for m in reversed(messages):
         if m.get("role") == "assistant" and m.get("content"):

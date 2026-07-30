@@ -11,6 +11,7 @@ import { QueryResultState } from "./QueryActions";
 import type { Turn } from "../types/manager";
 import { DatasetColumns } from "../components/DatasetColumns";
 import { TurnBubble } from "../components/TurnBubble";
+import ProcessingPanel from "../components/ProcessingPanel";
 import { AimBar } from "../components/AimBar";
 import { PreviewModal } from "../components/PreviewModal";
 import { ViewingResultModal } from "../components/ViewingResultModal";
@@ -36,6 +37,7 @@ export default function ChatSection() {
   const chatQueryResults = useSessionStore((s) => s.chatQueryResults);
   const enrichmentMode = useSessionStore((s) => s.enrichmentMode);
   const contextSummaries = useSessionStore((s) => s.contextSummaries);
+  const progressSteps = useSessionStore((s) => s.progressSteps);
 
 
   const storeSelected = useDatasetStore((s) => s.selected);
@@ -690,9 +692,8 @@ export default function ChatSection() {
         )}
 
         {loading && (
-          <div className="flex items-center gap-2 text-sm text-muted py-3">
-            <span className="w-2 h-2 rounded-full bg-yellow-400 animate-pulse" />
-            {t("common.thinking")}
+          <div className="border-t border-border/30 mt-1">
+            <ProcessingPanel steps={progressSteps} />
           </div>
         )}
         {summarizingTags.size > 0 && (

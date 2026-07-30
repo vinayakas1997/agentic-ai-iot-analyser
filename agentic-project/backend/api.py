@@ -47,6 +47,26 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/v2")
 settings = get_settings()
 
+# ── Progress tracking (in-memory, per-session) ──
+_progress_store: dict[str, list[dict]] = {}
+def set_progress(session_id: str, step: str, status: str, detail: str = ""):
+    key = f"progress_{session_id}"
+    now = time.time()
+    if key not in _progress_store:
+        _progress_store[key] = []
+    steps = _progress_store[key]
+    if status == "running":
+        steps.append({"step": step, "status": status, "detail": detail, "ts": now})
+    else:
+        for s in reversed(steps):
+            if s["step"] == step and s["status"] == "running":
+                s["status"] = status
+                s["detail"] = detail
+                s["ts"] = now
+                break
+    _progress_store[key] = steps[-30:]
+
+
 # ── Schemas ──
 
 class ResolveRequest(BaseModel):
@@ -716,6 +736,12 @@ async def delete_session(session_id: str):
         await db.commit()
     return {"status": "deleted", "session_id": session_id}
 
+@router.get("/sessions/{session_id}/progress")
+async def get_session_progress(session_id: str):
+    """Return progress steps for the latest message processing on this session."""
+    key = f"progress_{session_id}"
+    return {"steps": _progress_store.get(key, [])}
+
 @router.get("/datasets")
 async def list_datasets():
     """List all datasets from global_registry."""
@@ -1003,6 +1029,7 @@ async def _build_context(
 
 
 async def _handle_direct(
+    session_id: str,
     message: str,
     dataset_names: list[str],
     datasets_data: list[dict],
@@ -1013,7 +1040,11 @@ async def _handle_direct(
     language: str = "en",
 ):
     """DIRECT route: LLM generates SQL → we validate and execute → LLM interprets results."""
+    set_progress(session_id, "building_context", "running", "Analyzing dataset schema...")
     context = await _build_context(dataset_names, datasets_data, attached_aims, aim_descriptions)
+    set_progress(session_id, "building_context", "done", f"{len(datasets_data)} datasets analyzed")
+
+    set_progress(session_id, "generating_sql", "running", "Generating SQL query...")
     system_prompt = direct_prompt(context=context, language=language)
     if enrichment_block:
         system_prompt += f"\n\n## Previous Context\n{enrichment_block}"
@@ -1027,6 +1058,7 @@ async def _handle_direct(
 
     # Retry with a stricter SQL-only prompt if no SQL generated
     if not sql:
+        set_progress(session_id, "generating_sql", "running", "Retrying SQL generation...")
         log_sql("retry", "No SQL in first response, retrying with stricter prompt")
         sql_only_prompt = (
             f"You are a SQL generator. Given the user question and available datasets below, "
@@ -1048,6 +1080,7 @@ async def _handle_direct(
             raw = raw2  # Use the retry response for interpretation
 
     if not sql:
+        set_progress(session_id, "generating_sql", "done", "No SQL — switching to suggestions")
         known_columns = {
             c.get("name", "")
             for ds in datasets_data
@@ -1055,16 +1088,21 @@ async def _handle_direct(
             if c.get("name")
         }
         proposals = parse_numbered_suggestions(raw, known_datasets=dataset_names, known_columns=known_columns)
+        if not proposals:
+            proposals = _fallback_aim_suggestions(datasets_data)
         return {
             "agent_message": raw,
             "result_uuid": None,
             "query_result": None,
             "aim_proposals": proposals,
         }
+    set_progress(session_id, "generating_sql", "done", "SQL generated")
 
+    set_progress(session_id, "validating_sql", "running", "Validating SQL safety...")
     try:
         sql = validate_sql(sql)
     except ValueError as e:
+        set_progress(session_id, "validating_sql", "done", "Validation failed")
         error_result = {
             "sql": sql,
             "columns": [],
@@ -1077,10 +1115,13 @@ async def _handle_direct(
             "result_uuid": None,
             "query_result": error_result,
         }
+    set_progress(session_id, "validating_sql", "done", "SQL validated")
 
+    set_progress(session_id, "executing_query", "running", "Running query...")
     try:
         result = await execute_sql(sql)
     except Exception as e:
+        set_progress(session_id, "executing_query", "done", "Query failed")
         error_msg = str(e)[:300]
         error_result = {
             "sql": sql,
@@ -1098,16 +1139,21 @@ async def _handle_direct(
             "result_uuid": None,
             "query_result": error_result,
         }
+    set_progress(session_id, "executing_query", "done", f"{result.get('row_count', 0)} rows returned")
 
+    set_progress(session_id, "building_charts", "running", "Building chart suggestions...")
     chart_suggestions = await _build_chart_suggestions(result, datasets_data)
     result_with_charts = {**result, "chart_suggestions": chart_suggestions}
+    set_progress(session_id, "building_charts", "done", "Charts ready")
 
+    set_progress(session_id, "interpreting_results", "running", "Interpreting results...")
     interpretation = await interpret_results(
         question=message,
         sql=result.get("sql", ""),
         result=result,
         language=language,
     )
+    set_progress(session_id, "interpreting_results", "done", "Interpretation ready")
 
     result_uuid = str(uuid.uuid4())
     return {
@@ -1117,7 +1163,87 @@ async def _handle_direct(
     }
 
 
+def _fallback_aim_suggestions(datasets_data: list[dict]) -> list[dict]:
+    """Generate simple rule-based analysis suggestions from dataset column definitions.
+    Used when the LLM fails to produce valid suggestions."""
+    proposals = []
+    NUMERIC_TYPES = {"integer", "float", "number", "real", "numeric", "double"}
+    CAT_TYPES = {"text", "varchar", "char", "string", "category"}
+    DATE_TYPES = {"date", "timestamp", "datetime", "time"}
+
+    def col_label(name: str) -> str:
+        return name.replace("_", " ").title() if name else name
+
+    for ds in datasets_data:
+        cols = ds.get("column_definitions", [])
+        dataset_name = ds.get("dataset_name", "?")
+        numeric = [c["name"] for c in cols if c.get("datatype", "").lower() in NUMERIC_TYPES]
+        cat = [c["name"] for c in cols if c.get("datatype", "").lower() in CAT_TYPES]
+        date = [c["name"] for c in cols if c.get("datatype", "").lower() in DATE_TYPES]
+
+        local = []
+
+        # Pattern 1: Numeric broken down by categorical
+        if numeric and cat:
+            n = numeric[0]
+            c = cat[0]
+            local.append({
+                "aim": f"Analysis of {col_label(n)} by {col_label(c)}",
+                "description": (
+                    f"**Goal**: Understand how {col_label(n)} varies across {col_label(c)}\n"
+                    f"**Columns**: {n}, {c}\n"
+                    f"**Explanation**: Group {col_label(n)} by {col_label(c)} to find top performers and outliers."
+                ),
+                "datasets": [dataset_name],
+                "goal": f"Understand how {col_label(n)} varies across {col_label(c)}",
+                "columns": [n, c],
+                "insight": f"Top {col_label(c)} categories ranked by {col_label(n)}",
+            })
+
+        # Pattern 2: Numeric trend over date
+        if numeric and date:
+            n = numeric[0]
+            d = date[0]
+            local.append({
+                "aim": f"Trend of {col_label(n)} Over Time",
+                "description": (
+                    f"**Goal**: Analyze {col_label(n)} trends over {col_label(d)}\n"
+                    f"**Columns**: {d}, {n}\n"
+                    f"**Explanation**: Plot {col_label(n)} across {col_label(d)} to identify trends, peaks, and seasonal patterns."
+                ),
+                "datasets": [dataset_name],
+                "goal": f"Analyze {col_label(n)} trends over {col_label(d)}",
+                "columns": [d, n],
+                "insight": f"Trend direction and notable changes in {col_label(n)} over time",
+            })
+
+        # Pattern 3: Two categorical + numeric (cross-analysis)
+        if numeric and len(cat) >= 2:
+            n = numeric[0]
+            c1, c2 = cat[0], cat[1]
+            local.append({
+                "aim": f"Cross-analysis: {col_label(n)} by {col_label(c1)} and {col_label(c2)}",
+                "description": (
+                    f"**Goal**: Compare {col_label(n)} across both {col_label(c1)} and {col_label(c2)}\n"
+                    f"**Columns**: {c1}, {c2}, {n}\n"
+                    f"**Explanation**: Group {col_label(n)} by {col_label(c1)} and {col_label(c2)} to find "
+                    f"interaction effects and multi-dimensional patterns."
+                ),
+                "datasets": [dataset_name],
+                "goal": f"Multi-dimensional analysis of {col_label(n)} by {col_label(c1)} and {col_label(c2)}",
+                "columns": [c1, c2, n],
+                "insight": f"Interaction effects between {col_label(c1)} and {col_label(c2)} on {col_label(n)}",
+            })
+
+        proposals.extend(local)
+        if len(proposals) >= 3:
+            break
+
+    return proposals[:3]
+
+
 async def _handle_suggest(
+    session_id: str,
     message: str,
     dataset_names: list[str],
     datasets_data: list[dict],
@@ -1128,7 +1254,11 @@ async def _handle_suggest(
     language: str = "en",
 ):
     """SUGGEST route: LLM proposes 3 exploration ideas (no SQL)."""
+    set_progress(session_id, "building_context", "running", "Analyzing dataset schema...")
     context = await _build_context(dataset_names, datasets_data, attached_aims, aim_descriptions)
+    set_progress(session_id, "building_context", "done", f"{len(datasets_data)} datasets analyzed")
+
+    set_progress(session_id, "llm", "running", "Generating analysis suggestions...")
     system_prompt = suggest_prompt(context=context, language=language)
     real_dataset_names = [ds.get("dataset_name", "?") for ds in datasets_data]
     if len(real_dataset_names) > 1:
@@ -1144,6 +1274,8 @@ async def _handle_suggest(
         system_prompt=system_prompt,
         question=message,
     )
+    set_progress(session_id, "llm", "done", "Suggestions generated")
+
     # Include table names alongside user-facing dataset names for proposal validation
     table_names = [ds.get("table", "") for ds in datasets_data if ds.get("table")]
     known_datasets = list(set(dataset_names + table_names))
@@ -1154,6 +1286,10 @@ async def _handle_suggest(
         if c.get("name")
     }
     proposals = parse_numbered_suggestions(raw, known_datasets=known_datasets, known_columns=known_columns)
+
+    # Fallback: if all proposals were stripped as invalid, generate rule-based ones
+    if not proposals:
+        proposals = _fallback_aim_suggestions(datasets_data)
 
     # Build the "what each dataset offers" preamble deterministically — the LLM
     # reliably ignores a prompt-only ask for this, so we render it ourselves.
@@ -1177,6 +1313,7 @@ async def _handle_suggest(
 
 
 async def _handle_focus_multi(
+    session_id: str,
     message: str,
     dataset_names: list[str],
     datasets_data: list[dict],
@@ -1190,7 +1327,8 @@ async def _handle_focus_multi(
     per_aim_summaries = []
 
     aim_descriptions = aim_descriptions or {}
-    for aim in attached_aims:
+    for idx, aim in enumerate(attached_aims):
+        set_progress(session_id, f"aim_{idx}", "running", f"Aim {idx+1}/{len(attached_aims)}: {aim[:50]}")
         context = await _build_context(dataset_names, datasets_data, [aim], aim_descriptions)
         system_prompt = focus_prompt(context=context, language=language)
         if enrichment_block:
@@ -1201,15 +1339,19 @@ async def _handle_focus_multi(
 
         sql = extract_sql(raw) or extract_sql_fallback(raw)
         if not sql:
-            per_aim_summaries.append(f"### {aim}\n{clean_raw}")
+            per_aim_summaries.append(f"### {aim}\n{raw}")
+            set_progress(session_id, f"aim_{idx}", "done", f"Aim {idx+1}: no SQL generated")
             continue
+        set_progress(session_id, f"aim_{idx}", "running", f"Aim {idx+1}: validating & executing...")
 
         try:
             sql = validate_sql(sql)
             result = await execute_sql(sql)
         except Exception as e:
             per_aim_summaries.append(f"### {aim}\nCould not complete this analysis: {str(e)[:200]}")
+            set_progress(session_id, f"aim_{idx}", "done", f"Aim {idx+1}: error — {str(e)[:60]}")
             continue
+        set_progress(session_id, f"aim_{idx}", "running", f"Aim {idx+1}: interpreting results...")
 
         cs = await _build_chart_suggestions(result, datasets_data)
         chart_suggestions = cs.model_dump() if hasattr(cs, "model_dump") else cs
@@ -1230,6 +1372,7 @@ async def _handle_focus_multi(
             "chart_suggestions": chart_suggestions,
         })
         per_aim_summaries.append(f"### {aim}\n{interpretation}")
+        set_progress(session_id, f"aim_{idx}", "done", f"Aim {idx+1}: complete")
 
     combined_prompt = (
         "You analyzed multiple research aims on the same datasets. Below are the individual findings.\n\n"
@@ -1253,6 +1396,7 @@ async def _handle_focus_multi(
 
 
 async def _handle_focus(
+    session_id: str,
     message: str,
     dataset_names: list[str],
     datasets_data: list[dict],
@@ -1265,8 +1409,10 @@ async def _handle_focus(
     """FOCUS route: agentic tool-calling loop (query fresh data or recall a previously
     fetched result in this session) for a single aim; delegates to _handle_focus_multi
     for multiple aims."""
+    set_progress(session_id, "building_context", "running", "Analyzing dataset schema...")
     if len(attached_aims) > 1:
         return await _handle_focus_multi(
+            session_id=session_id,
             message=message,
             dataset_names=dataset_names,
             datasets_data=datasets_data,
@@ -1293,7 +1439,11 @@ async def _handle_focus(
                 }
 
     # Agentic tool-calling loop (handles everything — simple queries, deep-dives, comprehensive analysis)
+    set_progress(session_id, "building_context", "running", "Analyzing dataset schema...")
     context = await _build_context(dataset_names, datasets_data, attached_aims, aim_descriptions, include_samples=False)
+    set_progress(session_id, "building_context", "done", f"{len(datasets_data)} datasets analyzed")
+
+    set_progress(session_id, "focus_agent", "running", "Running analysis agent...")
     agent_result = await run_focus_agent(
         message=message,
         context=context,
@@ -1302,18 +1452,23 @@ async def _handle_focus(
         session_state=session_state or {},
         datasets_data=datasets_data,
         language=language,
+        on_progress=lambda step, status, detail="": set_progress(session_id, f"agent_{step}", status, detail),
     )
 
     result = agent_result["query_result"]
     if result is None:
+        set_progress(session_id, "focus_agent", "done", "Analysis complete (no data query)")
         return {
             "agent_message": agent_result["agent_message"],
             "result_uuid": None,
             "query_result": None,
         }
+    set_progress(session_id, "focus_agent", "done", "Analysis complete")
 
+    set_progress(session_id, "building_charts", "running", "Building chart suggestions...")
     chart_suggestions = await _build_chart_suggestions(result, datasets_data)
     result_with_charts = {**result, "chart_suggestions": chart_suggestions}
+    set_progress(session_id, "building_charts", "done", "Charts ready")
 
     result_uuid = str(uuid.uuid4())
     return {
@@ -1481,10 +1636,12 @@ async def send_message(req: MessageRequest):
         )
 
     # RESEARCH mode: classify route and dispatch
+    set_progress(req.session_id, "classifying", "running", "Classifying your question...")
     if req.route_override:
         route = req.route_override.lower()
     else:
         route = await classify_route(question=req.message, attached_aims=req.attached_aims)
+    set_progress(req.session_id, "classifying", "done", f"Route: {route.upper()}")
 
     session_state = dict(session.state_json or {})
     enrichment_block = build_enrichment_block(
@@ -1516,10 +1673,12 @@ async def send_message(req: MessageRequest):
         language=req.language,
     )
 
+    set_progress(req.session_id, "processing", "running", f"Running {route.upper()} pipeline...")
     if route == "suggest":
-        handler_result = await _handle_suggest(**handler_kwargs)
+        handler_result = await _handle_suggest(req.session_id, **handler_kwargs)
     else:
-        handler_result = await _handle_focus(**handler_kwargs)
+        handler_result = await _handle_focus(req.session_id, **handler_kwargs)
+    set_progress(req.session_id, "processing", "done", f"{route.upper()} completed")
 
     agent_msg = handler_result["agent_message"]
     result_uuid = handler_result.get("result_uuid")
