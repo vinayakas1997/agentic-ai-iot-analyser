@@ -400,11 +400,7 @@ async def seed_japan() -> None:
 async def init_db() -> None:
     print("=== Creating tables ===")
     await create_tables()
-    print("=== Seeding FRUITS_TEST ===")
-    await seed_fruits()
-    print("=== Seeding JAPAN_SCENARIOS ===")
-    await seed_japan()
-    print("=== init_db complete ===")
+    print("=== init_db complete (mock data seeding skipped) ===")
 
 
 def main() -> None:

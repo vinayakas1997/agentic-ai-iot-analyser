@@ -52,7 +52,7 @@ export default function Navbar({ onBackToManage, onHelp }: { onBackToManage?: ()
   const current = sessions.find((s) => s.session_id === sessionId);
 
   return (
-    <header className="flex items-center justify-between px-5 py-3 border-b border-border bg-surface-1 shrink-0">
+    <header className="flex items-center justify-between px-5 py-3 border-b border-border bg-surface-1 shrink-0 relative">
       <div className="flex items-center gap-2">
         <span className="text-lg font-semibold">AGI DATA ANALYSER</span>
         <div className="hlp-label-wrap">
@@ -68,6 +68,10 @@ export default function Navbar({ onBackToManage, onHelp }: { onBackToManage?: ()
             {t("tour.help")}
           </span>
         </div>
+      </div>
+
+      <div className="absolute left-1/2 -translate-x-1/2 text-sm font-bold text-muted">
+        NOTE: {t("nav.noDatasetsInfo")}
       </div>
 
       <div className="flex items-center gap-3">

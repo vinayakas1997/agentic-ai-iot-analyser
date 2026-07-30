@@ -1,0 +1,15 @@
+services:
+  db-init:
+    build: ./mock-database-fill
+    environment:
+      DB_URL: "postgresql+asyncpg://manager_agent:manager_agent_pass@db:5432/manager_agent_db"
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: "no"
+    networks:
+      - edas-net
+
+networks:
+  edas-net:
+    external: true

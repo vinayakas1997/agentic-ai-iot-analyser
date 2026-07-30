@@ -43,6 +43,7 @@ export const translations: Record<Language, Record<string, string>> = {
     "nav.deleteConfirm": "Delete this session?",
     "nav.delete": "Delete",
     "nav.deleting": "Deleting...",
+    "nav.noDatasetsInfo": "No datasets added — CSV file analysis only",
 
     // ChatSection
     "chat.searchDatasets": "Search datasets",
@@ -50,7 +51,7 @@ export const translations: Record<Language, Record<string, string>> = {
     "chat.uploadCsv": "Upload CSV",
     "chat.uploading": "Uploading...",
     "chat.searchPlaceholder": "Search datasets...",
-    "chat.noDatasetsFound": "No datasets found",
+    "chat.noDatasetsFound": "Datasets are not added yet",
     "chat.colsSuffix": "cols",
     "chat.suggestedAims": "Suggested Aims",
     "chat.askAboutData": "Ask about your data",
@@ -287,13 +288,14 @@ export const translations: Record<Language, Record<string, string>> = {
     "nav.deleteConfirm": "このセッションを削除しますか？",
     "nav.delete": "削除",
     "nav.deleting": "削除中...",
+    "nav.noDatasetsInfo": "データセット未追加 — CSVファイル分析のみ",
 
     "chat.searchDatasets": "データセットを検索",
     "chat.attachedCount": "（{count} 件添付）",
     "chat.uploadCsv": "CSVをアップロード",
     "chat.uploading": "アップロード中...",
     "chat.searchPlaceholder": "データセットを検索...",
-    "chat.noDatasetsFound": "データセットが見つかりません",
+    "chat.noDatasetsFound": "データセットがまだ追加されていません",
     "chat.colsSuffix": "カラム",
     "chat.suggestedAims": "推奨分析目的",
     "chat.askAboutData": "データについて質問する",
