@@ -2,7 +2,7 @@ import { useState, useEffect, useMemo, useRef, useCallback, KeyboardEvent } from
 import { panelClass, btnPrimary, btnGlass } from "../lib/styles";
 import { useSessionStore } from "../stores/sessionStore";
 import { useOutputStore } from "../stores/outputStore";
-import { listDatasets, updateSessionState, summarizeContext, uploadCsvFiles, ApiError, MAX_UPLOAD_BYTES } from "../api/client";
+import { listDatasets, listUserDatasets, updateSessionState, summarizeContext, uploadCsvFiles, ApiError, MAX_UPLOAD_BYTES } from "../api/client";
 import type { UploadedFileDraft, UploadFailure } from "../types";
 import { useDatasetStore } from "../stores/datasetStore";
 import { useUploadStore } from "../stores/uploadStore";
@@ -64,6 +64,7 @@ export default function ChatSection() {
   const openClarify = useUploadStore((s) => s.openClarify);
   const setUploadProcessing = useUploadStore((s) => s.setProcessing);
   const uploadingCsv = useUploadStore((s) => s.isProcessing);
+  const personalDatasetsVersion = useUploadStore((s) => s.personalDatasetsVersion);
   const [aimResults, setAimResults] = useState<Record<string, QueryResultState>>({});
   const [runningAim, setRunningAim] = useState<string | null>(null);
   const [missingDatasets, setMissingDatasets] = useState<string[]>([]);
@@ -101,8 +102,27 @@ export default function ChatSection() {
   }
 
   useEffect(() => {
-    listDatasets().then(setDatasets).catch((err) => console.error("Failed to load datasets:", err));
-  }, []);
+    const uid = useAuthStore.getState().userId || undefined;
+    Promise.all([
+      listDatasets(),
+      listUserDatasets(uid),
+    ]).then(([globalDs, personalRes]) => {
+      const personalDs: DatasetInfo[] = (personalRes.datasets || [])
+        .filter((d) => d.status === "active")
+        .map((d) => ({
+          dataset_name: d.dataset_name,
+          line_name: d.dataset_name,
+          description: d.description || `Uploaded CSV (${d.row_count} rows)`,
+          table: d.table_name,
+          column_definitions: d.column_definitions,
+          role: null,
+          join_hints: null,
+          suggested_aims: null,
+          synonyms: null,
+        }));
+      setDatasets([...globalDs, ...personalDs]);
+    }).catch((err) => console.error("Failed to load datasets:", err));
+  }, [personalDatasetsVersion]);
 
   useEffect(() => {
     if (missingDatasets.length === 0) return;
