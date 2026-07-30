@@ -235,6 +235,7 @@ class ConfirmDatasetRequest(BaseModel):
 class LlmFillRequest(BaseModel):
     user_id: str = ""
     columns: list[str]
+    language: str = "en"
 
 class LoginRequest(BaseModel):
     user_id: str
@@ -852,7 +853,7 @@ async def llm_fill_upload(dataset_id: int, req: LlmFillRequest):
     """User clicked 'LLM fill' — generate meanings for empty columns via LLM."""
     uid = req.user_id or settings.default_user_id
     try:
-        return await llm_fill_missing_meanings(uid, dataset_id, req.columns)
+        return await llm_fill_missing_meanings(uid, dataset_id, req.columns, language=req.language)
     except ValueError:
         raise HTTPException(status_code=404, detail="Dataset not found")
 
@@ -1545,6 +1546,18 @@ async def send_message(req: MessageRequest):
     # query execution knows to hit the user's SQLite file instead of Postgres.
     user_datasets = await fetch_active_user_datasets(session.user_id, dataset_names)
     datasets_data.extend(user_datasets)
+
+    # Check for unresolvable dataset names
+    resolved_names = {d["dataset_name"] for d in datasets_data}
+    unresolved = [n for n in dataset_names if n not in resolved_names]
+    if unresolved:
+        logger.warning("Unresolvable dataset names in request", extra={"unresolved": unresolved, "session_id": req.session_id})
+        if not datasets_data and req.enrichment_mode == "research":
+            return MessageResponse(
+                session_id=req.session_id,
+                agent_message=f"No datasets found for: {', '.join(unresolved)}. Please attach available datasets.",
+                route="direct",
+            )
 
     # If SUMMARY mode, skip routing and use existing summarization flow
     if req.enrichment_mode == "summary":

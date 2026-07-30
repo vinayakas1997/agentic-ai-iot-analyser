@@ -240,10 +240,10 @@ export async function confirmUploadDataset(datasetId: number, columns: ColumnDra
   );
 }
 
-export async function llmFillMeanings(datasetId: number, columns: string[]) {
+export async function llmFillMeanings(datasetId: number, columns: string[], language?: string) {
   return request<{ columns: ColumnDraft[] }>(
     `/api/v2/upload/${datasetId}/llm-fill`,
-    { method: "POST", body: JSON.stringify({ columns }) }
+    { method: "POST", body: JSON.stringify({ columns, language }) }
   );
 }
 

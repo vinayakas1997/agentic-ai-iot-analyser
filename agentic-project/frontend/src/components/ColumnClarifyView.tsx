@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect } from "react";
 import { useUploadStore } from "../stores/uploadStore";
 import { useDatasetStore } from "../stores/datasetStore";
+import { useUiStore } from "../stores/uiStore";
 import { confirmUploadDataset, llmFillMeanings } from "../api/client";
 import { IconDatabase, IconCheck, IconUpload, IconChart, IconRobot } from "../lib/icons";
 import { btnPrimary, btnSecondary } from "../lib/styles";
@@ -138,7 +139,8 @@ export default function ColumnClarifyView() {
     setLlmFilling(true);
     setDefinitionsError("");
     try {
-      const res = await llmFillMeanings(current.dataset_id, emptyNames);
+      const language = useUiStore.getState().language;
+      const res = await llmFillMeanings(current.dataset_id, emptyNames, language);
       const byName = new Map(res.columns.map((c) => [c.name, c.meaning]));
       setEditedColumns(cols.map((col) => ({
         ...col,

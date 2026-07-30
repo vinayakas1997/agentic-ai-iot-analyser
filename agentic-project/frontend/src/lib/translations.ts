@@ -68,6 +68,7 @@ export const translations: Record<Language, Record<string, string>> = {
     "chat.composerSummaryPlaceholder": "Summarize findings, compare analyses, ask about past results...",
     "chat.processingFile": "Processing {filename}...",
     "chat.processingFiles": "Processing {count} files...",
+    "chat.datasetsNotAvailable": "Dataset not found: {names}. Could not attach this aim.",
 
     // ContextSection
     "context.title": "Context",
@@ -310,6 +311,7 @@ export const translations: Record<Language, Record<string, string>> = {
     "chat.composerSummaryPlaceholder": "調査結果の要約、分析の比較、過去の結果について質問...",
     "chat.processingFile": "{filename} を処理中...",
     "chat.processingFiles": "{count} 件のファイルを処理中...",
+    "chat.datasetsNotAvailable": "データセットが見つかりません: {names}. この分析目的を追加できません。",
 
     "context.title": "コンテキスト",
     "context.session": "セッション",

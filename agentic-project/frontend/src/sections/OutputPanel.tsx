@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useMemo } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import remarkBreaks from "remark-breaks";
@@ -6,9 +6,11 @@ import { panelClass, resultCardClass, resultTagClass, resultBadgeClass, miniTabl
 import { useOutputStore } from "../stores/outputStore";
 import { useSessionStore } from "../stores/sessionStore";
 import { useDatasetStore } from "../stores/datasetStore";
-import { QueryActions } from "./QueryActions";
+import { listDatasets } from "../api/client";
+import { QueryActions, type QueryResultState } from "./QueryActions";
 import { IconDatabase, IconTarget, IconClock, IconChart } from "../lib/icons";
 import { t, useT, tCount } from "../lib/i18n";
+import type { DatasetInfo } from "../types";
 
 function relativeTime(timestamp: number): string {
   const diff = Math.floor((Date.now() - timestamp) / 1000);
@@ -41,12 +43,36 @@ export default function OutputPanel() {
   const loading = useSessionStore((s) => s.loading);
   const storeAttached = useDatasetStore((s) => s.attached);
   const [summarizing, setSummarizing] = useState(false);
+  const [datasets, setDatasets] = useState<DatasetInfo[]>([]);
+
+  const datasetLookup = useMemo(() => {
+    const map = new Map<string, DatasetInfo>();
+    for (const ds of datasets) {
+      map.set(ds.dataset_name, ds);
+    }
+    return map;
+  }, [datasets]);
+
+  function filterAvailable(names: string[]): { available: string[]; missing: string[] } {
+    const available: string[] = [];
+    const missing: string[] = [];
+    for (const name of names) {
+      (datasetLookup.has(name) ? available : missing).push(name);
+    }
+    return { available, missing };
+  }
+
+  useEffect(() => {
+    listDatasets().then(setDatasets).catch(console.error);
+  }, []);
 
   const handleSummarize = useCallback(async () => {
     if (!sessionId || summarizing) return;
     setSummarizing(true);
     try {
-      const lineName = storeAttached.join(",");
+      const { available, missing } = filterAvailable(storeAttached);
+      if (missing.length > 0) console.warn("Datasets not available for summary:", missing);
+      const lineName = available.join(",");
       const msg = "Provide a comprehensive summary of all analysis findings so far: what was analyzed, what were the key findings, patterns discovered, and any recommendations. Cover all datasets and aims that have been explored.";
       await sendUserMessage(msg, lineName, [], "summary");
     } finally {
@@ -58,16 +84,21 @@ export default function OutputPanel() {
   const resultCount = results.length;
 
   const runProposal = async (p: { aim: string; description: string; datasets?: string[] }) => {
+    const { available, missing } = filterAvailable(p.datasets || []);
+    if (missing.length > 0) {
+      console.warn("Datasets not available, skipping aim:", missing);
+      return;
+    }
     useSessionStore.setState((s) => ({
       selectedAims: s.selectedAims.some((a) => a.aim === p.aim)
         ? s.selectedAims
-        : [...s.selectedAims, { aim: p.aim, description: p.description, datasets: p.datasets }],
+        : [...s.selectedAims, { aim: p.aim, description: p.description, datasets: available }],
       aimProposals: s.aimProposals.filter((a) => a.aim.toLowerCase() !== p.aim.toLowerCase()),
     }));
-    if (p.datasets && p.datasets.length > 0) {
+    if (available.length > 0) {
       const store = useDatasetStore.getState();
-      store.addMultiple(p.datasets);
-      store.attachMultiple(p.datasets);
+      store.addMultiple(available);
+      store.attachMultiple(available);
     }
     const lineName = useDatasetStore.getState().attached.join(",");
     const msg = `Run analysis: ${p.description || p.aim}`;
@@ -77,7 +108,7 @@ export default function OutputPanel() {
         aim: p.aim,
         description: p.description,
         datasets: p.datasets,
-        result: res.query_result,
+        result: { loading: false, ...res.query_result } as QueryResultState,
       });
       useSessionStore.setState((s) => ({
         completedActions: { ...s.completedActions, [p.aim]: res.result_uuid! },

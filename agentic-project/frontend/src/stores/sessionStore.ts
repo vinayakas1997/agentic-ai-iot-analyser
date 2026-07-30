@@ -51,7 +51,7 @@ interface PendingTurn {
   loading: boolean;
 }
 
-interface ProcessingStep {
+export interface ProcessingStep {
   step: string;
   status: string;
   detail: string;
@@ -161,7 +161,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
         const detail = await api.getSession(list[0].session_id);
         const sessionMeta = { session_id: detail.session_id, title: detail.title, phase: detail.phase || "lines", status: detail.status || "active", mode: detail.mode || "ask" };
         const apiTurns = detail.turns || [];
-        const loadedTurns: Turn[] = apiTurns.map((t) => ({
+        const loadedTurns: Turn[] = apiTurns.map((t: any) => ({
           turn_index: 0,
           user: t.user,
           agent: t.agent || "",
@@ -193,7 +193,12 @@ export const useSessionStore = create<SessionState>((set, get) => ({
         useOutputStore.getState().setResults(Array.isArray(detail.state?.output_results) ? detail.state.output_results : []);
         const attachedDs = detail.state?.attached_datasets;
         if (Array.isArray(attachedDs) && attachedDs.length > 0) {
-          useDatasetStore.getState().addMultiple(attachedDs);
+          const allDatasets = await api.listDatasets();
+          const validNames = new Set(allDatasets.map((d) => d.dataset_name));
+          const validDs = attachedDs.filter((d: string) => validNames.has(d));
+          if (validDs.length > 0) {
+            useDatasetStore.getState().addMultiple(validDs);
+          }
         }
       } else {
         const tempId = crypto.randomUUID();
@@ -253,7 +258,12 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       useDatasetStore.getState().clear();
       const attachedDs = detail.state?.attached_datasets;
       if (Array.isArray(attachedDs) && attachedDs.length > 0) {
-        useDatasetStore.getState().addMultiple(attachedDs);
+        const allDatasets = await api.listDatasets();
+        const validNames = new Set(allDatasets.map((d) => d.dataset_name));
+        const validDs = attachedDs.filter((d: string) => validNames.has(d));
+        if (validDs.length > 0) {
+          useDatasetStore.getState().addMultiple(validDs);
+        }
       }
     } catch (e) {
       set({ error: getErrorMessage(e) });

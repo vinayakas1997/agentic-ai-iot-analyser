@@ -12,6 +12,7 @@ import re
 from sqlalchemy import select, delete
 
 from config import get_settings, get_llm_client
+from llm_client import language_instruction
 from db.models import UserRegistry
 from db.session import AsyncSessionLocal
 from sqlite_importer import drop_user_table, user_db_path
@@ -25,8 +26,9 @@ Table: {table_name}
 Columns and their first 5 sample values:
 {column_samples}
 
-For each column, write ONE short plain-English sentence describing what it likely means
+For each column, write ONE short sentence describing what it likely means
 (be specific about units, formats, or codes if the sample values suggest them).
+{language_instruction}
 
 Return ONLY a JSON array, no other text: [{{"name": "col_name", "meaning": "..."}}, ...]
 """
@@ -35,6 +37,7 @@ Return ONLY a JSON array, no other text: [{{"name": "col_name", "meaning": "..."
 async def draft_column_meanings(
     table_name: str, columns: list[str], sample_rows: list[dict],
     display_names: list[str] | None = None,
+    language: str = "en",
 ) -> list[dict]:
     """LLM drafts a 1-line meaning per column from its name + first 5 sample values.
     `display_names` are shown in the LLM prompt (e.g. original Japanese headers);
@@ -49,7 +52,10 @@ async def draft_column_meanings(
     for dn, col in zip(display_names, columns):
         values = [str(r.get(col)) for r in sample_rows[:5] if r.get(col) is not None]
         lines.append(f"{dn}: {{{', '.join(values) if values else '(all empty)'}}}")
-    prompt = _MEANING_PROMPT.format(table_name=table_name, column_samples="\n".join(lines))
+    prompt = _MEANING_PROMPT.format(
+        table_name=table_name, column_samples="\n".join(lines),
+        language_instruction=language_instruction(language),
+    )
 
     fallback = [{"name": c, "meaning": ""} for c in columns]
     try:
@@ -183,7 +189,7 @@ async def fetch_active_user_datasets(user_id: str, dataset_names: list[str] | No
     ]
 
 
-async def llm_fill_missing_meanings(user_id: str, dataset_id: int, column_names: list[str]) -> dict:
+async def llm_fill_missing_meanings(user_id: str, dataset_id: int, column_names: list[str], language: str = "en") -> dict:
     """Fill empty meanings for the given columns using the LLM."""
     import sqlite3 as _sqlite3
 
@@ -216,7 +222,7 @@ async def llm_fill_missing_meanings(user_id: str, dataset_id: int, column_names:
         # Get display names for the columns
         display_names = [current_by_name[c].get("original_name", c) for c in columns_to_fill]
 
-        drafted = await draft_column_meanings(table_name, columns_to_fill, sample_rows, display_names=display_names)
+        drafted = await draft_column_meanings(table_name, columns_to_fill, sample_rows, display_names=display_names, language=language)
 
         by_name = {d["name"]: d["meaning"] for d in drafted}
 

@@ -63,6 +63,7 @@ export default function ChatSection() {
   const uploadingCsv = useUploadStore((s) => s.isProcessing);
   const [aimResults, setAimResults] = useState<Record<string, QueryResultState>>({});
   const [runningAim, setRunningAim] = useState<string | null>(null);
+  const [missingDatasets, setMissingDatasets] = useState<string[]>([]);
   const [viewingResult, setViewingResult] = useState<{ aim: string; description?: string; datasets?: string[]; result: QueryResultState } | null>(null);
   const viewingResultRef = useRef(viewingResult);
   viewingResultRef.current = viewingResult;
@@ -87,9 +88,24 @@ export default function ChatSection() {
     return map;
   }, [datasets]);
 
+  function filterAvailable(names: string[]): { available: string[]; missing: string[] } {
+    const available: string[] = [];
+    const missing: string[] = [];
+    for (const name of names) {
+      (datasetLookup.has(name) ? available : missing).push(name);
+    }
+    return { available, missing };
+  }
+
   useEffect(() => {
     listDatasets().then(setDatasets).catch((err) => console.error("Failed to load datasets:", err));
   }, []);
+
+  useEffect(() => {
+    if (missingDatasets.length === 0) return;
+    const timer = setTimeout(() => setMissingDatasets([]), 5000);
+    return () => clearTimeout(timer);
+  }, [missingDatasets]);
 
   const filtered = useMemo(() => {
     if (!searchQuery.trim()) return datasets;
@@ -141,19 +157,25 @@ export default function ChatSection() {
     return () => document.removeEventListener("keydown", onKey as any);
   }, [previewAim, closePreview]);
 
-  const useAim = (aim: Aim) => {
+  const useAim = (aim: Aim): boolean => {
     closePreview();
+    const { available, missing } = filterAvailable(aim.datasets || []);
+    if (missing.length > 0) {
+      setMissingDatasets((prev) => [...new Set([...prev, ...missing])]);
+      return false;
+    }
     useSessionStore.setState((s) => ({
       selectedAims: s.selectedAims.some((a) => a.aim === aim.aim)
         ? s.selectedAims
-        : [...s.selectedAims, { aim: aim.aim, description: aim.description, datasets: aim.datasets }],
+        : [...s.selectedAims, { aim: aim.aim, description: aim.description, datasets: available }],
       aimProposals: s.aimProposals.filter((p) => p.aim.toLowerCase() !== aim.aim.toLowerCase()),
     }));
-    if (aim.datasets && aim.datasets.length > 0) {
-      storeAddMultiple(aim.datasets);
-      storeAttachMultiple(aim.datasets);
+    if (available.length > 0) {
+      storeAddMultiple(available);
+      storeAttachMultiple(available);
     }
     composerRef.current?.focus();
+    return true;
   };
 
   const removeAim = (aimText: string) => {
@@ -170,7 +192,8 @@ export default function ChatSection() {
     if (selectedAims.find((a) => a.aim === action.name)) {
       removeAim(action.name);
     } else {
-      useAim({ aim: action.name, description: action.description, datasets: action.datasets });
+      const ok = useAim({ aim: action.name, description: action.description, datasets: action.datasets });
+      if (!ok) return;
       const msg = `Run analysis: ${action.description || action.name}`;
       const lineName = useDatasetStore.getState().attached.join(",");
       const res = await sendUserMessage(msg, lineName, [action.name], enrichmentMode, "focus", { [action.name]: action.description });
@@ -196,7 +219,8 @@ export default function ChatSection() {
 
   const handleRerunAim = async (aimDef: { aim: string; description?: string; datasets?: string[] }) => {
     if (!selectedAims.find((a) => a.aim === aimDef.aim)) {
-      useAim({ aim: aimDef.aim, description: aimDef.description, datasets: aimDef.datasets });
+      const ok = useAim({ aim: aimDef.aim, description: aimDef.description, datasets: aimDef.datasets });
+      if (!ok) return;
     }
     await handleRunAimSql({ aim: aimDef.aim, description: aimDef.description, datasets: aimDef.datasets });
   };
@@ -292,14 +316,10 @@ export default function ChatSection() {
 
   const handleRunAimSql = async (aimDef: {aim: string; description?: string; datasets?: string[]}) => {
     if (!sessionId) return;
-    useSessionStore.setState((s) => ({
-      selectedAims: s.selectedAims.some((a) => a.aim === aimDef.aim)
-        ? s.selectedAims
-        : [...s.selectedAims, { aim: aimDef.aim, description: aimDef.description, datasets: aimDef.datasets }],
-    }));
-    if (aimDef.datasets && aimDef.datasets.length > 0) {
-      storeAddMultiple(aimDef.datasets);
-      storeAttachMultiple(aimDef.datasets);
+    const { missing } = filterAvailable(aimDef.datasets || []);
+    if (missing.length > 0) {
+      setMissingDatasets((prev) => [...new Set([...prev, ...missing])]);
+      return;
     }
     const msg = `Run analysis: ${aimDef.description || aimDef.aim}`;
     const lineName = useDatasetStore.getState().attached.join(",");
@@ -313,7 +333,7 @@ export default function ChatSection() {
         result: resultState,
       });
       useSessionStore.setState((s) => ({
-        completedActions: { ...s.completedActions, [aimDef.aim]: res.result_uuid },
+        completedActions: { ...s.completedActions, [aimDef.aim]: res.result_uuid! },
       }));
       persistTurns();
     } else if (res?.deep_iterations?.length) {
@@ -368,12 +388,13 @@ export default function ChatSection() {
   useEffect(() => {
     if (sessionId) {
       const allDs = selectedAims.flatMap((a) => a.datasets || []);
-      if (allDs.length > 0) {
-        storeAddMultiple(allDs);
-        storeAttachMultiple(allDs);
+      const { available } = filterAvailable(allDs);
+      if (available.length > 0) {
+        storeAddMultiple(available);
+        storeAttachMultiple(available);
       }
     }
-  }, [sessionId]);
+  }, [sessionId, datasetLookup]);
 
   // Auto-scroll to bottom when new turns arrive or pendingTurn changes
   useEffect(() => {
@@ -391,7 +412,9 @@ export default function ChatSection() {
     if (!msg || !sessionId) return;
     setInput("");
     setShowSearch(false);
-    const lineName = useDatasetStore.getState().attached.join(",");
+    const { available, missing } = filterAvailable(storeAttached);
+    if (missing.length > 0) setMissingDatasets((prev) => [...new Set([...prev, ...missing])]);
+    const lineName = available.join(",");
     const aimNames = selectedAims.map((a) => a.aim);
     const aimDescriptions = Object.fromEntries(selectedAims.filter((a) => a.description).map((a) => [a.aim, a.description!]));
     const res = await sendUserMessage(msg, lineName, aimNames, enrichmentMode, undefined, aimDescriptions);
@@ -725,6 +748,12 @@ export default function ChatSection() {
               </button>
             </span>
           ))}
+        </div>
+      )}
+
+      {missingDatasets.length > 0 && (
+        <div className="text-[11px] text-amber-400 bg-amber-400/10 border border-amber-400/20 rounded-lg px-3 py-2 mb-2">
+          {t("chat.datasetsNotAvailable", { names: missingDatasets.join(", ") })}
         </div>
       )}
 

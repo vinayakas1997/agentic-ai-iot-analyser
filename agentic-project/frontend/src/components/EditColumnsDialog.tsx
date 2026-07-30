@@ -3,6 +3,7 @@ import { updateDatasetColumns, llmFillMeanings } from "../api/client";
 import { IconDatabase, IconCheck } from "../lib/icons";
 import { btnPrimary, btnSecondary } from "../lib/styles";
 import { useUploadStore } from "../stores/uploadStore";
+import { useUiStore } from "../stores/uiStore";
 import { useT } from "../lib/i18n";
 import type { ColumnDraft, PersonalDataset } from "../types";
 
@@ -74,7 +75,8 @@ export default function EditColumnsDialog({ dataset, onClose }: Props) {
     setLlmFilling(true);
     setDefinitionsError("");
     try {
-      const res = await llmFillMeanings(dataset.id, emptyNames);
+      const language = useUiStore.getState().language;
+      const res = await llmFillMeanings(dataset.id, emptyNames, language);
       const byName = new Map(res.columns.map((c) => [c.name, c.meaning]));
       setColumns(columns.map((col) => ({
         ...col,
