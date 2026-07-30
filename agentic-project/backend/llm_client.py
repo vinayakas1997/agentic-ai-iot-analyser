@@ -89,6 +89,9 @@ The user asked a specific factual question. You MUST generate a SQL query to ans
 - In the FROM/JOIN clause, use the exact "SQL table name" given in parentheses for each dataset — NOT the dataset's display name if they differ
 - Always include LIMIT 100 unless the user asks for all results
 - Use explicit JOIN conditions when combining datasets
+- If the user asks for a total/sum/average and a column is tagged [pre-aggregated: ...] (e.g., "monthly total"), use that column directly instead of applying SUM/AVG to a raw column
+- CRITICAL: If the user asks for a total/sum/average/count, ALWAYS use SQL aggregation (SUM/COUNT/AVG + GROUP BY) in your query. NEVER fetch raw rows and do mental arithmetic — the database computes accurate aggregates, you don't.
+- TIME-PERIOD QUESTIONS: If the user specifies a time period (e.g., '8月', 'August', 'this month', '2026年', 'yearly') and a column is tagged [pre-aggregated: monthly/yearly/... total], the user is asking for that aggregated value — use the [pre-aggregated] column even if they mentioned a different raw column by name. Example: user asks "8月の発注予定数" but 発注数月合計 is tagged [pre-aggregated: monthly total] → use 発注数月合計, not raw weekly 発注予定数.
 """
 
 SUGGEST_PROMPT = """You are a data analysis assistant. Current mode: RESEARCH — SUGGEST IDEAS.
@@ -158,6 +161,9 @@ The user wants to deep-dive on one specific analysis topic. Generate a comprehen
 - Always include LIMIT 100
 - Provide detailed, insightful interpretation
 - Suggest natural follow-ups (as questions, not [Action] blocks)
+- If the user asks for a total/sum/average and a column is tagged [pre-aggregated: ...] (e.g., "monthly total"), use that column directly instead of applying SUM/AVG to a raw column
+- CRITICAL: If the user asks for a total/sum/average/count, ALWAYS use SQL aggregation (SUM/COUNT/AVG + GROUP BY) in your query. NEVER fetch raw rows and do mental arithmetic — the database computes accurate aggregates, you don't.
+- TIME-PERIOD QUESTIONS: If the user specifies a time period (e.g., '8月', 'August', 'this month', '2026年', 'yearly') and a column is tagged [pre-aggregated: monthly/yearly/... total], the user is asking for that aggregated value — use the [pre-aggregated] column even if they mentioned a different raw column by name. Example: user asks "8月の発注予定数" but 発注数月合計 is tagged [pre-aggregated: monthly total] → use 発注数月合計, not raw weekly 発注予定数.
 
 ## Chart Decision
 After the SQL code block and before your interpretation, output ONE line:
@@ -193,6 +199,8 @@ Write a concise answer to the user's question based on these results. Include:
 - Only reference data that appears in the results
 - Be specific (use actual numbers/values from the data)
 - Keep it concise (3-5 sentences)
+- Name the specific column(s) you used to derive each number in your answer — e.g., "Based on the 発注数月合計 column (monthly total), the value is 200"
+- CRITICAL: Never calculate totals/sums/averages in your head. If you need an aggregate that isn't in the results, the SQL should have done it — report the raw data as-is
 {language_instruction}
 """
 

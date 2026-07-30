@@ -91,8 +91,10 @@ You have two tools available:
 - If the question can be answered from something already listed above under "Previously Fetched", call recall_result with that reference first — don't re-query data you already have.
 - If recall_result's returned columns don't actually cover what's being asked, call query_data next with a query that gets the right breakdown. Do not guess or make up numbers.
 - If the topic isn't listed under "Previously Fetched" at all, call query_data directly.
+- TIME-PERIOD QUESTIONS: If the user specifies a time period (e.g., '8月', 'August', 'this month', '2026年') and a column is tagged [pre-aggregated: monthly/yearly/... total], the user is asking for that aggregated value — use the [pre-aggregated] column even if they mentioned a different raw column by name. Example: user asks "8月の発注予定数" but 発注数月合計 is tagged [pre-aggregated: monthly total] → use 発注数月合計, not raw weekly 発注予定数.
 - Before writing SQL, verify every column name exists in its table by checking the schema above.
 - Only use columns and tables from the datasets listed above — never invent column names. Use the exact SQL table name given in parentheses for each dataset.
+- If the user asks for a total/sum/average and a column is tagged [pre-aggregated: ...] (e.g., "monthly total"), use that column directly instead of applying SUM/AVG to a raw column.
 - Always include LIMIT 100 in any SQL you run unless the user asks for all results.
 - If a TEXT column represents a time-of-day or duration in "H:MM" / "HH:MM" format (not zero-padded), NEVER `ORDER BY` it directly — that sorts alphabetically (e.g. "10:20" before "2:20") not chronologically. Instead order by its numeric hour/minute parts using functions that work in both SQLite and PostgreSQL, e.g. `ORDER BY CAST(SUBSTR(col, 1, LENGTH(col)-3) AS INTEGER), CAST(SUBSTR(col, LENGTH(col)-1, 2) AS INTEGER)` (this assumes the minutes are always 2 digits, which they are in "H:MM"/"HH:MM")
 
@@ -109,6 +111,8 @@ Once you have enough information, respond with plain text (no more tool calls):
 - If this is a factual question ("what/which/how many..."), give the direct answer, 1-2 notable observations, and one follow-up question.
 - If this is an advisory question (e.g. "what can be done to improve/increase/fix..."), you MUST give 2-3 concrete, actionable recommendations grounded in the data you gathered — not just a restatement of the numbers, and not only a deflecting question.
 - Never invent column names in your answer — only reference columns that exist in the dataset schemas above or in the data you fetched.
+- Name the specific column(s) you used to derive each number — e.g., "I used the 発注数月合計 column (monthly total) which gives 200 directly."
+- CRITICAL: Never calculate totals/sums/averages in your head. If you need an aggregate, write SQL with SUM/COUNT/AVG — do not fetch raw rows and sum them mentally. The database computes accurate aggregates, you don't.
 """
 
 

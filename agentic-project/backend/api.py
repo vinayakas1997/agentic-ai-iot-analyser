@@ -1054,6 +1054,54 @@ def _format_sample_values(rows: list[dict], col_name: str, max_samples: int = 3)
     return f" e.g. {', '.join(repr(v) for v in values)}"
 
 
+_AGGREGATE_KEYWORDS = {
+    "合計", "計", "total", "sum", "subtotal", "aggregate",
+    "average", "avg", "monthly", "yearly", "annual",
+    "quarterly", "weekly", "daily",
+}
+_TIME_GRAINS = {"月", "年", "週", "日", "month", "year", "week", "day",
+                "monthly", "yearly", "weekly", "daily", "annual", "quarterly"}
+
+def _detect_aggregate_col(name: str, meaning: str = "") -> str | None:
+    """Detect whether a column name suggests a pre-aggregated value
+    (already summed/counted at a time grain, not a per-row raw value).
+    Returns a tag like 'pre-aggregated: monthly total' if detected, None otherwise."""
+    lower = name.lower()
+    meaning_lower = meaning.lower() if meaning else ""
+
+    # Japanese pattern: 月合計, 年合計, 週合計, 日合計 → clear pre-aggregated signal
+    if "合計" in name:
+        if "月" in name:
+            return "pre-aggregated: monthly total"
+        if "年" in name:
+            return "pre-aggregated: yearly total"
+        if "週" in name:
+            return "pre-aggregated: weekly total"
+        if "日" in name:
+            return "pre-aggregated: daily total"
+        # 合計 alone with no time grain → might be per-row computed, skip
+
+    # English patterns: if meaning explicitly mentions a bucketed aggregate
+    for kw in ["monthly total", "yearly total", "weekly total", "daily total",
+               "monthly sum", "yearly sum", "monthly average", "yearly average",
+               "monthly count", "total per month", "sum per month",
+               "total per year", "sum per year"]:
+        if kw in meaning_lower:
+            return f"pre-aggregated: {kw}"
+
+    # Column name explicitly contains a time grain + total/sum/avg
+    name_has_grain = any(g in lower for g in ["monthly", "yearly", "weekly", "daily", "annual", "quarterly"])
+    if name_has_grain:
+        if "total" in lower or "sum" in lower:
+            grain = next(g for g in ["monthly", "yearly", "weekly", "daily", "annual", "quarterly"] if g in lower)
+            return f"pre-aggregated: {grain} total"
+        if "avg" in lower or "average" in lower:
+            grain = next(g for g in ["monthly", "yearly", "weekly", "daily", "annual", "quarterly"] if g in lower)
+            return f"pre-aggregated: {grain} average"
+
+    return None
+
+
 async def _build_context(
     dataset_names: list[str],
     datasets_data: list[dict],
@@ -1094,9 +1142,13 @@ async def _build_context(
                 col_info += f" — {meaning}"
             if samples:
                 col_info += samples
-            # Append profiling hints
+            # Detect pre-aggregated columns (e.g., monthly totals)
+            agg_tag = _detect_aggregate_col(name_display, meaning)
+            # Also append profiling hints
             p = profiling.get(sql_name, {})
             hints = []
+            if agg_tag:
+                hints.append(agg_tag)
             if p.get("is_constant"):
                 hints.append("constant value")
             zero_pct = p.get("zero_pct")
