@@ -504,7 +504,7 @@ export default function ChatSection() {
 
   return (
     <section className={`${panelClass} order-2 lg:order-none`}>
-      <div className="rounded-xl border-2 border-border bg-surface-1 p-3 mb-4">
+      <div className="rounded-xl border-2 border-border bg-surface-1 p-3 mb-4" data-tour="dataset-section">
         <div className="flex items-center gap-2 mb-2">
           <button
             type="button"
@@ -521,6 +521,7 @@ export default function ChatSection() {
           </button>
           <button
             type="button"
+            data-tour="upload-csv"
             className={`flex items-center gap-1.5 text-[11px] font-semibold text-accent rounded-lg px-2.5 py-1.5 shrink-0 ${btnGlass}`}
             onClick={() => csvInputRef.current?.click()}
             disabled={uploadingCsv}
@@ -744,6 +745,7 @@ export default function ChatSection() {
         <div className="flex gap-2 items-end">
           <textarea
             ref={composerRef}
+            data-tour="composer"
             className="flex-1 rounded-xl border-2 border-border bg-surface-1 text-text text-sm px-3 py-2.5 resize-none overflow-y-auto focus:outline-none focus:border-accent transition-colors min-h-[42px] max-h-[120px]"
             placeholder={t("chat.composerResearchPlaceholder")}
             rows={1}

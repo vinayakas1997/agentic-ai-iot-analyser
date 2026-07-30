@@ -129,7 +129,7 @@ export default function ContextSection() {
   const displaySession: SessionMeta | null = sessionMeta || (isLocalSession && pendingTitle ? { title: pendingTitle, session_id: sessionId || "", mode: "ask" as const, phase: "lines", status: "active" } : null);
 
   return (
-    <section className={`${panelClass} order-1 lg:order-none overflow-y-auto text-sm`}>
+    <section className={`${panelClass} order-1 lg:order-none overflow-y-auto text-sm`} data-tour="context-panel">
       <div className="flex items-center gap-2 text-xs font-semibold tracking-wider uppercase text-muted mb-3">
         <span className="inline-flex items-center justify-center w-[22px] h-[22px] rounded-[7px] bg-ic-violet-soft text-ic-violet">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" width="13" height="13" strokeWidth="2.2"><path d="M4 6h16M4 12h16M4 18h16"/></svg>

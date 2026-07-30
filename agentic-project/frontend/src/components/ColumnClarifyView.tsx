@@ -2,7 +2,7 @@ import { useState, useRef, useEffect } from "react";
 import { useUploadStore } from "../stores/uploadStore";
 import { useDatasetStore } from "../stores/datasetStore";
 import { confirmUploadDataset, llmFillMeanings } from "../api/client";
-import { IconDatabase, IconCheck, IconUpload, IconChart } from "../lib/icons";
+import { IconDatabase, IconCheck, IconUpload, IconChart, IconRobot } from "../lib/icons";
 import { btnPrimary, btnSecondary } from "../lib/styles";
 import { useT } from "../lib/i18n";
 import type { ColumnDraft } from "../types";
@@ -178,7 +178,7 @@ export default function ColumnClarifyView() {
   };
 
   return (
-    <div className="fixed inset-0 z-50 bg-bg-deep/95 flex items-center justify-center p-6 overflow-y-auto">
+    <div className="fixed inset-0 z-50 bg-bg-deep/95 flex items-center justify-center p-6 overflow-y-auto" data-tour="clarify-modal">
       <div className="rounded-2xl border-2 border-border bg-surface-1 p-6 max-w-4xl w-full my-6">
         <div className="flex items-center gap-2 mb-1">
           <span className="inline-flex items-center justify-center w-[26px] h-[26px] rounded-[8px] bg-ic-amber-soft text-ic-amber">
@@ -234,7 +234,7 @@ export default function ColumnClarifyView() {
               </span>
               <button
                 type="button"
-                className="text-[11px] font-medium text-accent hover:text-accent/80 transition-colors inline-flex items-center gap-1"
+                className="glass-pill glass-pill--upload"
                 onClick={() => definitionsInputRef.current?.click()}
                 disabled={definitionsApplying}
               >
@@ -245,7 +245,8 @@ export default function ColumnClarifyView() {
           ) : (
             <button
               type="button"
-              className="text-[11px] font-medium text-accent hover:text-accent/80 transition-colors inline-flex items-center gap-1"
+              data-tour="upload-defs"
+              className="glass-pill glass-pill--upload"
               onClick={() => definitionsInputRef.current?.click()}
               disabled={definitionsApplying}
             >
@@ -256,14 +257,14 @@ export default function ColumnClarifyView() {
           {emptyCount > 0 && (
             <button
               type="button"
-              className={`text-[11px] font-medium transition-colors inline-flex items-center gap-1.5 ${
-                llmFilling
-                  ? "text-ic-amber/60 cursor-wait"
-                  : "text-ic-amber hover:text-ic-amber/80"
-              }`}
+              data-tour="llm-fill"
+              className={`glass-pill glass-pill--llm ${llmFilling ? "cursor-wait" : ""}`}
               onClick={handleLlmFillEmpty}
               disabled={llmFilling}
             >
+              <span className="robot-glow">
+                <IconRobot size={13} />
+              </span>
               {llmFilling ? (
                 <>
                   <span className="inline-block animate-spin"><IconChart size={11} /></span>

@@ -44,7 +44,7 @@ export function AimBar({
   if (selectedAims.length === 0) return null;
 
   return (
-    <div className="flex flex-wrap gap-1.5 mb-2">
+    <div className="flex flex-wrap gap-1.5 mb-2" data-tour="aim-bar">
       {selectedAims.map((a) => {
         const isCompleted = a.aim in completedActions;
         const isRunning = runningAim === a.aim;

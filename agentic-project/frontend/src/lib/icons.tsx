@@ -159,3 +159,63 @@ export function IconChart(props: Props) {
     </Icon>
   );
 }
+
+export function IconRobot(props: Props) {
+  return (
+    <Icon {...props} strokeWidth="2">
+      <path d="M12 2v3" />
+      <circle cx="12" cy="2" r="1" fill="currentColor" stroke="none" />
+      <rect x="4" y="8" width="16" height="12" rx="3" />
+      <circle cx="9" cy="14" r="1.4" fill="currentColor" stroke="none" />
+      <circle cx="15" cy="14" r="1.4" fill="currentColor" stroke="none" />
+      <path d="M9 17.5c1 .8 5 .8 6 0" />
+      <path d="M2 13v3M22 13v3" />
+    </Icon>
+  );
+}
+
+export function IconHelp(props: Props) {
+  return (
+    <Icon {...props} strokeWidth="2">
+      <circle cx="12" cy="12" r="10" />
+      <path d="M9.09 9a3 3 0 015.83 1c0 2-3 3-3 3" />
+      <path d="M12 17h.01" />
+    </Icon>
+  );
+}
+
+/** Looping bowling-ball-hits-pins -> glowing lightbulb animation, used for the navbar help/tour trigger. */
+export function IconHelpAnimated({ size = 20 }: { size?: number }) {
+  return (
+    <svg viewBox="0 0 24 24" width={size} height={size} className="hlp-anim" aria-hidden>
+      <g className="hlp-ball">
+        <circle cx="2.5" cy="17" r="2.8" fill="white" />
+        <circle cx="1.5" cy="16" r="0.45" fill="white" opacity="0.5" />
+        <circle cx="3.5" cy="15.9" r="0.4" fill="white" opacity="0.5" />
+      </g>
+      <g className="hlp-pin hlp-pin-1">
+        <rect x="15.6" y="11" width="2.8" height="7" rx="1.4" fill="white" />
+        <circle cx="17" cy="10.6" r="1.3" fill="white" />
+      </g>
+      <g className="hlp-pin hlp-pin-2">
+        <rect x="18.6" y="12.2" width="2.8" height="7" rx="1.4" fill="white" />
+        <circle cx="20" cy="11.8" r="1.3" fill="white" />
+      </g>
+      <g className="hlp-pin hlp-pin-3">
+        <rect x="18.6" y="8.2" width="2.8" height="7" rx="1.4" fill="white" />
+        <circle cx="20" cy="7.8" r="1.3" fill="white" />
+      </g>
+      <g className="hlp-bulb-glow">
+        <circle cx="12" cy="10" r="7" fill="white" opacity="0.5" />
+      </g>
+      <g className="hlp-bulb">
+        <path
+          d="M12 3.5a5.5 5.5 0 00-3 10.1c.6.4 1 1.1 1 1.9v.5h4v-.5c0-.8.4-1.5 1-1.9A5.5 5.5 0 0012 3.5z"
+          fill="white"
+        />
+        <rect x="10" y="17.2" width="4" height="1.1" rx="0.5" fill="white" />
+        <rect x="10.3" y="18.6" width="3.4" height="1" rx="0.5" fill="white" />
+      </g>
+    </svg>
+  );
+}

@@ -116,7 +116,7 @@ export default function IotRegistryPage({ onViewDashboard }: { onViewDashboard: 
   return (
     <div className="flex flex-col h-screen bg-bg-deep text-text">
       <header className="flex items-center justify-between px-5 py-3 border-b border-border bg-surface-1 shrink-0">
-        <span className="text-lg font-semibold">EDAS</span>
+        <span className="text-lg font-semibold">AGI DATA ANALYSER</span>
         <div className="flex items-center gap-3">
           <button type="button" className={btnSecondary} onClick={onViewDashboard}>
             {t("registryAdmin.viewDashboard")}

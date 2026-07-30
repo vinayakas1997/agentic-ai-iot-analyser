@@ -4,9 +4,9 @@ import { useSessionStore } from "../stores/sessionStore";
 import { useUiStore } from "../stores/uiStore";
 import { useAuthStore } from "../stores/authStore";
 import { useT, tCount } from "../lib/i18n";
-import { IconTrash } from "../lib/icons";
+import { IconTrash, IconHelpAnimated } from "../lib/icons";
 
-export default function Navbar({ onBackToManage }: { onBackToManage?: () => void }) {
+export default function Navbar({ onBackToManage, onHelp }: { onBackToManage?: () => void; onHelp?: () => void }) {
   const sessions = useSessionStore((s) => s.sessions);
   const sessionId = useSessionStore((s) => s.sessionId);
   const sessionMeta = useSessionStore((s) => s.sessionMeta);
@@ -53,7 +53,22 @@ export default function Navbar({ onBackToManage }: { onBackToManage?: () => void
 
   return (
     <header className="flex items-center justify-between px-5 py-3 border-b border-border bg-surface-1 shrink-0">
-      <span className="text-lg font-semibold">AGI DATA ANALYSER</span>
+      <div className="flex items-center gap-2">
+        <span className="text-lg font-semibold">AGI DATA ANALYSER</span>
+        <div className="hlp-label-wrap">
+          <button
+            type="button"
+            onClick={onHelp}
+            className="w-[34px] h-[34px] rounded-lg flex items-center justify-center hover:bg-white/[0.06] transition-colors"
+            title={t("tour.help")}
+          >
+            <IconHelpAnimated size={34} />
+          </button>
+          <span className="hlp-label" aria-hidden>
+            {t("tour.help")}
+          </span>
+        </div>
+      </div>
 
       <div className="flex items-center gap-3">
         <span className="text-[11px] font-semibold tabular-nums text-muted mr-1">

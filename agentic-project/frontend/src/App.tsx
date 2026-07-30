@@ -12,6 +12,7 @@ import IotRegistryPage from "./sections/IotRegistryPage";
 import { ToastContainer } from "./components/ToastContainer";
 import ColumnClarifyView from "./components/ColumnClarifyView";
 import ProcessingOverlay from "./components/ProcessingOverlay";
+import AppTour from "./components/AppTour";
 
 function Dashboard() {
   const isProcessing = useUploadStore((s) => s.isProcessing);
@@ -36,6 +37,7 @@ export default function App() {
   const viewingDashboard = useAuthStore((s) => s.viewingDashboard);
   const setViewingDashboard = useAuthStore((s) => s.setViewingDashboard);
   const [showLogin, setShowLogin] = useState(false);
+  const [showTour, setShowTour] = useState(false);
 
   useEffect(() => {
     bootstrap();
@@ -60,11 +62,12 @@ export default function App() {
 
   return (
     <div className="flex flex-col h-screen bg-bg-deep text-text">
-      <Navbar onBackToManage={role === "iot" ? () => setViewingDashboard(false) : undefined} />
+      <Navbar onBackToManage={role === "iot" ? () => setViewingDashboard(false) : undefined} onHelp={() => setShowTour(true)} />
       <Dashboard />
       <ToastContainer />
       <ColumnClarifyView />
       <ProcessingOverlay />
+      <AppTour active={showTour} onClose={() => setShowTour(false)} />
     </div>
   );
 }

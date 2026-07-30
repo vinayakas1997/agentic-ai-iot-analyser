@@ -86,7 +86,7 @@ export default function OutputPanel() {
   };
 
   return (
-    <section className={`${panelClass} order-3 lg:order-none text-sm flex flex-col`}>
+    <section className={`${panelClass} order-3 lg:order-none text-sm flex flex-col`} data-tour="output-panel">
       <div className="flex items-center justify-between mb-3 shrink-0">
         <div className="flex items-center gap-2">
           <h2 className="font-display text-xs font-semibold tracking-wider uppercase text-muted">{t("output.title")}</h2>
