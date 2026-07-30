@@ -53,7 +53,7 @@ export default function Navbar({ onBackToManage }: { onBackToManage?: () => void
 
   return (
     <header className="flex items-center justify-between px-5 py-3 border-b border-border bg-surface-1 shrink-0">
-      <span className="text-lg font-semibold">EDAS</span>
+      <span className="text-lg font-semibold">AGI DATA ANALYSER</span>
 
       <div className="flex items-center gap-3">
         <span className="text-[11px] font-semibold tabular-nums text-muted mr-1">
