@@ -78,16 +78,20 @@ export async function proceedToTaskRegistry(params: {
   });
 }
 
-export async function createSession(title?: string) {
+export async function createSession(title?: string, userId?: string) {
+  const body: Record<string, unknown> = {};
+  if (title) body.title = title;
+  if (userId) body.user_id = userId;
   return request<{ session_id: string; title: string }>("/api/v2/sessions", {
     method: "POST",
-    body: title ? JSON.stringify({ title }) : undefined,
+    body: JSON.stringify(body),
   });
 }
 
-export async function listSessions() {
+export async function listSessions(userId?: string) {
+  const params = userId ? `?user_id=${encodeURIComponent(userId)}` : "";
   return request<{ session_id: string; title: string; phase: string; status: string; mode?: string }[]>(
-    "/api/v2/sessions"
+    `/api/v2/sessions${params}`
   );
 }
 

@@ -5,6 +5,7 @@ import type { MessageResponse, SchemaSnapshot, SessionListItem, SessionMeta, Tur
 import { useUiStore } from "./uiStore";
 import { useOutputStore, type CollectedResult } from "./outputStore";
 import { useDatasetStore } from "./datasetStore";
+import { useAuthStore } from "./authStore";
 import { useToastStore } from "./toastStore";
 import type { QueryResultState } from "../sections/QueryActions";
 
@@ -76,8 +77,9 @@ interface SessionState {
   completedActions: Record<string, string>;
   contextSummaries: Record<string, { turn_timestamps: string[]; summary: string; created_at: string }[]>;
   enrichmentMode: string;
+  clearAll: () => void;
   bootstrap: () => Promise<void>;
-  refreshSessions: () => Promise<SessionListItem[]>;
+  refreshSessions: (userId?: string) => Promise<SessionListItem[]>;
   switchSession: (id: string) => Promise<void>;
   newSession: () => void;
   deleteSession: (id: string) => Promise<void>;
@@ -118,8 +120,33 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   contextSummaries: {},
   enrichmentMode: "research",
 
-  refreshSessions: async () => {
-    const list = await api.listSessions();
+  clearAll: () => {
+    _pollTimer = null;
+    set({
+      sessionId: null,
+      isLocalSession: false,
+      pendingTitle: null,
+      sessions: [],
+      turns: [],
+      sessionMeta: null,
+      loading: false,
+      progressSteps: [],
+      statusMessage: null,
+      error: null,
+      pendingTurn: null,
+      aimProposals: [],
+      selectedAims: [],
+      outputResults: [],
+      chatQueryResults: {},
+      completedActions: {},
+      contextSummaries: {},
+      enrichmentMode: "research",
+    });
+    useUiStore.getState().selectTurn(-1);
+  },
+
+  refreshSessions: async (userId?: string) => {
+    const list = await api.listSessions(userId);
     const withMode = list.map((s) => ({ ...s, mode: s.mode || "ask" }));
     set({ sessions: withMode });
     return withMode;
@@ -128,7 +155,8 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   bootstrap: async () => {
     set({ error: null, loading: true });
     try {
-      const list = await get().refreshSessions();
+      const uid = useAuthStore.getState().userId || undefined;
+      const list = await get().refreshSessions(uid);
       if (list.length > 0) {
         const detail = await api.getSession(list[0].session_id);
         const sessionMeta = { session_id: detail.session_id, title: detail.title, phase: detail.phase || "lines", status: detail.status || "active", mode: detail.mode || "ask" };
@@ -298,7 +326,8 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       if (isLocalSession) {
         set({ statusMessage: "Creating new session..." });
         const name = pendingTitle || generateSessionName();
-        const created = await api.createSession(name);
+        const uid = useAuthStore.getState().userId || undefined;
+        const created = await api.createSession(name, uid);
         activeSessionId = created.session_id;
         set({
           sessionId: activeSessionId,
@@ -487,7 +516,8 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     if (_pollTimer) return;
     _pollTimer = setInterval(async () => {
       try {
-        const list = await api.listSessions();
+        const uid = useAuthStore.getState().userId || undefined;
+        const list = await api.listSessions(uid);
         const state = get();
         const current = list.find((s) => s.session_id === state.sessionId);
         set({

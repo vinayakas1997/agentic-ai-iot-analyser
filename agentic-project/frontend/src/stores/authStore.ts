@@ -1,4 +1,7 @@
 import { create } from "zustand";
+import { useSessionStore } from "./sessionStore";
+import { useDatasetStore } from "./datasetStore";
+import { useOutputStore } from "./outputStore";
 
 const AUTH_STORAGE_KEY = "edas.auth";
 
@@ -49,6 +52,9 @@ export const useAuthStore = create<AuthState>((set, get) => ({
   viewingDashboard: stored?.viewingDashboard ?? false,
   login: (userId, role) => {
     persist({ userId, role, viewingDashboard: false });
+    useSessionStore.getState().clearAll();
+    useDatasetStore.getState().clear();
+    useOutputStore.getState().clearResults();
     set({ userId, role, viewingDashboard: false });
   },
   logout: () => {
@@ -57,6 +63,9 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     } catch {
       // ignore
     }
+    useSessionStore.getState().clearAll();
+    useDatasetStore.getState().clear();
+    useOutputStore.getState().clearResults();
     set({ userId: null, role: null, viewingDashboard: false });
   },
   setViewingDashboard: (viewing) => {

@@ -634,6 +634,7 @@ async def execute_query(req: ExecuteQueryRequest):
 
 class CreateSessionRequest(BaseModel):
     title: str | None = None
+    user_id: str = ""
 
 class UpdateSessionRequest(BaseModel):
     title: str | None = None
@@ -645,10 +646,11 @@ async def create_session(body: CreateSessionRequest = None):
     session_id = str(uuid.uuid4())
     now = datetime.now(timezone.utc)
     title = body.title if body and body.title else f"Session {session_id[:8]}"
+    uid = (body.user_id or settings.default_user_id) if body else settings.default_user_id
     async with AsyncSessionLocal() as db:
         row = ManagerSession(
             session_id=session_id,
-            user_id=settings.default_user_id,
+            user_id=uid,
             phase="lines",
             status="active",
             title=title,
@@ -681,13 +683,15 @@ async def update_session(session_id: str, body: UpdateSessionRequest):
     return {"session_id": session_id, "title": row.title}
 
 @router.get("/sessions")
-async def list_sessions():
-    """List all sessions."""
+async def list_sessions(user_id: str = ""):
+    """List sessions, optionally filtered by user_id."""
     async with AsyncSessionLocal() as db:
         from sqlalchemy import select
-        result = await db.execute(
-            select(ManagerSession).order_by(ManagerSession.updated_at.desc()).limit(50)
-        )
+        stmt = select(ManagerSession)
+        if user_id:
+            stmt = stmt.where(ManagerSession.user_id == user_id)
+        stmt = stmt.order_by(ManagerSession.updated_at.desc()).limit(50)
+        result = await db.execute(stmt)
         rows = result.scalars().all()
     return [
         {
@@ -1539,7 +1543,7 @@ async def send_message(req: MessageRequest):
     # Merge in the user's personal (uploaded CSV) datasets, if any of the attached
     # names match — kept in a separate table from global_registry, tagged so
     # query execution knows to hit the user's SQLite file instead of Postgres.
-    user_datasets = await fetch_active_user_datasets(settings.default_user_id, dataset_names)
+    user_datasets = await fetch_active_user_datasets(session.user_id, dataset_names)
     datasets_data.extend(user_datasets)
 
     # If SUMMARY mode, skip routing and use existing summarization flow
