@@ -1,0 +1,41 @@
+# Runs ON THE APP SERVER (separate machine from the DGX Spark).
+# Postgres and vLLM stay on the DGX Spark; this only runs backend + frontend,
+# pointed at the DGX Spark over the network via DGX_HOST in .env.
+services:
+  backend:
+    build: ./backend
+    ports:
+      - "7010:7010"
+    environment:
+      DB_URL: "postgresql+asyncpg://${POSTGRES_USER:-manager_agent}:${POSTGRES_PASSWORD:-manager_agent_pass}@${DGX_HOST}:5432/${POSTGRES_DB:-manager_agent_db}"
+      VLLM_BASE_URL: "http://${DGX_HOST}:8009/v1"
+      LLM_MODEL: "${LLM_MODEL:-qwen36-35B}"
+      CORS_ORIGINS: "${CORS_ORIGINS:-http://localhost:7008}"
+      DEBUG: "${DEBUG:-false}"
+      LOG_LEVEL: "${LOG_LEVEL:-0}"
+    volumes:
+      - user_csv_data:/data/users
+      - ./backend/iot_users.json:/app/iot_users.json
+    restart: unless-stopped
+    networks:
+      - edas-net
+
+  frontend:
+    build:
+      context: ./frontend
+      args:
+        VITE_API_URL: "${VITE_API_URL:-http://localhost:7010}"
+    ports:
+      - "7008:80"
+    depends_on:
+      - backend
+    restart: unless-stopped
+    networks:
+      - edas-net
+
+networks:
+  edas-net:
+    driver: bridge
+
+volumes:
+  user_csv_data:

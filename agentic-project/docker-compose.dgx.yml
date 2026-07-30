@@ -1,0 +1,43 @@
+# Runs ON THE DGX SPARK: Postgres only.
+# vLLM is assumed to already be running natively on this host (e.g. port 8009)
+# and is not managed by this compose file.
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-manager_agent}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-manager_agent_pass}
+      POSTGRES_DB: ${POSTGRES_DB:-manager_agent_db}
+    ports:
+      # Bound to all interfaces so the app server can reach it over the LAN.
+      # Lock this down (e.g. "192.168.x.x:5432:5432" or a firewall rule)
+      # so only the app server's IP can connect.
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-manager_agent} -d ${POSTGRES_DB:-manager_agent_db}"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
+    networks:
+      - edas-net
+
+  db-init:
+    build: ./mock-database-fill
+    environment:
+      DB_URL: "postgresql+asyncpg://${POSTGRES_USER:-manager_agent}:${POSTGRES_PASSWORD:-manager_agent_pass}@db:5432/${POSTGRES_DB:-manager_agent_db}"
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: "no"
+    networks:
+      - edas-net
+
+networks:
+  edas-net:
+    driver: bridge
+
+volumes:
+  pgdata:
