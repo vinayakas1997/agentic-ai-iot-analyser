@@ -38,7 +38,18 @@ LANGUAGE_INSTRUCTIONS: dict[str, str] = {
 def language_instruction(language: str) -> str:
     """One-line-or-so instruction appended to a system prompt to make the LLM reply in the
     given language while keeping SQL/table/column/dataset identifiers in English."""
-    return LANGUAGE_INSTRUCTIONS.get(language, "")
+    lang = (language or "en").strip().lower()
+    if lang in LANGUAGE_INSTRUCTIONS:
+        return LANGUAGE_INSTRUCTIONS[lang]
+    if not lang or lang == "en":
+        return ""
+    # Unknown codes: ask the model to reply in that language rather than defaulting to English silently.
+    return (
+        f"\n## Language\n"
+        f"Respond in the language indicated by code '{lang}'.\n"
+        "Keep SQL, table names, column names, and dataset names in English exactly as given "
+        "in the context above — do not translate identifiers, only the surrounding natural-language text.\n"
+    )
 
 # ── Route Prompts ──
 

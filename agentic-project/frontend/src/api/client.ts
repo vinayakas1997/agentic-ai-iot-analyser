@@ -119,11 +119,12 @@ export async function getSession(sessionId: string, userId?: string) {
   }>(`/api/v2/sessions/${sessionId}${params}`);
 }
 
-export async function sendMessage(sessionId: string, message: string, lineName = "", attachedAims: string[] = [], enrichmentMode = "research", history?: { role: string; content: string }[], routeOverride?: string, aimDescriptions?: Record<string, string>, language?: string) {
+export async function sendMessage(sessionId: string, message: string, lineName = "", attachedAims: string[] = [], enrichmentMode = "research", history?: { role: string; content: string }[], routeOverride?: string, aimDescriptions?: Record<string, string>, language?: string, userId?: string) {
   const body: Record<string, unknown> = { session_id: sessionId, message, line_name: lineName, attached_aims: attachedAims, enrichment_mode: enrichmentMode, history: history ?? [] };
   if (routeOverride) body.route_override = routeOverride;
   if (aimDescriptions && Object.keys(aimDescriptions).length > 0) body.aim_descriptions = aimDescriptions;
   if (language) body.language = language;
+  if (userId) body.user_id = userId;
   return withRetry(() => request<{
     session_id: string;
     turn_index?: number;
@@ -180,7 +181,7 @@ export async function updateSessionTitle(sessionId: string, title: string) {
 
 import type { ChartConfig } from "../sections/QueryActions";
 
-export async function executeQuery(sessionId: string, message: string, lineName = "", history?: { role: string; content: string }[]) {
+export async function executeQuery(sessionId: string, message: string, lineName = "", history?: { role: string; content: string }[], userId?: string) {
   return withRetry(() => request<{
     session_id: string;
     sql: string;
@@ -191,13 +192,14 @@ export async function executeQuery(sessionId: string, message: string, lineName 
     chart_suggestions?: { advanced: ChartConfig[]; basic: ChartConfig[] };
   }>("/api/v2/execute-query", {
     method: "POST",
-    body: JSON.stringify({ session_id: sessionId, message, line_name: lineName, history }),
+    body: JSON.stringify({ session_id: sessionId, message, line_name: lineName, history, user_id: userId }),
   }));
 }
 
-export async function getProgress(sessionId: string) {
+export async function getProgress(sessionId: string, userId?: string) {
+  const params = userId ? `?user_id=${encodeURIComponent(userId)}` : "";
   return request<{ steps: { step: string; status: string; detail: string; ts: number }[] }>(
-    `/api/v2/sessions/${sessionId}/progress`
+    `/api/v2/sessions/${sessionId}/progress${params}`
   );
 }
 
@@ -284,10 +286,10 @@ export interface RegistryColumnDraft {
   meaning: string;
 }
 
-export async function introspectTable(tableName: string) {
+export async function introspectTable(tableName: string, userId?: string) {
   return request<{ table_name: string; columns: RegistryColumnDraft[]; sample_rows: Record<string, unknown>[] }>(
     "/api/v2/registry-admin/introspect",
-    { method: "POST", body: JSON.stringify({ table_name: tableName }) }
+    { method: "POST", body: JSON.stringify({ table_name: tableName, user_id: userId }) }
   );
 }
 
@@ -302,10 +304,11 @@ export async function createRegistryEntry(params: {
   join_hints?: unknown;
   suggested_aims?: unknown;
   synonyms?: string[];
+  user_id?: string;
 }) {
   return request<{ id: number; status: string }>("/api/v2/registry-admin/entries", {
     method: "POST",
-    body: JSON.stringify(params),
+    body: JSON.stringify({ ...params, user_id: params.user_id || params.maintained_by }),
   });
 }
 

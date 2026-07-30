@@ -338,6 +338,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     if (!sessionId || !text.trim() || isDone) return;
 
     const userText = text.trim();
+    const sendUid = useAuthStore.getState().userId || undefined;
     set({ error: null, loading: true, progressSteps: [], statusMessage: t("processing.processingLabel"), pendingTurn: null });
     get().setPendingTurn(userText);
 
@@ -346,14 +347,13 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       const sid = get().sessionId;
       if (!sid) return;
       try {
-        const res = await api.getProgress(sid);
+        const res = await api.getProgress(sid, sendUid);
         set({ progressSteps: res.steps });
       } catch { /* ignore poll errors */ }
     }, 600);
 
     try {
       let activeSessionId = sessionId;
-      const sendUid = useAuthStore.getState().userId || undefined;
 
       if (isLocalSession) {
         set({ statusMessage: t("session.creating") });
@@ -379,7 +379,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
 
       // History built server-side from stored turns (via enrichment block + conv history)
       const language = useUiStore.getState().language;
-      const res = await api.sendMessage(activeSessionId, userText, lineName, attachedAims, enrichmentMode, [], routeOverride, aimDescriptions, language);
+      const res = await api.sendMessage(activeSessionId, userText, lineName, attachedAims, enrichmentMode, [], routeOverride, aimDescriptions, language, sendUid);
       clearInterval(progressTimer);
       set({ statusMessage: t("session.responseReceived") });
 

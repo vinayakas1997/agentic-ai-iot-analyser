@@ -45,7 +45,7 @@ export default function IotRegistryPage({ onViewDashboard }: { onViewDashboard: 
     setError("");
     setColumns(null);
     try {
-      const res = await introspectTable(tableName.trim());
+      const res = await introspectTable(tableName.trim(), userId || undefined);
       setColumns(res.columns);
     } catch (e) {
       setError(e instanceof Error ? e.message : t("registryAdmin.tableNotFound"));
@@ -75,6 +75,7 @@ export default function IotRegistryPage({ onViewDashboard }: { onViewDashboard: 
     try {
       const created = await createRegistryEntry({
         maintained_by: userId,
+        user_id: userId,
         line_name: lineName.trim(),
         dataset_name: datasetName.trim(),
         table_name: tableName.trim(),

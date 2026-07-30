@@ -5,7 +5,8 @@ services:
   backend:
     build: ./backend
     ports:
-      - "7010:7010"
+      # Localhost-only: LAN users reach the API via frontend nginx :7008 /api/
+      - "127.0.0.1:7010:7010"
     environment:
       DB_URL: "postgresql+asyncpg://${POSTGRES_USER:-manager_agent}:${POSTGRES_PASSWORD:-manager_agent_pass}@${DGX_HOST}:5432/${POSTGRES_DB:-manager_agent_db}"
       VLLM_BASE_URL: "http://${DGX_HOST}:${VLLM_PORT:-8009}/v1"

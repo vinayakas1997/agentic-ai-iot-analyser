@@ -605,16 +605,15 @@ async def execute_query(req: ExecuteQueryRequest):
             })
 
     # Also check personal datasets (SQLite)
-    personal = await list_user_datasets(_require_user_id(req.user_id))
-    for pd in (personal or {}).get("datasets", []):
-        if pd.get("dataset_name") in dataset_names and pd.get("status") == "active":
-            datasets_data.append({
-                "dataset_name": pd["dataset_name"],
-                "table": pd.get("table_name", pd["dataset_name"]),
-                "description": pd.get("description"),
-                "column_definitions": pd.get("column_definitions", []),
-                "sqlite_path": pd.get("sqlite_path"),
-            })
+    personal = await fetch_active_user_datasets(_require_user_id(req.user_id), dataset_names)
+    for pd in personal:
+        datasets_data.append({
+            "dataset_name": pd["dataset_name"],
+            "table": pd.get("table", pd["dataset_name"]),
+            "description": pd.get("description"),
+            "column_definitions": pd.get("column_definitions", []),
+            "sqlite_path": pd.get("sqlite_path"),
+        })
 
     if not datasets_data:
         raise HTTPException(status_code=404, detail="No datasets found for the given names")
@@ -808,7 +807,8 @@ async def delete_session(session_id: str, user_id: str = ""):
 @router.get("/sessions/{session_id}/progress")
 async def get_session_progress(session_id: str, user_id: str = ""):
     """Return progress steps for the latest message processing on this session."""
-    _require_user_id(user_id)
+    uid = _require_user_id(user_id)
+    await _get_session_owned(session_id, uid)
     key = f"progress_{session_id}"
     return {"steps": _progress_store.get(key, [])}
 
