@@ -1521,22 +1521,6 @@ async def _handle_focus(
             language=language,
         )
 
-    # Auto-recall: if this exact aim+datasets combo already has a successful
-    # focus result in this session, return the cached result without calling
-    # the LLM at all — avoids re-hallucination on re-runs.
-    if session_state:
-        session_turns = session_state.get("turns", [])
-        for t in reversed(session_turns):
-            if (t.get("route") == "focus"
-                and t.get("aims") == attached_aims
-                and t.get("datasets") == dataset_names
-                and t.get("result_uuid")):
-                return {
-                    "agent_message": t.get("agent", ""),
-                    "result_uuid": t["result_uuid"],
-                    "query_result": None,
-                }
-
     # Agentic tool-calling loop (handles everything — simple queries, deep-dives, comprehensive analysis)
     set_progress(session_id, "building_context", "running", "Analyzing dataset schema...")
     context = await _build_context(dataset_names, datasets_data, attached_aims, aim_descriptions, include_samples=False)
