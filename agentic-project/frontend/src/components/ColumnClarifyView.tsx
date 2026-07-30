@@ -196,6 +196,17 @@ export default function ColumnClarifyView() {
             {t("clarify.fileOf", { current: index + 1, total: pendingDrafts.length })}
           </div>
         )}
+        {failures.length > 0 && (
+          <div className="mb-3 rounded-lg bg-ic-amber-soft/40 border border-ic-amber/30 px-3 py-2">
+            <div className="text-[12px] font-semibold text-ic-amber mb-1">{t("clarify.uploadFailed")}</div>
+            {failures.map((f) => (
+              <div key={f.filename} className="text-[12px] text-ic-amber">
+                <span className="font-medium">{f.filename}</span>
+                {f.errors.length > 0 ? ` — ${f.errors.join("; ")}` : ""}
+              </div>
+            ))}
+          </div>
+        )}
         {current.warnings.length > 0 && (
           <div className="mb-3 rounded-lg bg-ic-amber-soft/40 border border-ic-amber/30 px-3 py-2 text-[12px] text-ic-amber">
             {current.warnings.join(" · ")}
