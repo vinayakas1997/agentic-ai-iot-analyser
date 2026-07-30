@@ -29,7 +29,8 @@ Columns and their first 5 sample values:
 For each column, write ONE short sentence describing what it likely means
 (be specific about units, formats, or codes if the sample values suggest them).
 {language_instruction}
-
+IMPORTANT: The meaning text MUST be written in the user's language shown above.
+If the user's language is not English, do NOT use English for column descriptions.
 Return ONLY a JSON array, no other text: [{{"name": "col_name", "meaning": "..."}}, ...]
 """
 

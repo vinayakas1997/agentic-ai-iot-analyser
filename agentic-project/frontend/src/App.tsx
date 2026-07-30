@@ -40,10 +40,13 @@ export default function App() {
   const [showTour, setShowTour] = useState(false);
 
   useEffect(() => {
-    bootstrap();
     startPoller();
     return () => stopPoller();
-  }, [bootstrap, startPoller, stopPoller]);
+  }, [startPoller, stopPoller]);
+
+  useEffect(() => {
+    if (role) bootstrap();
+  }, [role, bootstrap]);
 
   if (!role) {
     return (

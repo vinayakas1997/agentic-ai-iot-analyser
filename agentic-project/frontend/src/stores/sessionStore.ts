@@ -554,6 +554,21 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   },
 }));
 
+// Safety net: auto-reset loading if stuck for >20s (e.g. bootstrap before login)
+let _loadingTimeout: ReturnType<typeof setTimeout> | null = null;
+useSessionStore.subscribe((state, prev) => {
+  if (state.loading && !prev.loading) {
+    if (_loadingTimeout) clearTimeout(_loadingTimeout);
+    _loadingTimeout = setTimeout(() => {
+      _loadingTimeout = null;
+      useSessionStore.setState({ loading: false, error: "Request timed out — please try again" });
+    }, 20000);
+  } else if (!state.loading && prev.loading && _loadingTimeout) {
+    clearTimeout(_loadingTimeout);
+    _loadingTimeout = null;
+  }
+});
+
 export function useSelectedTurn(): Turn | null {
   const turns = useSessionStore((s) => s.turns);
   const selectedTurnIndex = useUiStore((s) => s.selectedTurnIndex);
