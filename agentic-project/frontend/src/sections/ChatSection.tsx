@@ -8,6 +8,7 @@ import { useDatasetStore } from "../stores/datasetStore";
 import { useUploadStore } from "../stores/uploadStore";
 import { useAuthStore } from "../stores/authStore";
 import { useT, tCount } from "../lib/i18n";
+import { newId } from "../lib/id";
 import { IconDatabase, IconCheck, IconUser, IconTarget, IconUpload } from "../lib/icons";
 import { QueryResultState } from "./QueryActions";
 import type { Turn } from "../types/manager";
@@ -316,7 +317,7 @@ export default function ChatSection() {
     const currentTurns = sState.turns.map((t) => ({
       user: t.user,
       agent: t.agent || "",
-      timestamp: t.created_at || crypto.randomUUID(),
+      timestamp: t.created_at || newId(),
       result_uuid: t.result_uuid,
       aims: t.aims || [],
       datasets: t.datasets || [],

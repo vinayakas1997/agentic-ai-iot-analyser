@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import type { QueryResultState } from "../sections/QueryActions";
+import { newId } from "../lib/id";
 
 export interface CollectedResult {
   id: string;
@@ -26,7 +27,7 @@ export const useOutputStore = create<OutputState>((set, get) => ({
       const existing = state.results.find((x) => x.aim === r.aim);
       const entry: CollectedResult = {
         ...r,
-        id: existing?.id || crypto.randomUUID(),
+        id: existing?.id || newId(),
         created_at: existing?.created_at || Date.now(),
       };
       if (existing) {

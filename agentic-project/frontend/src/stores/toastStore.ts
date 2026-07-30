@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import { newId } from "../lib/id";
 
 interface Toast {
   id: string;
@@ -18,7 +19,7 @@ interface ToastState {
 export const useToastStore = create<ToastState>((set) => ({
   toasts: [],
   pushToast: (message, sessionId, sessionTitle) => {
-    const id = crypto.randomUUID();
+    const id = newId();
     set((state) => ({
       toasts: [...state.toasts, { id, message, sessionId, sessionTitle, createdAt: Date.now() }],
     }));

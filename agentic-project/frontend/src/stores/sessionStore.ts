@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import * as api from "../api/client";
 import { generateSessionName } from "../lib/names";
+import { newId } from "../lib/id";
 import type { MessageResponse, SchemaSnapshot, SessionListItem, SessionMeta, Turn, TurnUi } from "../types/manager";
 import { useUiStore } from "./uiStore";
 import { useOutputStore, type CollectedResult } from "./outputStore";
@@ -201,7 +202,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
           }
         }
       } else {
-        const tempId = crypto.randomUUID();
+        const tempId = newId();
         const name = generateSessionName();
         set({
           sessionId: tempId,
@@ -274,7 +275,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   },
 
   newSession: () => {
-    const tempId = crypto.randomUUID();
+    const tempId = newId();
     const name = generateSessionName();
     set({
       error: null,
