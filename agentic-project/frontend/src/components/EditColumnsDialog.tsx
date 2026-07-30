@@ -4,6 +4,7 @@ import { IconDatabase, IconCheck } from "../lib/icons";
 import { btnPrimary, btnSecondary } from "../lib/styles";
 import { useUploadStore } from "../stores/uploadStore";
 import { useUiStore } from "../stores/uiStore";
+import { useAuthStore } from "../stores/authStore";
 import { useT } from "../lib/i18n";
 import type { ColumnDraft, PersonalDataset } from "../types";
 
@@ -76,7 +77,8 @@ export default function EditColumnsDialog({ dataset, onClose }: Props) {
     setDefinitionsError("");
     try {
       const language = useUiStore.getState().language;
-      const res = await llmFillMeanings(dataset.id, emptyNames, language);
+      const uid = useAuthStore.getState().userId || undefined;
+      const res = await llmFillMeanings(dataset.id, emptyNames, language, uid);
       const byName = new Map(res.columns.map((c) => [c.name, c.meaning]));
       setColumns(columns.map((col) => ({
         ...col,
@@ -93,7 +95,8 @@ export default function EditColumnsDialog({ dataset, onClose }: Props) {
     setSaving(true);
     setError("");
     try {
-      await updateDatasetColumns(dataset.id, columns, description);
+      const uid = useAuthStore.getState().userId || undefined;
+      await updateDatasetColumns(dataset.id, columns, description, uid);
       bumpPersonalDatasetsVersion();
       onClose();
     } catch (e) {

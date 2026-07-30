@@ -5,6 +5,7 @@ import { useOutputStore } from "../stores/outputStore";
 import { listDatasets, updateSessionState, summarizeContext, uploadCsvFiles } from "../api/client";
 import { useDatasetStore } from "../stores/datasetStore";
 import { useUploadStore } from "../stores/uploadStore";
+import { useAuthStore } from "../stores/authStore";
 import { useT, tCount } from "../lib/i18n";
 import { IconDatabase, IconCheck, IconUser, IconTarget, IconUpload } from "../lib/icons";
 import { QueryResultState } from "./QueryActions";
@@ -28,6 +29,7 @@ interface Aim {
 
 export default function ChatSection() {
   const t = useT();
+  const userId = useAuthStore((s) => s.userId);
   const sessionId = useSessionStore((s) => s.sessionId);
   const turns = useSessionStore((s) => s.turns);
   const loading = useSessionStore((s) => s.loading);
@@ -236,7 +238,7 @@ export default function ChatSection() {
     }, 5000);
     setSummarizingTags((prev) => new Set(prev).add(tag));
     try {
-      const res = await summarizeContext(sessionId, tag, timestamps);
+      const res = await summarizeContext(sessionId, tag, timestamps, userId || undefined);
       clearTimeout(timeoutId);
       useSessionStore.setState((s) => {
         const existing = s.contextSummaries[tag] || [];
@@ -309,10 +311,10 @@ export default function ChatSection() {
     if (sState.completedActions && Object.keys(sState.completedActions).length > 0) payload.completed_actions = sState.completedActions;
     if (sState.enrichmentMode) payload.enrichment_mode = sState.enrichmentMode;
     if (sState.contextSummaries && Object.keys(sState.contextSummaries).length > 0) payload.context_summaries = sState.contextSummaries;
-    updateSessionState(sessionId, payload).catch((err) => {
+    updateSessionState(sessionId, payload, userId || undefined).catch((err) => {
       console.warn("[persistTurns] PATCH failed for session", sessionId, err?.message || err);
     });
-  }, [sessionId]);
+  }, [sessionId, userId]);
 
   const handleRunAimSql = async (aimDef: {aim: string; description?: string; datasets?: string[]}) => {
     if (!sessionId) return;
@@ -404,8 +406,8 @@ export default function ChatSection() {
   // Persist selectedAims to backend whenever it changes
   useEffect(() => {
     if (!sessionId) return;
-    updateSessionState(sessionId, { selected_aims: selectedAims }).catch((err) => console.error("Failed to persist selected aims:", err));
-  }, [selectedAims, sessionId]);
+    updateSessionState(sessionId, { selected_aims: selectedAims }, userId || undefined).catch((err) => console.error("Failed to persist selected aims:", err));
+  }, [selectedAims, sessionId, userId]);
 
   const handleSend = async () => {
     const msg = input.trim() || (selectedAims.length > 0 ? selectedAims.map((a) => a.description ? `${a.aim}: ${a.description}` : a.aim).join("\n") : "");
@@ -514,7 +516,8 @@ export default function ChatSection() {
     const label = fileList.length === 1 ? t("chat.processingFile", { filename: fileList[0].name }) : t("chat.processingFiles", { count: fileList.length });
     setUploadProcessing(true, label);
     try {
-      const res = await uploadCsvFiles(Array.from(fileList));
+      const uid = useAuthStore.getState().userId || undefined;
+      const res = await uploadCsvFiles(Array.from(fileList), uid);
       openClarify(res.files, res.failures);
     } catch (e) {
       console.error("CSV upload failed:", e);

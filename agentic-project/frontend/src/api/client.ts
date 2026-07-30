@@ -71,10 +71,10 @@ export async function proceedToTaskRegistry(params: {
   line_name: string;
   datasets_used: string[];
   how_we_will_do_it: string;
-}) {
+}, userId?: string) {
   return request<{ status: string; version: number }>("/api/v2/bucket/proceed", {
     method: "POST",
-    body: JSON.stringify(params),
+    body: JSON.stringify({ ...params, user_id: userId }),
   });
 }
 
@@ -95,13 +95,15 @@ export async function listSessions(userId?: string) {
   );
 }
 
-export async function deleteSession(sessionId: string) {
-  return request<{ status: string; session_id: string }>(`/api/v2/sessions/${sessionId}`, {
+export async function deleteSession(sessionId: string, userId?: string) {
+  const params = userId ? `?user_id=${encodeURIComponent(userId)}` : "";
+  return request<{ status: string; session_id: string }>(`/api/v2/sessions/${sessionId}${params}`, {
     method: "DELETE",
   });
 }
 
-export async function getSession(sessionId: string) {
+export async function getSession(sessionId: string, userId?: string) {
+  const params = userId ? `?user_id=${encodeURIComponent(userId)}` : "";
   return request<{
     session_id: string;
     title: string;
@@ -110,7 +112,7 @@ export async function getSession(sessionId: string) {
     mode?: string;
     state: any;
     turns: { user: string; agent: string; timestamp: string; aims?: string[]; datasets?: string[]; analysis_actions?: any; result_uuid?: string }[];
-  }>(`/api/v2/sessions/${sessionId}`);
+  }>(`/api/v2/sessions/${sessionId}${params}`);
 }
 
 export async function sendMessage(sessionId: string, message: string, lineName = "", attachedAims: string[] = [], enrichmentMode = "research", history?: { role: string; content: string }[], routeOverride?: string, aimDescriptions?: Record<string, string>, language?: string) {
@@ -158,10 +160,10 @@ export async function sendMessage(sessionId: string, message: string, lineName =
   }));
 }
 
-export async function updateSessionState(sessionId: string, state: Record<string, unknown>) {
+export async function updateSessionState(sessionId: string, state: Record<string, unknown>, userId?: string) {
   return withRetry(() => request<{ session_id: string }>(`/api/v2/sessions/${sessionId}`, {
     method: "PATCH",
-    body: JSON.stringify({ state }),
+    body: JSON.stringify({ state, user_id: userId }),
   }));
 }
 
@@ -195,14 +197,14 @@ export async function getProgress(sessionId: string) {
   );
 }
 
-export async function summarizeContext(sessionId: string, tag: string, turnTimestamps: string[]) {
+export async function summarizeContext(sessionId: string, tag: string, turnTimestamps: string[], userId?: string) {
   return withRetry(() => request<{
     tag: string;
     summary: string;
     created_at: string;
   }>(`/api/v2/sessions/${sessionId}/summarize-context`, {
     method: "POST",
-    body: JSON.stringify({ tag, turn_timestamps: turnTimestamps }),
+    body: JSON.stringify({ tag, turn_timestamps: turnTimestamps, user_id: userId }),
   }));
 }
 
@@ -222,9 +224,10 @@ export async function listDatasets() {
 
 import type { UploadedFileDraft, UploadFailure, PersonalDataset, ColumnDraft } from "../types";
 
-export async function uploadCsvFiles(files: File[]) {
+export async function uploadCsvFiles(files: File[], userId?: string) {
   const form = new FormData();
   for (const f of files) form.append("files", f);
+  if (userId) form.append("user_id", userId);
   const res = await fetch(`${API}/api/v2/upload`, { method: "POST", body: form });
   if (!res.ok) {
     const body = await res.text();
@@ -233,33 +236,35 @@ export async function uploadCsvFiles(files: File[]) {
   return res.json() as Promise<{ status: string; files: UploadedFileDraft[]; failures: UploadFailure[] }>;
 }
 
-export async function confirmUploadDataset(datasetId: number, columns: ColumnDraft[], description = "") {
+export async function confirmUploadDataset(datasetId: number, columns: ColumnDraft[], description = "", userId?: string) {
   return request<{ id: number; dataset_name: string; status: string }>(
     `/api/v2/upload/${datasetId}/confirm`,
-    { method: "POST", body: JSON.stringify({ columns, description }) }
+    { method: "POST", body: JSON.stringify({ columns, description, user_id: userId }) }
   );
 }
 
-export async function llmFillMeanings(datasetId: number, columns: string[], language?: string) {
+export async function llmFillMeanings(datasetId: number, columns: string[], language?: string, userId?: string) {
   return request<{ columns: ColumnDraft[] }>(
     `/api/v2/upload/${datasetId}/llm-fill`,
-    { method: "POST", body: JSON.stringify({ columns, language }) }
+    { method: "POST", body: JSON.stringify({ columns, language, user_id: userId }) }
   );
 }
 
-export async function listUserDatasets() {
-  return request<{ datasets: PersonalDataset[] }>("/api/v2/user-datasets");
+export async function listUserDatasets(userId?: string) {
+  const params = userId ? `?user_id=${encodeURIComponent(userId)}` : "";
+  return request<{ datasets: PersonalDataset[] }>(`/api/v2/user-datasets${params}`);
 }
 
-export async function updateDatasetColumns(datasetId: number, columns: ColumnDraft[], description?: string) {
+export async function updateDatasetColumns(datasetId: number, columns: ColumnDraft[], description?: string, userId?: string) {
   return request<{ id: number; dataset_name: string; status: string }>(
     `/api/v2/user-datasets/${datasetId}/columns`,
-    { method: "PATCH", body: JSON.stringify({ columns, description }) }
+    { method: "PATCH", body: JSON.stringify({ columns, description, user_id: userId }) }
   );
 }
 
-export async function deleteUserDataset(datasetId: number) {
-  return request<{ status: string; id: number }>(`/api/v2/user-datasets/${datasetId}`, { method: "DELETE" });
+export async function deleteUserDataset(datasetId: number, userId?: string) {
+  const params = userId ? `?user_id=${encodeURIComponent(userId)}` : "";
+  return request<{ status: string; id: number }>(`/api/v2/user-datasets/${datasetId}${params}`, { method: "DELETE" });
 }
 
 export async function login(userId: string) {
@@ -300,10 +305,10 @@ export async function createRegistryEntry(params: {
   });
 }
 
-export async function confirmRegistryEntry(entryId: number, columns: RegistryColumnDraft[], description = "") {
+export async function confirmRegistryEntry(entryId: number, columns: RegistryColumnDraft[], description = "", userId?: string) {
   return request<{ id: number; dataset_name: string; status: string }>(
     `/api/v2/registry-admin/entries/${entryId}/confirm`,
-    { method: "POST", body: JSON.stringify({ columns, description }) }
+    { method: "POST", body: JSON.stringify({ columns, description, user_id: userId }) }
   );
 }
 
@@ -327,6 +332,7 @@ export async function listRegistryEntries(maintainedBy?: string) {
   return request<{ entries: RegistryEntry[] }>(`/api/v2/registry-admin/entries${qs}`);
 }
 
-export async function deleteRegistryEntry(entryId: number) {
-  return request<{ status: string; id: number }>(`/api/v2/registry-admin/entries/${entryId}`, { method: "DELETE" });
+export async function deleteRegistryEntry(entryId: number, userId?: string) {
+  const params = userId ? `?user_id=${encodeURIComponent(userId)}` : "";
+  return request<{ status: string; id: number }>(`/api/v2/registry-admin/entries/${entryId}${params}`, { method: "DELETE" });
 }

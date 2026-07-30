@@ -158,7 +158,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       const uid = useAuthStore.getState().userId || undefined;
       const list = await get().refreshSessions(uid);
       if (list.length > 0) {
-        const detail = await api.getSession(list[0].session_id);
+        const detail = await api.getSession(list[0].session_id, uid);
         const sessionMeta = { session_id: detail.session_id, title: detail.title, phase: detail.phase || "lines", status: detail.status || "active", mode: detail.mode || "ask" };
         const apiTurns = detail.turns || [];
         const loadedTurns: Turn[] = apiTurns.map((t: any) => ({
@@ -224,7 +224,8 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     if (!id || id === sessionId) return;
     set({ error: null, loading: true });
     try {
-      const detail = await api.getSession(id);
+      const uid = useAuthStore.getState().userId || undefined;
+      const detail = await api.getSession(id, uid);
       const sessionMeta = { session_id: detail.session_id, title: detail.title, phase: detail.phase || "lines", status: detail.status || "active", mode: (detail as any).mode || "ask" };
       const loadedTurns = (detail.turns || []).map((t: any) => ({
         turn_index: 0,
@@ -297,7 +298,8 @@ export const useSessionStore = create<SessionState>((set, get) => ({
 
   deleteSession: async (id) => {
     const { sessionId, sessions } = get();
-    await api.deleteSession(id);
+    const uid = useAuthStore.getState().userId || undefined;
+    await api.deleteSession(id, uid);
     const remaining = sessions.filter((s) => s.session_id !== id);
     set({ sessions: remaining });
     if (id === sessionId) {
@@ -332,12 +334,12 @@ export const useSessionStore = create<SessionState>((set, get) => ({
 
     try {
       let activeSessionId = sessionId;
+      const sendUid = useAuthStore.getState().userId || undefined;
 
       if (isLocalSession) {
         set({ statusMessage: "Creating new session..." });
         const name = pendingTitle || generateSessionName();
-        const uid = useAuthStore.getState().userId || undefined;
-        const created = await api.createSession(name, uid);
+        const created = await api.createSession(name, sendUid);
         activeSessionId = created.session_id;
         set({
           sessionId: activeSessionId,
@@ -352,7 +354,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
         const attached = useDatasetStore.getState().attached;
         if (attached.length > 0) prePayload.attached_datasets = attached;
         if (Object.keys(prePayload).length > 0) {
-          api.updateSessionState(activeSessionId, prePayload).catch((err) => console.error("Failed to persist pre-existing state:", err));
+          api.updateSessionState(activeSessionId, prePayload, sendUid).catch((err) => console.error("Failed to persist pre-existing state:", err));
         }
       }
 
@@ -391,7 +393,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
         };
         set({ chatQueryResults: updatedResults });
         // Persist to backend so results survive page reload
-        api.updateSessionState(activeSessionId, { chat_query_results: updatedResults }).catch((err) => console.error("Failed to persist chat query results:", err));
+        api.updateSessionState(activeSessionId, { chat_query_results: updatedResults }, sendUid).catch((err) => console.error("Failed to persist chat query results:", err));
       }
 
       // Multi-step responses (DEEP route, multi-aim FOCUS) carry one result per
@@ -415,7 +417,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
         if (Object.keys(iterResults).length > 0) {
           const updatedResults = { ...get().chatQueryResults, ...iterResults };
           set({ chatQueryResults: updatedResults });
-          api.updateSessionState(activeSessionId, { chat_query_results: updatedResults }).catch((err) => console.error("Failed to persist deep iteration results:", err));
+          api.updateSessionState(activeSessionId, { chat_query_results: updatedResults }, sendUid).catch((err) => console.error("Failed to persist deep iteration results:", err));
         }
       }
 
@@ -465,7 +467,8 @@ export const useSessionStore = create<SessionState>((set, get) => ({
 
   updateOutputResults: async (results) => {
     try {
-      await api.updateSessionState(get().sessionId!, { output_results: results });
+      const updateUid = useAuthStore.getState().userId || undefined;
+      await api.updateSessionState(get().sessionId!, { output_results: results }, updateUid);
       set({ outputResults: results });
       useOutputStore.getState().setResults(results);
     } catch (e) {
@@ -475,7 +478,8 @@ export const useSessionStore = create<SessionState>((set, get) => ({
 
   updateChatQueryResults: async (results) => {
     try {
-      await api.updateSessionState(get().sessionId!, { chat_query_results: results });
+      const updateUid = useAuthStore.getState().userId || undefined;
+      await api.updateSessionState(get().sessionId!, { chat_query_results: results }, updateUid);
       set({ chatQueryResults: results });
     } catch (e) {
       set({ error: getErrorMessage(e) });

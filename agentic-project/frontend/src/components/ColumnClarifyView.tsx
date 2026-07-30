@@ -2,6 +2,7 @@ import { useState, useRef, useEffect } from "react";
 import { useUploadStore } from "../stores/uploadStore";
 import { useDatasetStore } from "../stores/datasetStore";
 import { useUiStore } from "../stores/uiStore";
+import { useAuthStore } from "../stores/authStore";
 import { confirmUploadDataset, llmFillMeanings } from "../api/client";
 import { IconDatabase, IconCheck, IconUpload, IconChart, IconRobot } from "../lib/icons";
 import { btnPrimary, btnSecondary } from "../lib/styles";
@@ -140,7 +141,8 @@ export default function ColumnClarifyView() {
     setDefinitionsError("");
     try {
       const language = useUiStore.getState().language;
-      const res = await llmFillMeanings(current.dataset_id, emptyNames, language);
+      const uid = useAuthStore.getState().userId || undefined;
+      const res = await llmFillMeanings(current.dataset_id, emptyNames, language, uid);
       const byName = new Map(res.columns.map((c) => [c.name, c.meaning]));
       setEditedColumns(cols.map((col) => ({
         ...col,
@@ -157,7 +159,8 @@ export default function ColumnClarifyView() {
     setSaving(true);
     setError("");
     try {
-      await confirmUploadDataset(current.dataset_id, columns, description);
+      const uid = useAuthStore.getState().userId || undefined;
+      await confirmUploadDataset(current.dataset_id, columns, description, uid);
       const nextConfirmed = [...confirmedNames, current.dataset_name];
       setConfirmedNames(nextConfirmed);
       if (isLast) {

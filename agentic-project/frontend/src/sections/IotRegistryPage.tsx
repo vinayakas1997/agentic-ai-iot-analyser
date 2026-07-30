@@ -84,7 +84,7 @@ export default function IotRegistryPage({ onViewDashboard }: { onViewDashboard: 
         synonyms: synonyms.trim() ? synonyms.split(",").map((s) => s.trim()).filter(Boolean) : undefined,
       });
       if (activate) {
-        await confirmRegistryEntry(created.id, columns, description);
+        await confirmRegistryEntry(created.id, columns, description, userId || undefined);
       }
       resetForm();
       refreshEntries();
@@ -97,7 +97,7 @@ export default function IotRegistryPage({ onViewDashboard }: { onViewDashboard: 
 
   const handleActivate = async (entry: RegistryEntry) => {
     try {
-      await confirmRegistryEntry(entry.id, entry.column_definitions, entry.description || "");
+      await confirmRegistryEntry(entry.id, entry.column_definitions, entry.description || "", userId || undefined);
       refreshEntries();
     } catch (e) {
       console.error("Failed to activate entry:", e);
@@ -106,7 +106,7 @@ export default function IotRegistryPage({ onViewDashboard }: { onViewDashboard: 
 
   const handleDelete = async (entry: RegistryEntry) => {
     try {
-      await deleteRegistryEntry(entry.id);
+      await deleteRegistryEntry(entry.id, userId || undefined);
       setEntries((prev) => prev.filter((e) => e.id !== entry.id));
     } catch (e) {
       console.error("Failed to delete entry:", e);

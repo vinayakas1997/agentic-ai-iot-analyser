@@ -135,6 +135,7 @@ class AnalysisAction(BaseModel):
 class SummarizeContextRequest(BaseModel):
     tag: str
     turn_timestamps: list[str]
+    user_id: str = ""
 
 class SummarizeContextResponse(BaseModel):
     tag: str
@@ -260,6 +261,7 @@ class CreateRegistryEntryRequest(BaseModel):
     synonyms: list[str] | None = None
 
 class ConfirmRegistryEntryRequest(BaseModel):
+    user_id: str = ""
     columns: list[dict]
     description: str = ""
 
@@ -456,6 +458,23 @@ def build_conversation_history(turns: list[dict], max_turns: int = 5) -> str:
     return ""
 
 
+async def _get_session_owned(session_id: str, user_id: str | None) -> ManagerSession:
+    """Fetch a session by ID and verify the requesting user owns it.
+    Returns the session or raises 404/403."""
+    if not user_id:
+        raise HTTPException(status_code=403, detail="user_id is required for this operation")
+    async with AsyncSessionLocal() as db:
+        from sqlalchemy import select
+        row = (await db.execute(
+            select(ManagerSession).where(ManagerSession.session_id == session_id)
+        )).scalar_one_or_none()
+    if not row:
+        raise HTTPException(status_code=404, detail="Session not found")
+    if row.user_id != user_id:
+        raise HTTPException(status_code=403, detail="You do not own this session")
+    return row
+
+
 # ── Routes ──
 
 @router.post("/resolve-line", response_model=ResolveResponse)
@@ -515,6 +534,14 @@ async def new_research(req: NewResearchRequest):
 @router.post("/bucket/proceed")
 async def bucket_proceed(req: BucketProceedRequest):
     """Save an aim to task_registry and trigger execution."""
+    async with AsyncSessionLocal() as db:
+        from sqlalchemy import select
+        session = (await db.execute(
+            select(ManagerSession).where(ManagerSession.session_id == req.session_id)
+        )).scalar_one_or_none()
+        if not session:
+            raise HTTPException(status_code=404, detail="Session not found")
+        uid = session.user_id
     task_def = {
         "aims": [req.aim],
         "how_we_will_do_it": req.how_we_will_do_it,
@@ -522,7 +549,7 @@ async def bucket_proceed(req: BucketProceedRequest):
         "source": "v2_workspace",
     }
     try:
-        version = await save_task_definition(req.line_name, settings.default_user_id, task_def)
+        version = await save_task_definition(req.line_name, uid, task_def)
         return {"status": "proceeded", "line_name": req.line_name, "version": version, "task_def": task_def}
     except Exception as e:
         logger.exception("bucket_proceed: failed")
@@ -640,6 +667,7 @@ class CreateSessionRequest(BaseModel):
 class UpdateSessionRequest(BaseModel):
     title: str | None = None
     state: dict | None = None
+    user_id: str = ""
 
 @router.post("/sessions")
 async def create_session(body: CreateSessionRequest = None):
@@ -666,13 +694,12 @@ async def create_session(body: CreateSessionRequest = None):
 @router.patch("/sessions/{session_id}")
 async def update_session(session_id: str, body: UpdateSessionRequest):
     """Update session metadata (title, etc.)."""
+    row = await _get_session_owned(session_id, body.user_id or None)
     async with AsyncSessionLocal() as db:
         from sqlalchemy import select
         row = (await db.execute(
             select(ManagerSession).where(ManagerSession.session_id == session_id)
         )).scalar_one_or_none()
-        if not row:
-            raise HTTPException(status_code=404, detail="Session not found")
         if body.title is not None:
             row.title = body.title
         if body.state is not None:
@@ -706,16 +733,9 @@ async def list_sessions(user_id: str = ""):
     ]
 
 @router.get("/sessions/{session_id}")
-async def get_session(session_id: str):
+async def get_session(session_id: str, user_id: str = ""):
     """Get session details."""
-    async with AsyncSessionLocal() as db:
-        from sqlalchemy import select
-        result = await db.execute(
-            select(ManagerSession).where(ManagerSession.session_id == session_id)
-        )
-        row = result.scalar_one_or_none()
-    if not row:
-        raise HTTPException(status_code=404, detail="Session not found")
+    row = await _get_session_owned(session_id, user_id or None)
     state = row.state_json or {}
     return {
         "session_id": row.session_id,
@@ -727,16 +747,12 @@ async def get_session(session_id: str):
     }
 
 @router.delete("/sessions/{session_id}")
-async def delete_session(session_id: str):
+async def delete_session(session_id: str, user_id: str = ""):
     """Delete a session and everything tied to it (turns, query results, chart state
     all live inside state_json, so deleting the row deletes all of it)."""
+    await _get_session_owned(session_id, user_id or None)
     async with AsyncSessionLocal() as db:
-        from sqlalchemy import select, delete as sa_delete
-        row = (await db.execute(
-            select(ManagerSession).where(ManagerSession.session_id == session_id)
-        )).scalar_one_or_none()
-        if not row:
-            raise HTTPException(status_code=404, detail="Session not found")
+        from sqlalchemy import delete as sa_delete
         await db.execute(sa_delete(ManagerSession).where(ManagerSession.session_id == session_id))
         await db.commit()
     return {"status": "deleted", "session_id": session_id}
@@ -916,7 +932,7 @@ async def registry_create_entry(req: CreateRegistryEntryRequest):
 @router.post("/registry-admin/entries/{entry_id}/confirm")
 async def registry_confirm_entry(entry_id: int, req: ConfirmRegistryEntryRequest):
     try:
-        return await confirm_entry(entry_id, req.columns, req.description)
+        return await confirm_entry(entry_id, req.columns, req.description, user_id=req.user_id or None)
     except ValueError:
         raise HTTPException(status_code=404, detail="Entry not found")
 
@@ -925,9 +941,9 @@ async def registry_list_entries(maintained_by: str = ""):
     return {"entries": await list_entries(maintained_by or None)}
 
 @router.delete("/registry-admin/entries/{entry_id}")
-async def registry_delete_entry(entry_id: int):
+async def registry_delete_entry(entry_id: int, user_id: str = ""):
     try:
-        await delete_entry(entry_id)
+        await delete_entry(entry_id, user_id=user_id or None)
     except ValueError:
         raise HTTPException(status_code=404, detail="Entry not found")
     return {"status": "deleted", "id": entry_id}
@@ -1844,14 +1860,7 @@ async def summarize_context(session_id: str, req: SummarizeContextRequest):
     if not req.tag or not req.turn_timestamps:
         raise HTTPException(status_code=400, detail="tag and turn_timestamps are required")
 
-    async with AsyncSessionLocal() as db:
-        from sqlalchemy import select
-        row = (await db.execute(
-            select(ManagerSession).where(ManagerSession.session_id == session_id)
-        )).scalar_one_or_none()
-
-    if not row:
-        raise HTTPException(status_code=404, detail="Session not found")
+    row = await _get_session_owned(session_id, req.user_id or None)
 
     expected_version = row.version
     state = dict(row.state_json or {})

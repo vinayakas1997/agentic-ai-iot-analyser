@@ -3,6 +3,7 @@ import { useSessionStore } from "../stores/sessionStore";
 import { useDatasetStore } from "../stores/datasetStore";
 import { useUploadStore } from "../stores/uploadStore";
 import { useOutputStore } from "../stores/outputStore";
+import { useAuthStore } from "../stores/authStore";
 import type { SessionMeta } from "../types/manager";
 import { panelClass, monoClass } from "../lib/styles";
 import { IconDatabase, IconEdit, IconTrash } from "../lib/icons";
@@ -48,14 +49,16 @@ export default function ContextSection() {
   }, []);
 
   useEffect(() => {
-    listUserDatasets()
+    const uid = useAuthStore.getState().userId || undefined;
+    listUserDatasets(uid)
       .then((res) => setPersonalDatasets(res.datasets.filter((d) => d.status === "active")))
       .catch((err) => console.error("Failed to load personal datasets:", err));
   }, [personalDatasetsVersion]);
 
   const doDeletePersonalDataset = async (ds: PersonalDataset) => {
     try {
-      await deleteUserDataset(ds.id);
+      const uid = useAuthStore.getState().userId || undefined;
+      await deleteUserDataset(ds.id, uid);
       setPersonalDatasets((prev) => prev.filter((d) => d.id !== ds.id));
       storeRemoveWithAims(ds.dataset_name);
     } catch (err) {

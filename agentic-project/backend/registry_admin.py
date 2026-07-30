@@ -115,12 +115,14 @@ async def create_draft_entry(
         return row.id
 
 
-async def confirm_entry(entry_id: int, edited_columns: list[dict], description: str = "") -> dict:
+async def confirm_entry(entry_id: int, edited_columns: list[dict], description: str = "", user_id: str | None = None) -> dict:
     async with AsyncSessionLocal() as db:
         row = (await db.execute(
             select(GlobalRegistry).where(GlobalRegistry.id == entry_id)
         )).scalar_one_or_none()
         if not row:
+            raise ValueError("entry_not_found")
+        if user_id and row.maintained_by and row.maintained_by != user_id:
             raise ValueError("entry_not_found")
         row.column_definitions = edited_columns
         row.status = "active"
@@ -155,12 +157,14 @@ async def list_entries(maintained_by: str | None = None) -> list[dict]:
     ]
 
 
-async def delete_entry(entry_id: int) -> None:
+async def delete_entry(entry_id: int, user_id: str | None = None) -> None:
     async with AsyncSessionLocal() as db:
         row = (await db.execute(
             select(GlobalRegistry).where(GlobalRegistry.id == entry_id)
         )).scalar_one_or_none()
         if not row:
+            raise ValueError("entry_not_found")
+        if user_id and row.maintained_by and row.maintained_by != user_id:
             raise ValueError("entry_not_found")
         await db.execute(delete(GlobalRegistry).where(GlobalRegistry.id == entry_id))
         await db.commit()
