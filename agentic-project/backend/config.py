@@ -22,8 +22,6 @@ class Settings(BaseSettings):
     api_host: str = "0.0.0.0"
     api_port: int = 7010
     cors_origins: str = "http://localhost:7008,http://127.0.0.1:7008,http://localhost:7010"
-    default_user_id: str = "98765"
-
     debug: bool = False
     log_level: int = 0
 

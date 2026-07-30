@@ -254,6 +254,56 @@ export const translations: Record<Language, Record<string, string>> = {
     "tour.question1": "What is the defect rate by machine?",
     "tour.question2": "Show me production output trends",
     "tour.question3": "Which machine has the highest downtime?",
+
+    // ProcessingPanel
+    "processing.classifying": "Classifying question",
+    "processing.building_context": "Analyzing dataset schema",
+    "processing.processing": "Processing",
+    "processing.llm": "Generating suggestions",
+    "processing.generating_sql": "Generating SQL",
+    "processing.validating_sql": "Validating SQL",
+    "processing.executing_query": "Running query",
+    "processing.building_charts": "Building chart suggestions",
+    "processing.interpreting_results": "Interpreting results",
+    "processing.focus_agent": "Running analysis agent",
+    "processing.agent_round": "Agent analysis",
+    "processing.aim_prefix": "Processing aim",
+    "processing.thinking": "Thinking...",
+    "processing.tool_call": "Tool call",
+    "processing.processingLabel": "Processing...",
+
+    // Session status messages
+    "session.requestFailed": "Request failed",
+    "session.creating": "Creating new session...",
+    "session.responseReceived": "Response received",
+    "session.responseToast": "Response received in session",
+    "session.timedOut": "Request timed out — please try again",
+    "session.pollerFailed": "Session poller failed",
+
+    // Upload/CSV errors
+    "upload.llmFillFailed": "LLM fill failed",
+    "upload.failedToConfirm": "Failed to confirm dataset",
+    "upload.columnsNeedMeaning": "{count} column(s) still need a meaning",
+    "upload.failedToRead": "Failed to read file",
+    "upload.failedToSave": "Failed to save",
+
+    // Edit columns dialog
+    "editColumns.title": "Edit Dataset",
+    "editColumns.description": "Dataset Description",
+    "editColumns.descriptionPlaceholder": "Describe what this dataset contains...",
+    "editColumns.instruction": "Edit the dataset description and column meanings. Changes are saved immediately.",
+    "editColumns.uploadDefs": "Upload definitions file",
+    "editColumns.llmFill": "LLM fill {count} empty",
+    "editColumns.column": "Column",
+    "editColumns.meaning": "Meaning",
+    "editColumns.save": "Save Changes",
+
+    // Context section
+    "context.editColumnMeanings": "Edit column meanings",
+
+    // Brand
+    "brand.name": "AGI DATA ANALYSER",
+    "brand.note": "NOTE:",
   },
   ja: {
     "common.hide": "隠す",
@@ -441,6 +491,56 @@ export const translations: Record<Language, Record<string, string>> = {
     "registryAdmin.viewDashboard": "ダッシュボードを表示",
     "registryAdmin.backToManage": "データセット管理に戻る",
     "registryAdmin.logout": "ログアウト",
+
+    // ProcessingPanel
+    "processing.classifying": "質問を分類中",
+    "processing.building_context": "データセットスキーマを分析中",
+    "processing.processing": "処理中",
+    "processing.llm": "提案を生成中",
+    "processing.generating_sql": "SQLを生成中",
+    "processing.validating_sql": "SQLを検証中",
+    "processing.executing_query": "クエリを実行中",
+    "processing.building_charts": "チャート提案を作成中",
+    "processing.interpreting_results": "結果を解釈中",
+    "processing.focus_agent": "分析エージェントを実行中",
+    "processing.agent_round": "エージェント分析",
+    "processing.aim_prefix": "分析目的を処理中",
+    "processing.thinking": "考え中...",
+    "processing.tool_call": "ツール呼び出し",
+    "processing.processingLabel": "処理中...",
+
+    // Session status messages
+    "session.requestFailed": "リクエストに失敗しました",
+    "session.creating": "新しいセッションを作成中...",
+    "session.responseReceived": "応答を受信しました",
+    "session.responseToast": "セッションで応答を受信しました",
+    "session.timedOut": "リクエストがタイムアウトしました — もう一度お試しください",
+    "session.pollerFailed": "セッションポーリングに失敗しました",
+
+    // Upload/CSV errors
+    "upload.llmFillFailed": "LLM自動入力に失敗しました",
+    "upload.failedToConfirm": "データセットの確認に失敗しました",
+    "upload.columnsNeedMeaning": "{count} 列に意味の定義が必要です",
+    "upload.failedToRead": "ファイルの読み取りに失敗しました",
+    "upload.failedToSave": "保存に失敗しました",
+
+    // Edit columns dialog
+    "editColumns.title": "データセットを編集",
+    "editColumns.description": "データセットの説明",
+    "editColumns.descriptionPlaceholder": "このデータセットの内容を説明してください...",
+    "editColumns.instruction": "データセットの説明と列の意味を編集します。変更はすぐに保存されます。",
+    "editColumns.uploadDefs": "定義ファイルをアップロード",
+    "editColumns.llmFill": "AIで空欄{count}件を自動入力",
+    "editColumns.column": "列",
+    "editColumns.meaning": "意味",
+    "editColumns.save": "変更を保存",
+
+    // Context section
+    "context.editColumnMeanings": "列の意味を編集",
+
+    // Brand
+    "brand.name": "AGI DATA ANALYSER",
+    "brand.note": "メモ:",
 
     "tour.help": "ヘルプ",
     "tour.skip": "スキップ",

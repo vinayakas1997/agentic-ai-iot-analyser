@@ -517,7 +517,20 @@ export function QueryActions({ queryResult }: { queryResult?: QueryResultState }
               <button
                 type="button"
                 className="absolute top-2 right-2 w-6 h-6 flex items-center justify-center rounded hover:bg-white/[0.08] text-muted hover:text-text transition-colors"
-                onClick={() => navigator.clipboard.writeText(queryResult.sql || "")}
+                onClick={async () => {
+                  try {
+                    await navigator.clipboard.writeText(queryResult.sql || "");
+                  } catch {
+                    const ta = document.createElement("textarea");
+                    ta.value = queryResult.sql || "";
+                    ta.style.position = "fixed";
+                    ta.style.opacity = "0";
+                    document.body.appendChild(ta);
+                    ta.select();
+                    document.execCommand("copy");
+                    document.body.removeChild(ta);
+                  }
+                }}
                 title={t("query.copySql")}
               >
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" width="12" height="12" strokeWidth="2.2">

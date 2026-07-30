@@ -10,7 +10,11 @@ import sqlite3
 from config import get_settings
 
 
+import re
+
 def user_db_path(user_id: str) -> str:
+    if not re.match(r'^[a-zA-Z0-9_.-]+$', user_id):
+        raise ValueError(f"Invalid user_id: {user_id}")
     settings = get_settings()
     d = os.path.join(settings.user_data_dir, user_id)
     os.makedirs(d, exist_ok=True)

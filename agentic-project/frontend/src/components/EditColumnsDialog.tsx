@@ -42,7 +42,7 @@ export default function EditColumnsDialog({ dataset, onClose }: Props) {
     reader.onload = (e) => {
       const text = e.target?.result as string;
       if (!text) {
-        setDefinitionsError("Failed to read file");
+        setDefinitionsError(t("upload.failedToRead"));
         setDefinitionsApplying(false);
         return;
       }
@@ -64,7 +64,7 @@ export default function EditColumnsDialog({ dataset, onClose }: Props) {
       setDefinitionsApplying(false);
     };
     reader.onerror = () => {
-      setDefinitionsError("Failed to read file");
+      setDefinitionsError(t("upload.failedToRead"));
       setDefinitionsApplying(false);
     };
     reader.readAsText(file);
@@ -85,7 +85,7 @@ export default function EditColumnsDialog({ dataset, onClose }: Props) {
         meaning: byName.get(col.name) ?? col.meaning,
       })));
     } catch (e) {
-      setDefinitionsError(e instanceof Error ? e.message : "LLM fill failed");
+      setDefinitionsError(e instanceof Error ? e.message : t("upload.llmFillFailed"));
     } finally {
       setLlmFilling(false);
     }
@@ -100,7 +100,7 @@ export default function EditColumnsDialog({ dataset, onClose }: Props) {
       bumpPersonalDatasetsVersion();
       onClose();
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Failed to save");
+      setError(e instanceof Error ? e.message : t("upload.failedToSave"));
     } finally {
       setSaving(false);
     }
@@ -116,24 +116,24 @@ export default function EditColumnsDialog({ dataset, onClose }: Props) {
           <span className="inline-flex items-center justify-center w-[26px] h-[26px] rounded-[8px] bg-ic-amber-soft text-ic-amber">
             <IconDatabase size={14} />
           </span>
-          <div className="text-base font-semibold text-text">Edit Dataset</div>
+          <div className="text-base font-semibold text-text">{t("editColumns.title")}</div>
         </div>
         <div className="text-[12px] text-tertiary mb-4">
           {dataset.dataset_name} · {dataset.original_filename} · {dataset.row_count} rows
         </div>
 
         <div className="text-[12px] text-muted mb-3">
-          <label className="block mb-1 text-[11px] font-medium text-tertiary uppercase tracking-wider">Dataset Description</label>
+          <label className="block mb-1 text-[11px] font-medium text-tertiary uppercase tracking-wider">{t("editColumns.description")}</label>
           <textarea
             className="w-full rounded-lg border border-border bg-app text-text px-3 py-2 text-[13px] focus:outline-none focus:border-accent transition-colors resize-none leading-relaxed"
             value={description}
             onChange={(e) => setDescription(e.target.value)}
             rows={2}
-            placeholder="Describe what this dataset contains..."
+            placeholder={t("editColumns.descriptionPlaceholder")}
           />
         </div>
         <div className="text-[11px] text-muted mb-3">
-          Edit the dataset description and column meanings. Changes are saved immediately.
+          {t("editColumns.instruction")}
         </div>
 
         <div className="mb-3 flex flex-wrap items-center gap-2">
@@ -153,7 +153,7 @@ export default function EditColumnsDialog({ dataset, onClose }: Props) {
                 onClick={() => definitionsInputRef.current?.click()}
                 disabled={definitionsApplying}
               >
-                Re-upload
+                {t("clarify.reuploadDefs")}
               </button>
             </>
           ) : (
@@ -163,7 +163,7 @@ export default function EditColumnsDialog({ dataset, onClose }: Props) {
               onClick={() => definitionsInputRef.current?.click()}
               disabled={definitionsApplying}
             >
-              Upload definitions file
+              {t("editColumns.uploadDefs")}
             </button>
           )}
           {emptyCount > 0 && (
@@ -173,7 +173,7 @@ export default function EditColumnsDialog({ dataset, onClose }: Props) {
               onClick={handleLlmFillEmpty}
               disabled={llmFilling}
             >
-              {llmFilling ? "..." : `LLM fill ${emptyCount} empty`}
+              {llmFilling ? "..." : t("editColumns.llmFill", { count: emptyCount })}
             </button>
           )}
         </div>
@@ -193,8 +193,8 @@ export default function EditColumnsDialog({ dataset, onClose }: Props) {
             </colgroup>
             <thead>
               <tr className="bg-surface-2 text-[11px] uppercase tracking-wider text-muted sticky top-0 z-10">
-                <th className="text-left px-3 py-2 font-medium">Column</th>
-                <th className="text-left px-3 py-2 font-medium">Meaning</th>
+                <th className="text-left px-3 py-2 font-medium">{t("editColumns.column")}</th>
+                <th className="text-left px-3 py-2 font-medium">{t("editColumns.meaning")}</th>
               </tr>
             </thead>
             <tbody>
@@ -223,7 +223,7 @@ export default function EditColumnsDialog({ dataset, onClose }: Props) {
 
         <div className="flex items-center justify-end gap-2">
           <button type="button" className={btnSecondary} onClick={onClose} disabled={saving}>
-            Cancel
+            {t("common.cancel")}
           </button>
           <button
             type="button"
@@ -232,7 +232,7 @@ export default function EditColumnsDialog({ dataset, onClose }: Props) {
             disabled={saving}
           >
             <IconCheck size={13} />
-            {saving ? "Saving..." : "Save Changes"}
+            {saving ? t("clarify.saving") : t("editColumns.save")}
           </button>
         </div>
       </div>

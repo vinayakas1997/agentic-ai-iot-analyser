@@ -56,7 +56,8 @@ async def introspect_pg_table(table_name: str) -> tuple[list[dict], list[dict]]:
         )).all()
         columns = [{"name": r[0], "datatype": _simplify_pg_type(r[1])} for r in col_rows]
 
-        sample = (await db.execute(text(f'SELECT * FROM "{table_name}" LIMIT 5'))).mappings().all()
+        safe_table = table_name.replace('"', '""')
+        sample = (await db.execute(text(f'SELECT * FROM "{safe_table}" LIMIT 5'))).mappings().all()
         sample_rows = [dict(r) for r in sample]
 
     return columns, sample_rows
@@ -122,7 +123,7 @@ async def confirm_entry(entry_id: int, edited_columns: list[dict], description: 
         )).scalar_one_or_none()
         if not row:
             raise ValueError("entry_not_found")
-        if user_id and row.maintained_by and row.maintained_by != user_id:
+        if not user_id or (row.maintained_by and row.maintained_by != user_id):
             raise ValueError("entry_not_found")
         row.column_definitions = edited_columns
         row.status = "active"
@@ -137,6 +138,8 @@ async def list_entries(maintained_by: str | None = None) -> list[dict]:
         stmt = select(GlobalRegistry)
         if maintained_by:
             stmt = stmt.where(GlobalRegistry.maintained_by == maintained_by)
+        else:
+            stmt = stmt.where(GlobalRegistry.status == "active")
         rows = (await db.execute(stmt.order_by(GlobalRegistry.created_at.desc()))).scalars().all()
     return [
         {
@@ -164,7 +167,7 @@ async def delete_entry(entry_id: int, user_id: str | None = None) -> None:
         )).scalar_one_or_none()
         if not row:
             raise ValueError("entry_not_found")
-        if user_id and row.maintained_by and row.maintained_by != user_id:
+        if not user_id or (row.maintained_by and row.maintained_by != user_id):
             raise ValueError("entry_not_found")
         await db.execute(delete(GlobalRegistry).where(GlobalRegistry.id == entry_id))
         await db.commit()

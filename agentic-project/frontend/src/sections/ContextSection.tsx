@@ -121,8 +121,23 @@ export default function ContextSection() {
     for (const ds of datasets) {
       map.set(ds.dataset_name, ds);
     }
+    for (const pds of personalDatasets) {
+      if (!map.has(pds.dataset_name)) {
+        map.set(pds.dataset_name, {
+          line_name: pds.dataset_name,
+          dataset_name: pds.dataset_name,
+          description: pds.description,
+          table: pds.table_name,
+          column_definitions: pds.column_definitions,
+          role: null,
+          join_hints: null,
+          suggested_aims: null,
+          synonyms: null,
+        });
+      }
+    }
     return map;
-  }, [datasets]);
+  }, [datasets, personalDatasets]);
 
   const selectedDatasetInfos = useMemo(
     () => storeSelected.map((name) => datasetLookup.get(name)).filter(Boolean) as DatasetInfo[],
@@ -330,7 +345,7 @@ export default function ContextSection() {
                     type="button"
                     className="w-5 h-5 rounded-md bg-white/[0.04] hover:bg-accent/15 hover:text-accent border border-border/20 transition-all shrink-0 flex items-center justify-center"
                     onClick={() => setEditingDataset(ds)}
-                    title="Edit column meanings"
+                    title={t("context.editColumnMeanings")}
                   >
                     <IconEdit size={12} />
                   </button>

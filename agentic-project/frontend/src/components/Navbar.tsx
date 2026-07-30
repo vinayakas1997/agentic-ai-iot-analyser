@@ -11,6 +11,7 @@ export default function Navbar({ onBackToManage, onHelp }: { onBackToManage?: ()
   const sessionId = useSessionStore((s) => s.sessionId);
   const sessionMeta = useSessionStore((s) => s.sessionMeta);
   const loading = useSessionStore((s) => s.loading);
+  const error = useSessionStore((s) => s.error);
   const switchSession = useSessionStore((s) => s.switchSession);
   const newSession = useSessionStore((s) => s.newSession);
   const deleteSession = useSessionStore((s) => s.deleteSession);
@@ -54,7 +55,7 @@ export default function Navbar({ onBackToManage, onHelp }: { onBackToManage?: ()
   return (
     <header className="flex items-center justify-between px-5 py-3 border-b border-border bg-surface-1 shrink-0 relative">
       <div className="flex items-center gap-2">
-        <span className="text-lg font-semibold">AGI DATA ANALYSER</span>
+        <span className="text-lg font-semibold">{t("brand.name")}</span>
         <div className="hlp-label-wrap">
           <button
             type="button"
@@ -71,8 +72,14 @@ export default function Navbar({ onBackToManage, onHelp }: { onBackToManage?: ()
       </div>
 
       <div className="absolute left-1/2 -translate-x-1/2 text-sm font-bold text-muted">
-        NOTE: {t("nav.noDatasetsInfo")}
+        {t("brand.note")} {t("nav.noDatasetsInfo")}
       </div>
+
+      {error && (
+        <div className="absolute left-1/2 -translate-x-1/2 top-full mt-1 text-xs text-red-400 bg-red-400/10 border border-red-400/20 rounded-lg px-3 py-1.5 max-w-md truncate">
+          {error}
+        </div>
+      )}
 
       <div className="flex items-center gap-3">
         <span className="text-[11px] font-semibold tabular-nums text-muted mr-1">

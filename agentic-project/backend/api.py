@@ -14,6 +14,7 @@ from aims import generate_chat_response, generate_sql, fix_sql, criticize_sql, e
 from llm_client import parse_numbered_suggestions
 from logger import log_route, log_llm_call, log_sql, log_aims, log_response, log_full_prompt
 from llm_client import summarize_turns, classify_route, extract_sql, extract_sql_fallback, generate_llm_response, interpret_results, direct_prompt, suggest_prompt, focus_prompt, language_instruction
+from sqlite_executor import execute_sql as execute_sqlite_sql
 from focus_agent import run_focus_agent, normalize_halfwidth
 from sql_executor import validate_sql
 from sql_executor import execute_sql
@@ -66,6 +67,10 @@ def set_progress(session_id: str, step: str, status: str, detail: str = ""):
                 break
     _progress_store[key] = steps[-30:]
 
+def clear_progress(session_id: str):
+    key = f"progress_{session_id}"
+    _progress_store.pop(key, None)
+
 
 # ── Schemas ──
 
@@ -99,6 +104,7 @@ class BucketAddRequest(BaseModel):
 
 class BucketProceedRequest(BaseModel):
     session_id: str
+    user_id: str = ""
     bucket_id: str
     aim: str
     line_name: str
@@ -108,6 +114,7 @@ class BucketProceedRequest(BaseModel):
 class MessageRequest(BaseModel):
     session_id: str
     message: str
+    user_id: str = ""
     line_name: str = ""
     attached_aims: list[str] = []
     aim_descriptions: dict[str, str] = {}
@@ -136,6 +143,7 @@ class SummarizeContextRequest(BaseModel):
     tag: str
     turn_timestamps: list[str]
     user_id: str = ""
+    language: str = "en"
 
 class SummarizeContextResponse(BaseModel):
     tag: str
@@ -186,6 +194,7 @@ class MessageResponse(BaseModel):
 
 class ExecuteQueryRequest(BaseModel):
     session_id: str
+    user_id: str = ""
     message: str
     line_name: str = ""
     history: list[dict] | None = None
@@ -246,9 +255,11 @@ class LoginResponse(BaseModel):
     role: str
 
 class IntrospectRequest(BaseModel):
+    user_id: str = ""
     table_name: str
 
 class CreateRegistryEntryRequest(BaseModel):
+    user_id: str = ""
     maintained_by: str
     line_name: str
     dataset_name: str
@@ -458,6 +469,13 @@ def build_conversation_history(turns: list[dict], max_turns: int = 5) -> str:
     return ""
 
 
+def _require_user_id(user_id: str | None) -> str:
+    """Validate that user_id is non-empty; returns it or raises 400."""
+    if not user_id or not user_id.strip():
+        raise HTTPException(status_code=400, detail="user_id is required")
+    return user_id.strip()
+
+
 async def _get_session_owned(session_id: str, user_id: str | None) -> ManagerSession:
     """Fetch a session by ID and verify the requesting user owns it.
     Returns the session or raises 404/403."""
@@ -534,6 +552,7 @@ async def new_research(req: NewResearchRequest):
 @router.post("/bucket/proceed")
 async def bucket_proceed(req: BucketProceedRequest):
     """Save an aim to task_registry and trigger execution."""
+    uid = _require_user_id(req.user_id)
     async with AsyncSessionLocal() as db:
         from sqlalchemy import select
         session = (await db.execute(
@@ -541,7 +560,8 @@ async def bucket_proceed(req: BucketProceedRequest):
         )).scalar_one_or_none()
         if not session:
             raise HTTPException(status_code=404, detail="Session not found")
-        uid = session.user_id
+        if session.user_id != uid:
+            raise HTTPException(status_code=403, detail="You do not own this session")
     task_def = {
         "aims": [req.aim],
         "how_we_will_do_it": req.how_we_will_do_it,
@@ -558,6 +578,7 @@ async def bucket_proceed(req: BucketProceedRequest):
 @router.post("/execute-query", response_model=ExecuteQueryResponse)
 async def execute_query(req: ExecuteQueryRequest):
     """Generate and execute SQL from a user query, returning results."""
+    _require_user_id(req.user_id)
     if not req.message.strip():
         raise HTTPException(status_code=400, detail="message is required")
 
@@ -583,6 +604,18 @@ async def execute_query(req: ExecuteQueryRequest):
                 "join_hints": reg.join_hints,
             })
 
+    # Also check personal datasets (SQLite)
+    personal = await list_user_datasets(_require_user_id(req.user_id))
+    for pd in (personal or {}).get("datasets", []):
+        if pd.get("dataset_name") in dataset_names and pd.get("status") == "active":
+            datasets_data.append({
+                "dataset_name": pd["dataset_name"],
+                "table": pd.get("table_name", pd["dataset_name"]),
+                "description": pd.get("description"),
+                "column_definitions": pd.get("column_definitions", []),
+                "sqlite_path": pd.get("sqlite_path"),
+            })
+
     if not datasets_data:
         raise HTTPException(status_code=404, detail="No datasets found for the given names")
 
@@ -604,7 +637,16 @@ async def execute_query(req: ExecuteQueryRequest):
         if critique.get("pass"):
             # Critic approved — execute
             try:
-                result = await execute_sql(sql)
+                sqlite_tables = {d["table"]: d.get("sqlite_path") for d in datasets_data if d.get("sqlite_path")}
+                if sqlite_tables:
+                    import re
+                    referenced_sqlite = [t for t in sqlite_tables if re.search(rf'\b{re.escape(t)}\b', sql, re.IGNORECASE)]
+                    if referenced_sqlite:
+                        result = await execute_sqlite_sql(sqlite_tables[referenced_sqlite[0]], sql)
+                    else:
+                        result = await execute_sql(sql)
+                else:
+                    result = await execute_sql(sql)
             except Exception as e:
                 # Runtime failure (unlikely after critic) — feed back to fix
                 logger.warning("SQL passed critic but failed at runtime: %s", str(e)[:200])
@@ -675,7 +717,7 @@ async def create_session(body: CreateSessionRequest = None):
     session_id = str(uuid.uuid4())
     now = datetime.now(timezone.utc)
     title = body.title if body and body.title else f"Session {session_id[:8]}"
-    uid = (body.user_id or settings.default_user_id) if body else settings.default_user_id
+    uid = _require_user_id(body.user_id if body else None)
     async with AsyncSessionLocal() as db:
         row = ManagerSession(
             session_id=session_id,
@@ -717,10 +759,16 @@ async def list_sessions(user_id: str = ""):
         return []
     async with AsyncSessionLocal() as db:
         from sqlalchemy import select
-        stmt = select(ManagerSession).where(ManagerSession.user_id == user_id)
+        stmt = select(
+            ManagerSession.session_id,
+            ManagerSession.title,
+            ManagerSession.phase,
+            ManagerSession.status,
+            ManagerSession.created_at,
+        ).where(ManagerSession.user_id == user_id)
         stmt = stmt.order_by(ManagerSession.updated_at.desc()).limit(50)
         result = await db.execute(stmt)
-        rows = result.scalars().all()
+        rows = result.all()
     return [
         {
             "session_id": r.session_id,
@@ -758,8 +806,9 @@ async def delete_session(session_id: str, user_id: str = ""):
     return {"status": "deleted", "session_id": session_id}
 
 @router.get("/sessions/{session_id}/progress")
-async def get_session_progress(session_id: str):
+async def get_session_progress(session_id: str, user_id: str = ""):
     """Return progress steps for the latest message processing on this session."""
+    _require_user_id(user_id)
     key = f"progress_{session_id}"
     return {"steps": _progress_store.get(key, [])}
 
@@ -788,19 +837,26 @@ async def list_datasets():
 @router.get("/user-datasets")
 async def get_user_datasets(user_id: str = ""):
     """List the current user's personal (uploaded CSV) datasets — separate from global_registry."""
-    uid = user_id or settings.default_user_id
+    uid = _require_user_id(user_id)
     return {"datasets": await list_user_datasets(uid)}
 
 @router.post("/upload", response_model=UploadResponse)
 async def upload_csv(files: list[UploadFile] = File(...), user_id: str = Form(default="")):
     """Validate + import one or more CSVs into the user's personal SQLite file.
     Each file lands as a 'draft' dataset — not usable until confirmed via /upload/{id}/confirm."""
-    uid = user_id or settings.default_user_id
+    uid = _require_user_id(user_id)
     reports: list[UploadedFileReport] = []
     failures: list[UploadFailure] = []
 
+    max_bytes = settings.max_upload_size_mb * 1024 * 1024
     for f in files:
+        if f.size and f.size > max_bytes:
+            failures.append(UploadFailure(filename=f.filename or "upload.csv", errors=[f"File exceeds {settings.max_upload_size_mb}MB limit"]))
+            continue
         raw = await f.read()
+        if len(raw) > max_bytes:
+            failures.append(UploadFailure(filename=f.filename or "upload.csv", errors=[f"File exceeds {settings.max_upload_size_mb}MB limit"]))
+            continue
         result = validate_csv(
             raw, f.filename or "upload.csv",
             max_size_mb=settings.max_upload_size_mb,
@@ -858,7 +914,7 @@ async def upload_csv(files: list[UploadFile] = File(...), user_id: str = Form(de
 @router.post("/upload/{dataset_id}/confirm")
 async def confirm_upload(dataset_id: int, req: ConfirmDatasetRequest):
     """User clicked 'All set' in the column-clarification view — lock the edited meanings in."""
-    uid = req.user_id or settings.default_user_id
+    uid = _require_user_id(req.user_id)
     try:
         return await confirm_dataset(uid, dataset_id, req.columns, req.description)
     except ValueError:
@@ -867,7 +923,7 @@ async def confirm_upload(dataset_id: int, req: ConfirmDatasetRequest):
 @router.post("/upload/{dataset_id}/llm-fill")
 async def llm_fill_upload(dataset_id: int, req: LlmFillRequest):
     """User clicked 'LLM fill' — generate meanings for empty columns via LLM."""
-    uid = req.user_id or settings.default_user_id
+    uid = _require_user_id(req.user_id)
     try:
         return await llm_fill_missing_meanings(uid, dataset_id, req.columns, language=req.language)
     except ValueError:
@@ -876,7 +932,7 @@ async def llm_fill_upload(dataset_id: int, req: LlmFillRequest):
 @router.patch("/user-datasets/{dataset_id}/columns")
 async def patch_dataset_columns(dataset_id: int, req: ConfirmDatasetRequest):
     """Update column definitions and description for an existing (active) personal dataset."""
-    uid = req.user_id or settings.default_user_id
+    uid = _require_user_id(req.user_id)
     try:
         return await update_dataset_columns(uid, dataset_id, req.columns, req.description)
     except ValueError:
@@ -884,7 +940,7 @@ async def patch_dataset_columns(dataset_id: int, req: ConfirmDatasetRequest):
 
 @router.delete("/user-datasets/{dataset_id}")
 async def remove_user_dataset(dataset_id: int, user_id: str = ""):
-    uid = user_id or settings.default_user_id
+    uid = _require_user_id(user_id)
     try:
         await delete_user_dataset(uid, dataset_id)
     except ValueError:
@@ -895,13 +951,23 @@ async def remove_user_dataset(dataset_id: int, user_id: str = ""):
 async def login(req: LoginRequest):
     """Stateless ID-only allowlist check — no passwords. Decides which top-level view the
     frontend renders (IoT registration page vs the normal dashboard)."""
-    role = "iot" if req.user_id.strip().lower() in settings.get_iot_user_ids() else "normal"
-    return LoginResponse(user_id=req.user_id.strip(), role=role)
+    uid = req.user_id.strip()
+    if not uid:
+        raise HTTPException(status_code=400, detail="user_id is required")
+    role = "iot" if uid.lower() in settings.get_iot_user_ids() else "normal"
+    return LoginResponse(user_id=uid, role=role)
+
+
+def _require_iot_role(user_id: str) -> None:
+    """Raise 403 if user_id is not in the IoT allowlist."""
+    if not user_id.strip().lower() in settings.get_iot_user_ids():
+        raise HTTPException(status_code=403, detail="IoT role required for this operation")
 
 @router.post("/registry-admin/introspect")
 async def registry_introspect(req: IntrospectRequest):
     """Look up an existing Postgres table's columns + a sample, and draft column meanings —
     nothing is saved yet, same preview-before-commit shape as CSV upload."""
+    _require_iot_role(_require_user_id(req.user_id))
     try:
         columns, sample_rows = await introspect_pg_table(req.table_name)
     except TableNotFoundError as e:
@@ -915,6 +981,7 @@ async def registry_introspect(req: IntrospectRequest):
 
 @router.post("/registry-admin/entries")
 async def registry_create_entry(req: CreateRegistryEntryRequest):
+    _require_iot_role(_require_user_id(req.user_id))
     entry_id = await create_draft_entry(
         maintained_by=req.maintained_by,
         line_name=req.line_name,
@@ -931,6 +998,7 @@ async def registry_create_entry(req: CreateRegistryEntryRequest):
 
 @router.post("/registry-admin/entries/{entry_id}/confirm")
 async def registry_confirm_entry(entry_id: int, req: ConfirmRegistryEntryRequest):
+    _require_iot_role(_require_user_id(req.user_id))
     try:
         return await confirm_entry(entry_id, req.columns, req.description, user_id=req.user_id or None)
     except ValueError:
@@ -942,6 +1010,7 @@ async def registry_list_entries(maintained_by: str = ""):
 
 @router.delete("/registry-admin/entries/{entry_id}")
 async def registry_delete_entry(entry_id: int, user_id: str = ""):
+    _require_iot_role(_require_user_id(user_id))
     try:
         await delete_entry(entry_id, user_id=user_id or None)
     except ValueError:
@@ -1367,7 +1436,16 @@ async def _handle_focus_multi(
 
         try:
             sql = validate_sql(sql)
-            result = await execute_sql(sql)
+            sqlite_tables = {d["table"]: d.get("sqlite_path") for d in datasets_data if d.get("sqlite_path")}
+            if sqlite_tables:
+                import re
+                referenced_sqlite = [t for t in sqlite_tables if re.search(rf'\b{re.escape(t)}\b', sql, re.IGNORECASE)]
+                if referenced_sqlite:
+                    result = await execute_sqlite_sql(sqlite_tables[referenced_sqlite[0]], sql)
+                else:
+                    result = await execute_sql(sql)
+            else:
+                result = await execute_sql(sql)
         except Exception as e:
             per_aim_summaries.append(f"### {aim}\nCould not complete this analysis: {str(e)[:200]}")
             set_progress(session_id, f"aim_{idx}", "done", f"Aim {idx+1}: error — {str(e)[:60]}")
@@ -1514,6 +1592,10 @@ async def send_message(req: MessageRequest):
 
     if not session:
         raise HTTPException(status_code=404, detail="Session not found")
+
+    uid = _require_user_id(req.user_id)
+    if session.user_id != uid:
+        raise HTTPException(status_code=403, detail="You do not own this session")
 
     expected_version = session.version
 
@@ -1840,6 +1922,7 @@ async def send_message(req: MessageRequest):
                 row.title = new_title
         await db.commit()
 
+    clear_progress(req.session_id)
     return MessageResponse(
         session_id=req.session_id,
         turn_index=0,
@@ -1894,7 +1977,7 @@ async def summarize_context(session_id: str, req: SummarizeContextRequest):
     thread_text = "\n---\n".join(thread_lines)
 
     # Call LLM for summary
-    summary = await summarize_turns(thread_text)
+    summary = await summarize_turns(thread_text, language=req.language)
     if not summary:
         raise HTTPException(status_code=502, detail="Summary generation failed")
 

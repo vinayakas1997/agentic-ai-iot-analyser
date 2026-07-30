@@ -8,6 +8,7 @@ import { useOutputStore, type CollectedResult } from "./outputStore";
 import { useDatasetStore } from "./datasetStore";
 import { useAuthStore } from "./authStore";
 import { useToastStore } from "./toastStore";
+import { t } from "../lib/i18n";
 import type { QueryResultState } from "../sections/QueryActions";
 
 function turnFromResponse(res: MessageResponse, userMessage: string, attachedAims?: string[], attachedDatasets?: string[]): Turn {
@@ -32,16 +33,12 @@ function turnFromResponse(res: MessageResponse, userMessage: string, attachedAim
 let _pollTimer: ReturnType<typeof setInterval> | null = null;
 
 function getErrorMessage(e: unknown): string {
-  if (axiosIsError(e)) {
-    const detail = e.response?.data?.detail;
-    if (typeof detail === "string") return detail;
-  }
   if (e instanceof Error) return e.message;
-  return "Request failed";
-}
-
-function axiosIsError(e: unknown): e is { response?: { data?: { detail?: string } } } {
-  return typeof e === "object" && e !== null && "response" in e;
+  if (typeof e === "object" && e !== null) {
+    const obj = e as Record<string, unknown>;
+    if (typeof obj.detail === "string") return obj.detail;
+  }
+  return t("session.requestFailed");
 }
 
 interface PendingTurn {
@@ -122,6 +119,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   enrichmentMode: "research",
 
   clearAll: () => {
+    if (_pollTimer) clearInterval(_pollTimer);
     _pollTimer = null;
     set({
       sessionId: null,
@@ -154,12 +152,16 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   },
 
   bootstrap: async () => {
+    _bootstrapEpoch++;
+    const epoch = _bootstrapEpoch;
     set({ error: null, loading: true });
     try {
       const uid = useAuthStore.getState().userId || undefined;
       const list = await get().refreshSessions(uid);
+      if (epoch !== _bootstrapEpoch) return;
       if (list.length > 0) {
         const detail = await api.getSession(list[0].session_id, uid);
+        if (epoch !== _bootstrapEpoch) return;
         const sessionMeta = { session_id: detail.session_id, title: detail.title, phase: detail.phase || "lines", status: detail.status || "active", mode: detail.mode || "ask" };
         const apiTurns = detail.turns || [];
         const loadedTurns: Turn[] = apiTurns.map((t: any) => ({
@@ -194,8 +196,15 @@ export const useSessionStore = create<SessionState>((set, get) => ({
         useOutputStore.getState().setResults(Array.isArray(detail.state?.output_results) ? detail.state.output_results : []);
         const attachedDs = detail.state?.attached_datasets;
         if (Array.isArray(attachedDs) && attachedDs.length > 0) {
-          const allDatasets = await api.listDatasets();
+          const [allDatasets, userRes] = await Promise.all([
+            api.listDatasets(),
+            api.listUserDatasets(uid),
+          ]);
+          if (epoch !== _bootstrapEpoch) return;
           const validNames = new Set(allDatasets.map((d) => d.dataset_name));
+          for (const d of (userRes.datasets || [])) {
+            if (d.status === "active") validNames.add(d.dataset_name);
+          }
           const validDs = attachedDs.filter((d: string) => validNames.has(d));
           if (validDs.length > 0) {
             useDatasetStore.getState().addMultiple(validDs);
@@ -247,6 +256,8 @@ export const useSessionStore = create<SessionState>((set, get) => ({
         sessionMeta,
         turns: loadedTurns,
         sessionId: detail.session_id || id,
+        isLocalSession: false,
+        pendingTitle: null,
         aimProposals: detail.state?.aim_proposals || [],
         selectedAims: Array.isArray(detail.state?.selected_aims) ? detail.state.selected_aims : [],
         outputResults: Array.isArray(detail.state?.output_results) ? detail.state.output_results : [],
@@ -260,8 +271,14 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       useDatasetStore.getState().clear();
       const attachedDs = detail.state?.attached_datasets;
       if (Array.isArray(attachedDs) && attachedDs.length > 0) {
-        const allDatasets = await api.listDatasets();
+        const [allDatasets, userRes] = await Promise.all([
+          api.listDatasets(),
+          api.listUserDatasets(uid),
+        ]);
         const validNames = new Set(allDatasets.map((d) => d.dataset_name));
+        for (const d of (userRes.datasets || [])) {
+          if (d.status === "active") validNames.add(d.dataset_name);
+        }
         const validDs = attachedDs.filter((d: string) => validNames.has(d));
         if (validDs.length > 0) {
           useDatasetStore.getState().addMultiple(validDs);
@@ -290,6 +307,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       aimProposals: [],
       contextSummaries: {},
       enrichmentMode: "research",
+      outputResults: [],
       pendingTurn: null,
     });
     useOutputStore.getState().clearResults();
@@ -320,7 +338,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     if (!sessionId || !text.trim() || isDone) return;
 
     const userText = text.trim();
-    set({ error: null, loading: true, progressSteps: [], statusMessage: "Processing...", pendingTurn: null });
+    set({ error: null, loading: true, progressSteps: [], statusMessage: t("processing.processingLabel"), pendingTurn: null });
     get().setPendingTurn(userText);
 
     // Progress polling — fetches live steps from backend while message is being processed
@@ -338,7 +356,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       const sendUid = useAuthStore.getState().userId || undefined;
 
       if (isLocalSession) {
-        set({ statusMessage: "Creating new session..." });
+        set({ statusMessage: t("session.creating") });
         const name = pendingTitle || generateSessionName();
         const created = await api.createSession(name, sendUid);
         activeSessionId = created.session_id;
@@ -363,13 +381,13 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       const language = useUiStore.getState().language;
       const res = await api.sendMessage(activeSessionId, userText, lineName, attachedAims, enrichmentMode, [], routeOverride, aimDescriptions, language);
       clearInterval(progressTimer);
-      set({ statusMessage: "Response received" });
+      set({ statusMessage: t("session.responseReceived") });
 
       // If user switched sessions during loading, show toast instead of updating UI
       const currentSessionId = get().sessionId;
       if (currentSessionId !== activeSessionId) {
         const title = get().sessions.find((s) => s.session_id === activeSessionId)?.title || activeSessionId.slice(0, 8);
-        useToastStore.getState().pushToast("Response received in session", activeSessionId, title);
+        useToastStore.getState().pushToast(t("session.responseToast"), activeSessionId, title);
         return res;
       }
 
@@ -431,7 +449,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       }
       const nextIdx = useUiStore.getState().selectedTurnIndex;
       useUiStore.getState().selectTurn(nextIdx < 0 ? 0 : nextIdx + 1);
-      await get().refreshSessions();
+      await get().refreshSessions(useAuthStore.getState().userId || undefined);
       return res;
     } catch (e) {
       clearInterval(progressTimer);
@@ -555,15 +573,22 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   },
 }));
 
-// Safety net: auto-reset loading if stuck for >20s (e.g. bootstrap before login)
+// Safety net: auto-reset loading if stuck for >300s.
+// Uses epoch counter so stale callbacks from previous loading cycles don't mutate state.
+let _bootstrapEpoch = 0;
 let _loadingTimeout: ReturnType<typeof setTimeout> | null = null;
+let _loadingEpoch = 0;
 useSessionStore.subscribe((state, prev) => {
   if (state.loading && !prev.loading) {
+    _loadingEpoch++;
+    const epoch = _loadingEpoch;
     if (_loadingTimeout) clearTimeout(_loadingTimeout);
     _loadingTimeout = setTimeout(() => {
       _loadingTimeout = null;
-      useSessionStore.setState({ loading: false, error: "Request timed out — please try again" });
-    }, 20000);
+      if (epoch === _loadingEpoch) {
+        useSessionStore.setState({ loading: false, error: t("session.timedOut") });
+      }
+    }, 300000);
   } else if (!state.loading && prev.loading && _loadingTimeout) {
     clearTimeout(_loadingTimeout);
     _loadingTimeout = null;

@@ -41,7 +41,7 @@ export default function ColumnClarifyView() {
       ta.style.height = "auto";
       ta.style.height = ta.scrollHeight + "px";
     });
-  });
+  }, [index, pendingDrafts]);
 
   useEffect(() => {
     setEditedColumns(null);
@@ -149,7 +149,7 @@ export default function ColumnClarifyView() {
         meaning: byName.get(col.name) ?? col.meaning,
       })));
     } catch (e) {
-      setDefinitionsError(e instanceof Error ? e.message : "LLM fill failed");
+      setDefinitionsError(e instanceof Error ? e.message : t("upload.llmFillFailed"));
     } finally {
       setLlmFilling(false);
     }
@@ -176,7 +176,7 @@ export default function ColumnClarifyView() {
         setDefinitionsError("");
       }
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Failed to confirm dataset");
+      setError(e instanceof Error ? e.message : t("upload.failedToConfirm"));
     } finally {
       setSaving(false);
     }
@@ -365,7 +365,7 @@ export default function ColumnClarifyView() {
 
         {emptyCount > 0 && (
           <div className="mb-3 text-[12px] text-ic-amber">
-            {emptyCount} column{emptyCount > 1 ? "s" : ""} still need a meaning
+            {t("upload.columnsNeedMeaning", { count: emptyCount })}
           </div>
         )}
 
@@ -391,13 +391,7 @@ export default function ColumnClarifyView() {
             <button
               type="button"
               className={btnSecondary}
-              onClick={() => {
-                setIndex(index + 1);
-                setEditedColumns(null);
-                setDescription("");
-                setDefinitionsFileName("");
-                setDefinitionsError("");
-              }}
+              onClick={handleAllSet}
               disabled={saving || !canProceed}
             >
               {t("clarify.skip")}

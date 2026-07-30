@@ -534,7 +534,7 @@ async def interpret_results(question: str, sql: str, result: dict, language: str
         return f"The query returned {row_count} rows. Here are the results: ..."  # fallback
 
 
-async def summarize_turns(thread_text: str) -> str:
+async def summarize_turns(thread_text: str, language: str = "en") -> str:
     """Generate a compact summary for a set of turns."""
     settings = get_settings()
     client = get_llm_client()
@@ -542,7 +542,7 @@ async def summarize_turns(thread_text: str) -> str:
         response = await client.chat.completions.create(
             model=settings.llm_model,
             messages=[
-                {"role": "system", "content": "You are a concise data analysis summarizer. Produce 2-3 sentence summaries."},
+                {"role": "system", "content": "You are a concise data analysis summarizer. Produce 2-3 sentence summaries." + language_instruction(language)},
                 {"role": "user", "content": SUMMARIZE_PROMPT.replace("{thread_text}", thread_text)},
             ],
             max_tokens=settings.max_tokens,

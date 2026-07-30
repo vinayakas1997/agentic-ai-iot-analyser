@@ -6,7 +6,8 @@ import { panelClass, resultCardClass, resultTagClass, resultBadgeClass, miniTabl
 import { useOutputStore } from "../stores/outputStore";
 import { useSessionStore } from "../stores/sessionStore";
 import { useDatasetStore } from "../stores/datasetStore";
-import { listDatasets } from "../api/client";
+import { useAuthStore } from "../stores/authStore";
+import { listDatasets, listUserDatasets } from "../api/client";
 import { QueryActions, type QueryResultState } from "./QueryActions";
 import { IconDatabase, IconTarget, IconClock, IconChart } from "../lib/icons";
 import { t, useT, tCount } from "../lib/i18n";
@@ -44,14 +45,30 @@ export default function OutputPanel() {
   const storeAttached = useDatasetStore((s) => s.attached);
   const [summarizing, setSummarizing] = useState(false);
   const [datasets, setDatasets] = useState<DatasetInfo[]>([]);
+  const [personalDatasets, setPersonalDatasets] = useState<{ dataset_name: string; table_name: string; description: string | null; column_definitions: { name: string; datatype: string; meaning?: string }[] }[]>([]);
 
   const datasetLookup = useMemo(() => {
     const map = new Map<string, DatasetInfo>();
     for (const ds of datasets) {
       map.set(ds.dataset_name, ds);
     }
+    for (const pds of personalDatasets) {
+      if (!map.has(pds.dataset_name)) {
+        map.set(pds.dataset_name, {
+          line_name: pds.dataset_name,
+          dataset_name: pds.dataset_name,
+          description: pds.description,
+          table: pds.table_name,
+          column_definitions: pds.column_definitions,
+          role: null,
+          join_hints: null,
+          suggested_aims: null,
+          synonyms: null,
+        });
+      }
+    }
     return map;
-  }, [datasets]);
+  }, [datasets, personalDatasets]);
 
   function filterAvailable(names: string[]): { available: string[]; missing: string[] } {
     const available: string[] = [];
@@ -63,7 +80,14 @@ export default function OutputPanel() {
   }
 
   useEffect(() => {
-    listDatasets().then(setDatasets).catch(console.error);
+    const uid = useAuthStore.getState().userId || undefined;
+    Promise.all([
+      listDatasets(),
+      listUserDatasets(uid),
+    ]).then(([globalDs, userRes]) => {
+      setDatasets(globalDs);
+      setPersonalDatasets((userRes.datasets || []).filter((d) => d.status === "active"));
+    }).catch(console.error);
   }, []);
 
   const handleSummarize = useCallback(async () => {

@@ -56,7 +56,8 @@ services:
     build:
       context: ./frontend
       args:
-        VITE_API_URL: "${VITE_API_URL:-http://localhost:7010}"
+        # Empty string = same-origin /api via nginx (no CORS). Do not use :- default.
+        VITE_API_URL: "${VITE_API_URL-}"
     ports:
       - "7008:80"
     depends_on:

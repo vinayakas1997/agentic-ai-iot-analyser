@@ -42,6 +42,12 @@ def validate_sql(sql: str) -> str:
         if re.search(pattern, upper):
             raise ValueError(f"Forbidden SQL keyword in query")
 
+    if re.search(r'\bCROSS\s+JOIN\b', upper):
+        raise ValueError("CROSS JOIN is not allowed — use INNER/LEFT JOIN with ON")
+
+    if re.search(r'\.\w+\.\w+', cleaned):
+        raise ValueError("Schema-qualified table names (schema.table) are not allowed")
+
     if 'LIMIT' not in upper:
         cleaned = cleaned.rstrip(';') + ' LIMIT 200'
 

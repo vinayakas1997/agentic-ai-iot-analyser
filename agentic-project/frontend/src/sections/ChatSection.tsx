@@ -42,7 +42,7 @@ export default function ChatSection() {
   const enrichmentMode = useSessionStore((s) => s.enrichmentMode);
   const contextSummaries = useSessionStore((s) => s.contextSummaries);
   const progressSteps = useSessionStore((s) => s.progressSteps);
-
+  const sessionError = useSessionStore((s) => s.error);
 
   const storeSelected = useDatasetStore((s) => s.selected);
   const storeToggle = useDatasetStore((s) => s.toggle);
@@ -314,6 +314,7 @@ export default function ChatSection() {
   const persistTurns = useCallback(() => {
     if (!sessionId) return;
     const sState = useSessionStore.getState();
+    if (sState.isLocalSession) return;
     const currentTurns = sState.turns.map((t) => ({
       user: t.user,
       agent: t.agent || "",
@@ -426,14 +427,16 @@ export default function ChatSection() {
   }, [turns.length, pendingTurn, scrollToBottom]);
 
   // Persist selectedAims to backend whenever it changes
+  const isLocalSession = useSessionStore((s) => s.isLocalSession);
   useEffect(() => {
-    if (!sessionId) return;
+    if (!sessionId || isLocalSession) return;
     updateSessionState(sessionId, { selected_aims: selectedAims }, userId || undefined).catch((err) => console.error("Failed to persist selected aims:", err));
-  }, [selectedAims, sessionId, userId]);
+  }, [selectedAims, sessionId, userId, isLocalSession]);
 
   const handleSend = async () => {
     const msg = input.trim() || (selectedAims.length > 0 ? selectedAims.map((a) => a.description ? `${a.aim}: ${a.description}` : a.aim).join("\n") : "");
     if (!msg || !sessionId) return;
+    const sentInput = input;
     setInput("");
     setShowSearch(false);
     const { available, missing } = filterAvailable(storeAttached);
@@ -441,7 +444,8 @@ export default function ChatSection() {
     const lineName = available.join(",");
     const aimNames = selectedAims.map((a) => a.aim);
     const aimDescriptions = Object.fromEntries(selectedAims.filter((a) => a.description).map((a) => [a.aim, a.description!]));
-    const res = await sendUserMessage(msg, lineName, aimNames, enrichmentMode, undefined, aimDescriptions);
+    try {
+      const res = await sendUserMessage(msg, lineName, aimNames, enrichmentMode, undefined, aimDescriptions);
     if (res?.result_uuid && res?.query_result) {
       const resultState: QueryResultState = { loading: false, ...res.query_result } as QueryResultState;
       setQueryResults((prev) => ({
@@ -490,6 +494,9 @@ export default function ChatSection() {
         }));
       }
       persistTurns();
+    }
+    } catch {
+      setInput(sentInput);
     }
   };
 
@@ -812,6 +819,12 @@ export default function ChatSection() {
               </button>
             </span>
           ))}
+        </div>
+      )}
+
+      {sessionError && (
+        <div className="text-[11px] text-red-400 bg-red-400/10 border border-red-400/20 rounded-lg px-3 py-2 mb-2">
+          {sessionError}
         </div>
       )}
 

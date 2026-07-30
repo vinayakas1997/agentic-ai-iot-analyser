@@ -42,7 +42,7 @@ export default function LoginPage({ onClose }: { onClose?: () => void }) {
       }}
     >
       <div className="rounded-2xl border-2 border-border bg-surface-1 p-8 w-full max-w-sm shadow-2xl">
-        <div className="text-lg font-semibold mb-1">Agentic IoT Data Analyser</div>
+        <div className="text-lg font-semibold mb-1">{t("brand.name")}</div>
         <div className="text-base font-semibold text-text mb-1">{t("login.title")}</div>
         <div className="text-sm text-muted mb-4">{t("login.subtitle")}</div>
         <input
