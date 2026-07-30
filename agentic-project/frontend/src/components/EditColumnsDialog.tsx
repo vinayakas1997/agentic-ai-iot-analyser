@@ -15,6 +15,7 @@ export default function EditColumnsDialog({ dataset, onClose }: Props) {
   const t = useT();
   const bumpPersonalDatasetsVersion = useUploadStore((s) => s.bumpPersonalDatasetsVersion);
 
+  const [description, setDescription] = useState(dataset.description ?? "");
   const [columns, setColumns] = useState<ColumnDraft[]>(() =>
     dataset.column_definitions.map((c) => ({ ...c }))
   );
@@ -90,7 +91,7 @@ export default function EditColumnsDialog({ dataset, onClose }: Props) {
     setSaving(true);
     setError("");
     try {
-      await updateDatasetColumns(dataset.id, columns);
+      await updateDatasetColumns(dataset.id, columns, description);
       bumpPersonalDatasetsVersion();
       onClose();
     } catch (e) {
@@ -110,14 +111,24 @@ export default function EditColumnsDialog({ dataset, onClose }: Props) {
           <span className="inline-flex items-center justify-center w-[26px] h-[26px] rounded-[8px] bg-ic-amber-soft text-ic-amber">
             <IconDatabase size={14} />
           </span>
-          <div className="text-base font-semibold text-text">Edit Column Meanings</div>
+          <div className="text-base font-semibold text-text">Edit Dataset</div>
         </div>
         <div className="text-[12px] text-tertiary mb-4">
           {dataset.dataset_name} · {dataset.original_filename} · {dataset.row_count} rows
         </div>
 
+        <div className="text-[12px] text-muted mb-3">
+          <label className="block mb-1 text-[11px] font-medium text-tertiary uppercase tracking-wider">Dataset Description</label>
+          <textarea
+            className="w-full rounded-lg border border-border bg-app text-text px-3 py-2 text-[13px] focus:outline-none focus:border-accent transition-colors resize-none leading-relaxed"
+            value={description}
+            onChange={(e) => setDescription(e.target.value)}
+            rows={2}
+            placeholder="Describe what this dataset contains..."
+          />
+        </div>
         <div className="text-[11px] text-muted mb-3">
-          Edit the description for each column. Changes are saved immediately to this dataset.
+          Edit the dataset description and column meanings. Changes are saved immediately.
         </div>
 
         <div className="mb-3 flex flex-wrap items-center gap-2">

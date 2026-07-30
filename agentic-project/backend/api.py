@@ -854,10 +854,10 @@ async def llm_fill_upload(dataset_id: int, req: LlmFillRequest):
 
 @router.patch("/user-datasets/{dataset_id}/columns")
 async def patch_dataset_columns(dataset_id: int, req: ConfirmDatasetRequest):
-    """Update column definitions for an existing personal dataset (post-upload editing)."""
+    """Update column definitions and description for an existing (active) personal dataset."""
     uid = req.user_id or settings.default_user_id
     try:
-        return await update_dataset_columns(uid, dataset_id, req.columns)
+        return await update_dataset_columns(uid, dataset_id, req.columns, req.description)
     except ValueError:
         raise HTTPException(status_code=404, detail="Dataset not found")
 

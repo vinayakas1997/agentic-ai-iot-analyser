@@ -247,10 +247,10 @@ export async function listUserDatasets() {
   return request<{ datasets: PersonalDataset[] }>("/api/v2/user-datasets");
 }
 
-export async function updateDatasetColumns(datasetId: number, columns: ColumnDraft[]) {
+export async function updateDatasetColumns(datasetId: number, columns: ColumnDraft[], description?: string) {
   return request<{ id: number; dataset_name: string; status: string }>(
     `/api/v2/user-datasets/${datasetId}/columns`,
-    { method: "PATCH", body: JSON.stringify({ columns }) }
+    { method: "PATCH", body: JSON.stringify({ columns, description }) }
   );
 }
 

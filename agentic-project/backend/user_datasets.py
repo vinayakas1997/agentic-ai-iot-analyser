@@ -235,7 +235,7 @@ async def llm_fill_missing_meanings(user_id: str, dataset_id: int, column_names:
     return {"columns": [d for d in new_defs if d["name"] in column_names]}
 
 
-async def update_dataset_columns(user_id: str, dataset_id: int, columns: list[dict]) -> dict:
+async def update_dataset_columns(user_id: str, dataset_id: int, columns: list[dict], description: str = "") -> dict:
     """Update column definitions for an existing (active) personal dataset."""
     async with AsyncSessionLocal() as db:
         row = (await db.execute(
@@ -244,6 +244,8 @@ async def update_dataset_columns(user_id: str, dataset_id: int, columns: list[di
         if not row:
             raise ValueError("dataset_not_found")
         row.column_definitions = columns
+        if description:
+            row.description = description
         await db.commit()
         return {"id": row.id, "dataset_name": row.dataset_name, "status": row.status}
 
