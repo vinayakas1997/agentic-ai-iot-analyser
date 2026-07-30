@@ -2,7 +2,8 @@ import { useState, useEffect, useMemo, useRef, useCallback, KeyboardEvent } from
 import { panelClass, btnPrimary, btnGlass } from "../lib/styles";
 import { useSessionStore } from "../stores/sessionStore";
 import { useOutputStore } from "../stores/outputStore";
-import { listDatasets, updateSessionState, summarizeContext, uploadCsvFiles } from "../api/client";
+import { listDatasets, updateSessionState, summarizeContext, uploadCsvFiles, ApiError, MAX_UPLOAD_BYTES } from "../api/client";
+import type { UploadedFileDraft, UploadFailure } from "../types";
 import { useDatasetStore } from "../stores/datasetStore";
 import { useUploadStore } from "../stores/uploadStore";
 import { useAuthStore } from "../stores/authStore";
@@ -513,15 +514,54 @@ export default function ChatSection() {
 
   const handleCsvFilesSelected = async (fileList: FileList | null) => {
     if (!fileList || fileList.length === 0) return;
-    const label = fileList.length === 1 ? t("chat.processingFile", { filename: fileList[0].name }) : t("chat.processingFiles", { count: fileList.length });
-    setUploadProcessing(true, label);
+    const files = Array.from(fileList);
+    const allDrafts: UploadedFileDraft[] = [];
+    const allFailures: UploadFailure[] = [];
+
+    const isTooLargeError = (e: unknown) => {
+      if (e instanceof ApiError && e.status === 413) return true;
+      const msg = e instanceof Error ? e.message : String(e);
+      return /413|request entity too large/i.test(msg);
+    };
+
+    setUploadProcessing(
+      true,
+      files.length === 1
+        ? t("chat.processingFile", { filename: files[0].name })
+        : t("chat.uploadingProgress", { current: 1, total: files.length, filename: files[0].name }),
+    );
+
     try {
       const uid = useAuthStore.getState().userId || undefined;
-      const res = await uploadCsvFiles(Array.from(fileList), uid);
-      openClarify(res.files, res.failures);
-    } catch (e) {
-      console.error("CSV upload failed:", e);
-      openClarify([], [{ filename: "upload", errors: [e instanceof Error ? e.message : "Upload failed"] }]);
+      for (let i = 0; i < files.length; i++) {
+        const file = files[i];
+        setUploadProcessing(
+          true,
+          t("chat.uploadingProgress", { current: i + 1, total: files.length, filename: file.name }),
+        );
+
+        if (file.size > MAX_UPLOAD_BYTES) {
+          allFailures.push({ filename: file.name, errors: [t("chat.uploadTooLarge")] });
+          continue;
+        }
+
+        try {
+          const res = await uploadCsvFiles([file], uid);
+          allDrafts.push(...res.files);
+          allFailures.push(...res.failures);
+        } catch (e) {
+          console.error("CSV upload failed:", file.name, e);
+          const errMsg = isTooLargeError(e)
+            ? t("chat.uploadTooLarge")
+            : e instanceof ApiError && e.status
+              ? t("clarify.uploadFailed")
+              : e instanceof Error && !e.message.includes("<")
+                ? e.message
+                : t("clarify.uploadFailed");
+          allFailures.push({ filename: file.name, errors: [errMsg] });
+        }
+      }
+      openClarify(allDrafts, allFailures);
     } finally {
       setUploadProcessing(false);
       if (csvInputRef.current) csvInputRef.current.value = "";

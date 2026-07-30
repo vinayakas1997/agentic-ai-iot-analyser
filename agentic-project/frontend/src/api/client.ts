@@ -1,12 +1,16 @@
-const API = import.meta.env.VITE_API_URL || "http://localhost:7010";
+// Empty = same-origin (nginx proxies /api/ → backend). Avoids CORS "Failed to fetch".
+const API = import.meta.env.VITE_API_URL ?? "";
 
-class ApiError extends Error {
+export class ApiError extends Error {
   status: number;
   constructor(message: string, status: number) {
     super(message);
     this.status = status;
   }
 }
+
+/** Matches backend max_upload_size_mb / nginx client_max_body_size. */
+export const MAX_UPLOAD_BYTES = 50 * 1024 * 1024;
 
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
   const res = await fetch(`${API}${path}`, {
