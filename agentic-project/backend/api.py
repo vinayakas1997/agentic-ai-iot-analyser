@@ -713,11 +713,11 @@ async def update_session(session_id: str, body: UpdateSessionRequest):
 @router.get("/sessions")
 async def list_sessions(user_id: str = ""):
     """List sessions, optionally filtered by user_id."""
+    if not user_id:
+        return []
     async with AsyncSessionLocal() as db:
         from sqlalchemy import select
-        stmt = select(ManagerSession)
-        if user_id:
-            stmt = stmt.where(ManagerSession.user_id == user_id)
+        stmt = select(ManagerSession).where(ManagerSession.user_id == user_id)
         stmt = stmt.order_by(ManagerSession.updated_at.desc()).limit(50)
         result = await db.execute(stmt)
         rows = result.scalars().all()
