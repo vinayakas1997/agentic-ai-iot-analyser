@@ -13,6 +13,12 @@ services:
       CORS_ORIGINS: "${CORS_ORIGINS:-http://localhost:7008}"
       DEBUG: "${DEBUG:-false}"
       LOG_LEVEL: "${LOG_LEVEL:-0}"
+      HTTP_PROXY: "${HTTP_PROXY:-}"
+      HTTPS_PROXY: "${HTTPS_PROXY:-}"
+      NO_PROXY: "${DGX_HOST},localhost,127.0.0.1,backend,frontend${NO_PROXY:+,${NO_PROXY}}"
+      http_proxy: "${HTTP_PROXY:-}"
+      https_proxy: "${HTTPS_PROXY:-}"
+      no_proxy: "${DGX_HOST},localhost,127.0.0.1,backend,frontend${NO_PROXY:+,${NO_PROXY}}"
     volumes:
       - user_csv_data:/data/users
       - ./backend/iot_users.json:/app/iot_users.json
