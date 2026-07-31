@@ -94,6 +94,19 @@ async def create_tables() -> None:
         """))
         await conn.execute(text("CREATE INDEX IF NOT EXISTS idx_user_registry_user_id ON user_registry(user_id)"))
         await conn.execute(text("CREATE INDEX IF NOT EXISTS idx_user_registry_status ON user_registry(status)"))
+
+        await conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS column_templates (
+                id                  SERIAL PRIMARY KEY,
+                user_id             TEXT NOT NULL,
+                template_name       TEXT NOT NULL,
+                column_definitions  JSONB NOT NULL DEFAULT '[]',
+                created_at          TIMESTAMPTZ DEFAULT NOW(),
+                updated_at          TIMESTAMPTZ DEFAULT NOW(),
+                UNIQUE (user_id, template_name)
+            )
+        """))
+        await conn.execute(text("CREATE INDEX IF NOT EXISTS idx_column_templates_user_id ON column_templates(user_id)"))
         # Migration: add column_profiling if missing (safe to re-run)
         await conn.execute(text("ALTER TABLE user_registry ADD COLUMN IF NOT EXISTS column_profiling JSONB"))
 

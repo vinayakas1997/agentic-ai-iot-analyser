@@ -100,6 +100,20 @@ export interface UploadFailure {
   errors: string[];
 }
 
+export interface ColumnTemplate {
+  id: number;
+  template_name: string;
+  column_definitions: ColumnDraft[];
+  created_at?: string | null;
+}
+
+export interface TemplateMatch {
+  id: number;
+  template_name: string;
+  match_pct: number;
+  matched_columns: { name: string; meaning: string }[];
+}
+
 export interface PersonalDataset {
   id: number;
   dataset_name: string;

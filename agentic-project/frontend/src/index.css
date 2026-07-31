@@ -484,6 +484,43 @@ body {
 }
 .glass-pill--llm:hover:not(:disabled) { border-color: rgba(255,207,92,0.45); }
 
+/* Save template pill — success-green theme */
+.glass-pill--template {
+  color: var(--color-success);
+  border-color: rgba(61,220,151,0.35);
+  background: linear-gradient(155deg, rgba(61,220,151,0.18), rgba(255,255,255,0.03) 55%, rgba(61,220,151,0.06));
+}
+.glass-pill--template:hover:not(:disabled) {
+  border-color: rgba(61,220,151,0.55);
+  box-shadow:
+    0 1px 0 rgba(255,255,255,0.3) inset,
+    0 6px 16px -6px rgba(0,0,0,0.55),
+    0 0 16px -4px rgba(61,220,151,0.5);
+}
+.glass-pill--template.template-notify {
+  animation: template-notify 1.5s ease-in-out infinite;
+}
+@keyframes template-notify {
+  0%, 100% {
+    border-color: rgba(61,220,151,0.4);
+    box-shadow: 0 0 8px -2px rgba(61,220,151,0.45);
+  }
+  50% {
+    border-color: rgba(61,220,151,0.95);
+    box-shadow: 0 0 18px -2px rgba(61,220,151,0.8), 0 0 38px -8px rgba(61,220,151,0.55);
+  }
+}
+.template-glow {
+  display: inline-flex;
+  color: var(--color-success);
+  filter: drop-shadow(0 0 4px rgba(61,220,151,0.8));
+  animation: template-icon 1.5s ease-in-out infinite;
+}
+@keyframes template-icon {
+  0%, 100% { transform: scale(1); opacity: 0.85; }
+  50% { transform: scale(1.12); opacity: 1; }
+}
+
 .robot-glow {
   display: inline-flex;
   border-radius: 999px;
@@ -499,5 +536,7 @@ body {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .robot-glow { animation-duration: 0.001ms !important; }
+  .robot-glow,
+  .template-glow,
+  .glass-pill--template.template-notify { animation-duration: 0.001ms !important; }
 }

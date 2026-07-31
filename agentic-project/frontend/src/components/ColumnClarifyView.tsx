@@ -3,11 +3,11 @@ import { useUploadStore } from "../stores/uploadStore";
 import { useDatasetStore } from "../stores/datasetStore";
 import { useUiStore } from "../stores/uiStore";
 import { useAuthStore } from "../stores/authStore";
-import { confirmUploadDataset, llmFillMeanings } from "../api/client";
-import { IconDatabase, IconCheck, IconUpload, IconChart, IconRobot } from "../lib/icons";
+import { confirmUploadDataset, llmFillMeanings, saveColumnTemplate, listColumnTemplates, matchColumnTemplates } from "../api/client";
+import { IconDatabase, IconCheck, IconUpload, IconChart, IconRobot, IconSave } from "../lib/icons";
 import { btnPrimary, btnSecondary } from "../lib/styles";
 import { useT } from "../lib/i18n";
-import type { ColumnDraft } from "../types";
+import type { ColumnDraft, ColumnTemplate, TemplateMatch } from "../types";
 
 export default function ColumnClarifyView() {
   const t = useT();
@@ -29,6 +29,15 @@ export default function ColumnClarifyView() {
   const [definitionsApplying, setDefinitionsApplying] = useState(false);
   const [definitionsError, setDefinitionsError] = useState("");
   const [llmFilling, setLlmFilling] = useState(false);
+
+  const [templateList, setTemplateList] = useState<ColumnTemplate[]>([]);
+  const [savingTemplate, setSavingTemplate] = useState(false);
+  const [templateNameInput, setTemplateNameInput] = useState("");
+  const [showTemplateInput, setShowTemplateInput] = useState(false);
+  const [templateStatus, setTemplateStatus] = useState("");
+  const [templateMatches, setTemplateMatches] = useState<TemplateMatch[]>([]);
+  const [showMatchingBanner, setShowMatchingBanner] = useState(true);
+
   const definitionsInputRef = useRef<HTMLInputElement>(null);
   const tableRef = useRef<HTMLDivElement>(null);
 
@@ -52,7 +61,31 @@ export default function ColumnClarifyView() {
     setDefinitionsFileName("");
     setDefinitionsError("");
     setDefinitionsApplying(false);
+    setTemplateMatches([]);
+    setShowMatchingBanner(true);
+    setShowTemplateInput(false);
+    setTemplateNameInput("");
+    setTemplateStatus("");
   }, [pendingDrafts]);
+
+  // Load saved templates & auto-match columns when dialog opens with a valid draft
+  useEffect(() => {
+    if (pendingDrafts.length === 0) return;
+    const draft = pendingDrafts[index];
+    if (!draft) return;
+    const columnNames = draft.columns.map((c) => c.original_name || c.name);
+    const uid = useAuthStore.getState().userId || undefined;
+
+    listColumnTemplates(uid).then((res) => {
+      setTemplateList(res.templates);
+    }).catch(() => {});
+
+    matchColumnTemplates(columnNames, uid).then((res) => {
+      if (res.matches.length > 0) {
+        setTemplateMatches(res.matches);
+      }
+    }).catch(() => {});
+  }, [index, pendingDrafts]);
 
   if (pendingDrafts.length === 0) {
     if (failures.length === 0) return null;
@@ -154,6 +187,49 @@ export default function ColumnClarifyView() {
       setLlmFilling(false);
     }
   };
+
+  const handleSaveTemplate = async () => {
+    const name = templateNameInput.trim();
+    if (!name) return;
+    setSavingTemplate(true);
+    setTemplateStatus("");
+    try {
+      const uid = useAuthStore.getState().userId || undefined;
+      await saveColumnTemplate(name, columns, uid);
+      setTemplateStatus(t("clarify.templateSaved"));
+      setShowTemplateInput(false);
+      setTemplateNameInput("");
+      const res = await listColumnTemplates(uid);
+      setTemplateList(res.templates);
+    } catch {
+      setTemplateStatus(t("upload.failedToSave"));
+    } finally {
+      setSavingTemplate(false);
+    }
+  };
+
+  const applyTemplateColumns = (tmpl: ColumnTemplate | TemplateMatch) => {
+    const cols = columns;
+    const templateCols = "matched_columns" in tmpl ? tmpl.matched_columns : tmpl.column_definitions;
+    const byName = new Map<string, string>();
+    for (const tc of templateCols) {
+      byName.set(tc.name.toLowerCase(), tc.meaning);
+    }
+    setEditedColumns(cols.map((col) => {
+      const match = byName.get(col.name.toLowerCase()) ?? byName.get((col.original_name || "").toLowerCase());
+      return match !== undefined ? { ...col, meaning: match || col.meaning } : col;
+    }));
+    setTemplateStatus(t("clarify.templateApplied", { name: tmpl.template_name }));
+  };
+
+  const handleTemplateDropdownChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
+    const val = e.target.value;
+    if (!val) return;
+    const tmpl = templateList.find((t) => String(t.id) === val);
+    if (tmpl) applyTemplateColumns(tmpl);
+  };
+
+  const dismissMatchingBanner = () => setShowMatchingBanner(false);
 
   const handleAllSet = async () => {
     setSaving(true);
@@ -291,10 +367,91 @@ export default function ColumnClarifyView() {
               )}
             </button>
           )}
+
+          {/* Save Template */}
+          {showTemplateInput ? (
+            <div className="flex items-center gap-1.5">
+              <input
+                className="text-[11px] rounded-lg border border-border bg-app text-text px-2 py-1.5 w-[130px] focus:outline-none focus:border-[rgba(61,220,151,0.6)]"
+                placeholder={t("clarify.templateNamePlaceholder")}
+                value={templateNameInput}
+                onChange={(e) => setTemplateNameInput(e.target.value)}
+                onKeyDown={(e) => { if (e.key === "Enter") handleSaveTemplate(); }}
+                autoFocus
+              />
+              <button
+                type="button"
+                className="inline-flex items-center gap-1 text-[11px] font-semibold text-black bg-[#3ddc97] hover:bg-[#4ee8a5] rounded-full px-2.5 py-1.5 transition-colors disabled:opacity-50"
+                onClick={handleSaveTemplate}
+                disabled={savingTemplate || !templateNameInput.trim()}
+              >
+                <IconSave size={12} />
+                {savingTemplate ? "..." : t("clarify.saveTemplate")}
+              </button>
+              <button
+                type="button"
+                className="text-[11px] text-muted hover:text-text"
+                onClick={() => { setShowTemplateInput(false); setTemplateNameInput(""); }}
+              >
+                {t("common.cancel")}
+              </button>
+            </div>
+          ) : (
+            <button
+              type="button"
+              className={`glass-pill glass-pill--template ${editedColumns !== null ? "template-notify" : ""}`}
+              onClick={() => setShowTemplateInput(true)}
+            >
+              <span className={editedColumns !== null ? "template-glow" : ""}>
+                <IconSave size={13} />
+              </span>
+              {t("clarify.saveTemplate")}
+            </button>
+          )}
+
+          {/* Template dropdown */}
+          <select
+            className="text-[11px] rounded border border-border bg-app text-text px-2 py-1 max-w-[160px] focus:outline-none focus:border-accent"
+            onChange={handleTemplateDropdownChange}
+            defaultValue=""
+          >
+            <option value="" disabled>{templateList.length > 0 ? t("clarify.selectTemplate") : t("clarify.noTemplates")}</option>
+            {templateList.map((tmpl) => (
+              <option key={tmpl.id} value={tmpl.id}>{tmpl.template_name}</option>
+            ))}
+          </select>
         </div>
+
+        {templateStatus && (
+          <div className="mb-3 text-[12px] text-[#3ddc97]">{templateStatus}</div>
+        )}
 
         {definitionsError && (
           <div className="mb-3 text-[12px] text-ic-amber">{definitionsError}</div>
+        )}
+
+        {showMatchingBanner && templateMatches.length > 0 && (
+          <div className="mb-3 rounded-lg bg-accent/10 border border-accent/30 px-3 py-2">
+            <div className="flex items-center justify-between">
+              <div className="text-[12px] font-medium text-accent">{t("clarify.matchingBanner")}</div>
+              <button type="button" className="text-[11px] text-muted hover:text-text" onClick={dismissMatchingBanner}>
+                {t("clarify.dismiss")}
+              </button>
+            </div>
+            <div className="flex flex-wrap gap-2 mt-1">
+              {templateMatches.map((m) => (
+                <button
+                  key={m.id}
+                  type="button"
+                  className="text-[11px] bg-surface-2 hover:bg-surface-2/80 text-text rounded px-2 py-1 border border-border/40 transition-colors"
+                  onClick={() => applyTemplateColumns(m)}
+                  title={m.matched_columns.map((mc) => `${mc.name}: ${mc.meaning}`).join("\n")}
+                >
+                  {m.template_name} <span className="text-accent font-medium">{m.match_pct}%</span>
+                </button>
+              ))}
+            </div>
+          </div>
         )}
 
         <div ref={tableRef} className="rounded-xl border border-border mb-4 max-h-[60vh] overflow-y-auto">

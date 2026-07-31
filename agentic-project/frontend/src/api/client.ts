@@ -228,7 +228,7 @@ export async function listDatasets() {
   }[]>("/api/v2/datasets");
 }
 
-import type { UploadedFileDraft, UploadFailure, PersonalDataset, ColumnDraft } from "../types";
+import type { UploadedFileDraft, UploadFailure, PersonalDataset, ColumnDraft, ColumnTemplate, TemplateMatch } from "../types";
 
 export async function uploadCsvFiles(files: File[], userId?: string) {
   const form = new FormData();
@@ -342,4 +342,28 @@ export async function listRegistryEntries(maintainedBy?: string) {
 export async function deleteRegistryEntry(entryId: number, userId?: string) {
   const params = userId ? `?user_id=${encodeURIComponent(userId)}` : "";
   return request<{ status: string; id: number }>(`/api/v2/registry-admin/entries/${entryId}${params}`, { method: "DELETE" });
+}
+
+export async function saveColumnTemplate(templateName: string, columns: ColumnDraft[], userId?: string) {
+  return request<ColumnTemplate>("/api/v2/column-templates", {
+    method: "POST",
+    body: JSON.stringify({ template_name: templateName, columns, user_id: userId }),
+  });
+}
+
+export async function listColumnTemplates(userId?: string) {
+  const params = userId ? `?user_id=${encodeURIComponent(userId)}` : "";
+  return request<{ templates: ColumnTemplate[] }>(`/api/v2/column-templates${params}`);
+}
+
+export async function deleteColumnTemplate(templateId: number, userId?: string) {
+  const params = userId ? `?user_id=${encodeURIComponent(userId)}` : "";
+  return request<{ status: string; id: number }>(`/api/v2/column-templates/${templateId}${params}`, { method: "DELETE" });
+}
+
+export async function matchColumnTemplates(columnNames: string[], userId?: string) {
+  return request<{ matches: TemplateMatch[] }>("/api/v2/column-templates/match", {
+    method: "POST",
+    body: JSON.stringify({ column_names: columnNames, user_id: userId }),
+  });
 }

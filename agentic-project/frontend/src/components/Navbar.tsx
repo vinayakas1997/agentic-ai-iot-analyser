@@ -18,6 +18,7 @@ export default function Navbar({ onBackToManage, onHelp }: { onBackToManage?: ()
   const language = useUiStore((s) => s.language);
   const setLanguage = useUiStore((s) => s.setLanguage);
   const logout = useAuthStore((s) => s.logout);
+  const userId = useAuthStore((s) => s.userId);
   const t = useT();
   const [open, setOpen] = useState(false);
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
@@ -195,11 +196,7 @@ export default function Navbar({ onBackToManage, onHelp }: { onBackToManage?: ()
         <button type="button" className={btnSecondary} onClick={logout}>
           {t("registryAdmin.logout")}
         </button>
-        <span
-          className={`w-2 h-2 rounded-full ${loading ? "bg-yellow-400" : "bg-success"}`}
-          aria-hidden
-        />
-        <span className="text-xs text-muted">{loading ? t("common.thinking") : t("nav.ready")}</span>
+        <span className="text-xs font-bold text-text">{loading ? t("common.thinking") : userId || t("nav.ready")}</span>
       </div>
     </header>
   );

@@ -40,6 +40,18 @@ class TaskRegistry(Base):
     version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
     task_definition: Mapped[dict] = mapped_column(JSONB, nullable=False)
 
+class ColumnTemplate(Base):
+    __tablename__ = "column_templates"
+    __table_args__ = (UniqueConstraint("user_id", "template_name", name="uq_column_templates_user_name"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[str] = mapped_column(Text, nullable=False)
+    template_name: Mapped[str] = mapped_column(Text, nullable=False)
+    column_definitions: Mapped[dict | list] = mapped_column(JSONB, nullable=False, default=list)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
 class UserRegistry(Base):
     """Personal (user-uploaded CSV) datasets — separate from the IoT team's global_registry.
     Each row points at one table inside that user's own SQLite file, never Postgres."""

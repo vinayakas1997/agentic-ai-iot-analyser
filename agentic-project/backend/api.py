@@ -35,6 +35,12 @@ from user_datasets import (
     fetch_active_user_datasets,
     llm_fill_missing_meanings,
 )
+from column_templates import (
+    save_template,
+    list_templates,
+    delete_template,
+    match_templates,
+)
 from registry_admin import (
     TableNotFoundError,
     introspect_pg_table,
@@ -246,6 +252,15 @@ class LlmFillRequest(BaseModel):
     user_id: str = ""
     columns: list[str]
     language: str = "en"
+
+class SaveTemplateRequest(BaseModel):
+    user_id: str = ""
+    template_name: str
+    columns: list[dict]
+
+class MatchTemplatesRequest(BaseModel):
+    user_id: str = ""
+    column_names: list[str]
 
 class LoginRequest(BaseModel):
     user_id: str
@@ -946,6 +961,36 @@ async def remove_user_dataset(dataset_id: int, user_id: str = ""):
     except ValueError:
         raise HTTPException(status_code=404, detail="Dataset not found")
     return {"status": "deleted", "id": dataset_id}
+
+@router.post("/column-templates")
+async def create_column_template(req: SaveTemplateRequest):
+    uid = _require_user_id(req.user_id)
+    if not req.template_name.strip():
+        raise HTTPException(status_code=400, detail="template_name is required")
+    return await save_template(uid, req.template_name.strip(), req.columns)
+
+@router.get("/column-templates")
+async def list_column_templates(user_id: str = ""):
+    uid = _require_user_id(user_id)
+    templates = await list_templates(uid)
+    return {"templates": templates}
+
+@router.delete("/column-templates/{template_id}")
+async def remove_column_template(template_id: int, user_id: str = ""):
+    uid = _require_user_id(user_id)
+    try:
+        await delete_template(uid, template_id)
+    except ValueError:
+        raise HTTPException(status_code=404, detail="Template not found")
+    return {"status": "deleted", "id": template_id}
+
+@router.post("/column-templates/match")
+async def match_columns_against_templates(req: MatchTemplatesRequest):
+    uid = _require_user_id(req.user_id)
+    if not req.column_names:
+        return {"matches": []}
+    matches = await match_templates(uid, req.column_names)
+    return {"matches": matches}
 
 @router.post("/login", response_model=LoginResponse)
 async def login(req: LoginRequest):
