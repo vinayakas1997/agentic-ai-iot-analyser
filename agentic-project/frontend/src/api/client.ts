@@ -256,6 +256,44 @@ export async function llmFillMeanings(datasetId: number, columns: string[], lang
   );
 }
 
+export async function registryLlmFill(
+  tableName: string,
+  columns: string[],
+  sampleRows: Record<string, unknown>[],
+  language?: string,
+  connectionId?: number,
+  userId?: string,
+) {
+  return request<{ columns: { name: string; meaning: string }[] }>("/api/v2/registry-admin/llm-fill", {
+    method: "POST",
+    body: JSON.stringify({
+      table_name: tableName,
+      columns,
+      sample_rows: sampleRows,
+      language,
+      connection_id: connectionId,
+      user_id: userId,
+    }),
+  });
+}
+
+export async function registryDraftDescription(
+  tableName: string,
+  columns: { name: string; meaning: string }[],
+  language?: string,
+  userId?: string,
+) {
+  return request<{ description: string }>("/api/v2/registry-admin/draft-description", {
+    method: "POST",
+    body: JSON.stringify({
+      table_name: tableName,
+      columns,
+      language,
+      user_id: userId,
+    }),
+  });
+}
+
 export async function listUserDatasets(userId?: string) {
   const params = userId ? `?user_id=${encodeURIComponent(userId)}` : "";
   return request<{ datasets: PersonalDataset[] }>(`/api/v2/user-datasets${params}`);
@@ -286,10 +324,75 @@ export interface RegistryColumnDraft {
   meaning: string;
 }
 
-export async function introspectTable(tableName: string, userId?: string) {
-  return request<{ table_name: string; columns: RegistryColumnDraft[]; sample_rows: Record<string, unknown>[] }>(
+export interface DbConnection {
+  id: number;
+  name: string;
+  db_type: "postgres" | "mysql";
+  host: string;
+  port: number;
+  database_name: string;
+  username: string;
+  password?: string;
+  schema_name: string | null;
+  created_by?: string | null;
+  created_at?: string | null;
+}
+
+export interface ConnectionTestResult {
+  connection_id: number;
+  ok: boolean;
+  latency_ms: number;
+  error?: string;
+}
+
+export async function createDbConnection(params: {
+  name: string;
+  db_type: string;
+  host: string;
+  port: number;
+  database_name: string;
+  username: string;
+  password: string;
+  schema_name?: string;
+  user_id?: string;
+}) {
+  return request<{ id: number; status: string }>("/api/v2/db-connections", {
+    method: "POST",
+    body: JSON.stringify({ ...params, user_id: params.user_id || "" }),
+  });
+}
+
+export async function listDbConnections() {
+  return request<{ connections: DbConnection[] }>("/api/v2/db-connections");
+}
+
+export async function deleteDbConnection(connectionId: number, userId?: string) {
+  const qs = userId ? `?user_id=${encodeURIComponent(userId)}` : "";
+  return request<{ status: string; id: number }>(`/api/v2/db-connections/${connectionId}${qs}`, { method: "DELETE" });
+}
+
+export async function testDbConnection(connectionId: number, userId?: string) {
+  const qs = userId ? `?user_id=${encodeURIComponent(userId)}` : "";
+  return request<ConnectionTestResult>(`/api/v2/db-connections/${connectionId}/test${qs}`, { method: "POST" });
+}
+
+export async function listConnectionTables(connectionId: number, userId?: string) {
+  const qs = userId ? `?user_id=${encodeURIComponent(userId)}` : "";
+  return request<{ connection_id: number; tables: string[] }>(`/api/v2/db-connections/${connectionId}/tables${qs}`);
+}
+
+export interface IntrospectResult {
+  table_name: string;
+  columns: RegistryColumnDraft[];
+  sample_rows: Record<string, unknown>[];
+  data_earliest_ts: string | null;
+  data_earliest_col: string | null;
+}
+
+export async function introspectTable(tableName: string, userId?: string, connectionId?: number) {
+  return request<IntrospectResult>(
     "/api/v2/registry-admin/introspect",
-    { method: "POST", body: JSON.stringify({ table_name: tableName, user_id: userId }) }
+    { method: "POST", body: JSON.stringify({ table_name: tableName, user_id: userId, connection_id: connectionId }) }
   );
 }
 
@@ -304,6 +407,8 @@ export async function createRegistryEntry(params: {
   join_hints?: unknown;
   suggested_aims?: unknown;
   synonyms?: string[];
+  connection_id?: number;
+  data_earliest_ts?: string | null;
   user_id?: string;
 }) {
   return request<{ id: number; status: string }>("/api/v2/registry-admin/entries", {
@@ -324,6 +429,8 @@ export interface RegistryEntry {
   line_name: string;
   dataset_name: string;
   table: string | null;
+  connection_id: number | null;
+  db_type: string | null;
   description: string | null;
   column_definitions: RegistryColumnDraft[];
   role: string | null;
@@ -332,6 +439,7 @@ export interface RegistryEntry {
   synonyms: string[] | null;
   status: string;
   maintained_by: string | null;
+  data_earliest_ts: string | null;
 }
 
 export async function listRegistryEntries(maintainedBy?: string) {

@@ -34,3 +34,14 @@ async def execute_sql(db_path: str, sql: str) -> dict:
         "rows": data,
         "row_count": len(data),
     }
+
+
+async def explain_sql(db_path: str, sql: str) -> list[str]:
+    """Run EXPLAIN QUERY PLAN to validate SQL syntax against the given SQLite file."""
+    validated = validate_sql(sql)
+    conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+    try:
+        cursor = conn.execute(f"EXPLAIN QUERY PLAN {validated}")
+        return [str(r[0]) for r in cursor.fetchall()]
+    finally:
+        conn.close()

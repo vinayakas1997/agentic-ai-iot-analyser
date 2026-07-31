@@ -14,7 +14,6 @@ from aims import generate_chat_response, generate_sql, fix_sql, criticize_sql, e
 from llm_client import parse_numbered_suggestions
 from logger import log_route, log_llm_call, log_sql, log_aims, log_response, log_full_prompt
 from llm_client import summarize_turns, classify_route, extract_sql, extract_sql_fallback, generate_llm_response, interpret_results, direct_prompt, suggest_prompt, focus_prompt, language_instruction
-from sqlite_executor import execute_sql as execute_sqlite_sql
 from focus_agent import run_focus_agent, normalize_halfwidth
 from sql_executor import validate_sql
 from sql_executor import execute_sql
@@ -27,6 +26,7 @@ from sqlite_importer import import_csv_to_sqlite
 import sqlite_executor
 from user_datasets import (
     draft_column_meanings,
+    draft_dataset_description,
     create_draft_dataset,
     confirm_dataset,
     list_user_datasets,
@@ -49,6 +49,19 @@ from registry_admin import (
     list_entries,
     delete_entry,
 )
+from db_connections import (
+    ConnectionNotFoundError,
+    get_connection,
+    create_connection,
+    list_connections,
+    delete_connection,
+    test_connection,
+    list_tables as list_conn_tables,
+    introspect_table as introspect_external_table,
+    execute_sql_on,
+    quote_ident,
+)
+from query_router import route_execute
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/v2")
@@ -272,6 +285,21 @@ class LoginResponse(BaseModel):
 class IntrospectRequest(BaseModel):
     user_id: str = ""
     table_name: str
+    connection_id: int | None = None
+
+class RegistryLlmFillRequest(BaseModel):
+    user_id: str = ""
+    table_name: str
+    columns: list[str] = []
+    sample_rows: list[dict] | None = None
+    language: str | None = None
+    connection_id: int | None = None
+
+class RegistryDescriptionRequest(BaseModel):
+    user_id: str = ""
+    table_name: str
+    columns: list[dict] = []
+    language: str | None = None
 
 class CreateRegistryEntryRequest(BaseModel):
     user_id: str = ""
@@ -285,11 +313,24 @@ class CreateRegistryEntryRequest(BaseModel):
     join_hints: dict | list | None = None
     suggested_aims: dict | list | None = None
     synonyms: list[str] | None = None
+    connection_id: int | None = None
+    data_earliest_ts: str | None = None
 
 class ConfirmRegistryEntryRequest(BaseModel):
     user_id: str = ""
     columns: list[dict]
     description: str = ""
+
+class CreateDbConnectionRequest(BaseModel):
+    user_id: str = ""
+    name: str
+    db_type: str
+    host: str
+    port: int
+    database_name: str
+    username: str
+    password: str
+    schema_name: str | None = None
 
 # ── Helpers ──
 
@@ -611,12 +652,16 @@ async def execute_query(req: ExecuteQueryRequest):
             )
         )
         for reg in result.scalars().all():
+            sc = reg.source_config or {}
             datasets_data.append({
                 "dataset_name": reg.dataset_name,
-                "table": reg.source_config.get("table") if reg.source_config else reg.dataset_name,
+                "table": sc.get("table") or reg.dataset_name,
                 "description": reg.description,
                 "column_definitions": reg.column_definitions,
                 "join_hints": reg.join_hints,
+                "connection_id": sc.get("connection_id"),
+                "db_type": sc.get("db_type"),
+                "backend": "external" if sc.get("connection_id") else "pg",
             })
 
     # Also check personal datasets (SQLite)
@@ -649,18 +694,9 @@ async def execute_query(req: ExecuteQueryRequest):
         )
 
         if critique.get("pass"):
-            # Critic approved — execute
+            # Critic approved — execute against the backend owning the table(s)
             try:
-                sqlite_tables = {d["table"]: d.get("sqlite_path") for d in datasets_data if d.get("sqlite_path")}
-                if sqlite_tables:
-                    import re
-                    referenced_sqlite = [t for t in sqlite_tables if re.search(rf'\b{re.escape(t)}\b', sql, re.IGNORECASE)]
-                    if referenced_sqlite:
-                        result = await execute_sqlite_sql(sqlite_tables[referenced_sqlite[0]], sql)
-                    else:
-                        result = await execute_sql(sql)
-                else:
-                    result = await execute_sql(sql)
+                result = await route_execute(datasets_data, sql)
             except Exception as e:
                 # Runtime failure (unlikely after critic) — feed back to fix
                 logger.warning("SQL passed critic but failed at runtime: %s", str(e)[:200])
@@ -703,7 +739,7 @@ async def execute_query(req: ExecuteQueryRequest):
 
     # Last resort: try executing whatever SQL we have
     try:
-        result = await execute_sql(sql)
+        result = await route_execute(datasets_data, sql)
     except Exception:
         raise HTTPException(
             status_code=400,
@@ -1010,23 +1046,136 @@ def _require_iot_role(user_id: str) -> None:
 
 @router.post("/registry-admin/introspect")
 async def registry_introspect(req: IntrospectRequest):
-    """Look up an existing Postgres table's columns + a sample, and draft column meanings —
-    nothing is saved yet, same preview-before-commit shape as CSV upload."""
+    """Look up an existing table's columns + a sample, and draft column meanings —
+    nothing is saved yet, same preview-before-commit shape as CSV upload. Uses a
+    registered external connection when `connection_id` is provided, otherwise the
+    main Postgres database (current behavior)."""
     _require_iot_role(_require_user_id(req.user_id))
+    data_earliest_ts = None
+    data_earliest_col = None
     try:
-        columns, sample_rows = await introspect_pg_table(req.table_name)
+        if req.connection_id:
+            conn = await get_connection(req.connection_id)
+            info = await introspect_external_table(conn, req.table_name)
+            columns = info["columns"]
+            sample_rows = info["sample_rows"]
+            data_earliest_ts = info["data_earliest_ts"]
+            data_earliest_col = info["data_earliest_col"]
+        else:
+            columns, sample_rows = await introspect_pg_table(req.table_name)
     except TableNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
+    except ConnectionNotFoundError:
+        raise HTTPException(status_code=404, detail="Connection not found")
     col_names = [c["name"] for c in columns]
     drafted = await draft_column_meanings(req.table_name, col_names, sample_rows)
     meaning_by_name = {d["name"]: d["meaning"] for d in drafted}
     for c in columns:
         c["meaning"] = meaning_by_name.get(c["name"], "")
-    return {"table_name": req.table_name, "columns": columns, "sample_rows": sample_rows[:5]}
+    return {
+        "table_name": req.table_name,
+        "columns": columns,
+        "sample_rows": sample_rows[:5],
+        "data_earliest_ts": data_earliest_ts,
+        "data_earliest_col": data_earliest_col,
+    }
+
+@router.post("/registry-admin/llm-fill")
+async def registry_llm_fill(req: RegistryLlmFillRequest):
+    """'LLM fill empty' for the registry introspect flow — draft meanings for the
+    given column names using the same LLM drafter as introspect."""
+    _require_iot_role(_require_user_id(req.user_id))
+    if not req.columns:
+        return {"columns": []}
+    drafted = await draft_column_meanings(
+        req.table_name,
+        req.columns,
+        req.sample_rows or [],
+        language=req.language or "en",
+    )
+    return {"columns": drafted}
+
+@router.post("/registry-admin/draft-description")
+async def registry_draft_description(req: RegistryDescriptionRequest):
+    """Draft a dataset description from the table name + column meanings (IoT registry flow)."""
+    _require_iot_role(_require_user_id(req.user_id))
+    return {"description": await draft_dataset_description(req.table_name, req.columns, req.language or "en")}
+
+# ── DB connections (IoT team: register + live-test external databases) ──
+
+@router.post("/db-connections")
+async def db_connections_create(req: CreateDbConnectionRequest):
+    _require_iot_role(_require_user_id(req.user_id))
+    if req.db_type not in ("postgres", "mysql"):
+        raise HTTPException(status_code=400, detail="db_type must be 'postgres' or 'mysql'")
+    conn_id = await create_connection(
+        name=req.name,
+        db_type=req.db_type,
+        host=req.host,
+        port=req.port,
+        database_name=req.database_name,
+        username=req.username,
+        password=req.password,
+        schema_name=req.schema_name,
+        created_by=req.user_id,
+    )
+    return {"id": conn_id, "status": "created"}
+
+@router.get("/db-connections")
+async def db_connections_list():
+    return {"connections": await list_connections()}
+
+@router.delete("/db-connections/{connection_id}")
+async def db_connections_delete(connection_id: int, user_id: str = ""):
+    _require_iot_role(_require_user_id(user_id))
+    try:
+        await delete_connection(connection_id)
+    except ConnectionNotFoundError:
+        raise HTTPException(status_code=404, detail="Connection not found")
+    return {"status": "deleted", "id": connection_id}
+
+@router.post("/db-connections/{connection_id}/test")
+async def db_connections_test(connection_id: int, user_id: str = ""):
+    _require_iot_role(_require_user_id(user_id))
+    try:
+        conn = await get_connection(connection_id)
+    except ConnectionNotFoundError:
+        raise HTTPException(status_code=404, detail="Connection not found")
+    return {"connection_id": connection_id, **await test_connection(conn)}
+
+@router.get("/db-connections/{connection_id}/tables")
+async def db_connections_tables(connection_id: int, user_id: str = ""):
+    _require_iot_role(_require_user_id(user_id))
+    try:
+        conn = await get_connection(connection_id)
+        tables = await list_conn_tables(conn)
+    except ConnectionNotFoundError:
+        raise HTTPException(status_code=404, detail="Connection not found")
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e)[:300])
+    return {"connection_id": connection_id, "tables": tables}
 
 @router.post("/registry-admin/entries")
 async def registry_create_entry(req: CreateRegistryEntryRequest):
     _require_iot_role(_require_user_id(req.user_id))
+    source_config = None
+    if req.connection_id:
+        conn = await get_connection(req.connection_id)
+        source_config = {
+            "connection_id": conn.id,
+            "db_type": conn.db_type,
+            "schema": conn.schema_name or ("public" if conn.db_type == "postgres" else conn.database_name),
+            "table": req.table_name,
+        }
+    data_earliest_ts = None
+    if req.data_earliest_ts:
+        try:
+            parsed = datetime.fromisoformat(req.data_earliest_ts)
+            if parsed.tzinfo is None:
+                parsed = parsed.replace(tzinfo=timezone.utc)
+            data_earliest_ts = parsed
+        except ValueError:
+            raise HTTPException(status_code=400, detail="data_earliest_ts must be an ISO date/time")
     entry_id = await create_draft_entry(
         maintained_by=req.maintained_by,
         line_name=req.line_name,
@@ -1038,6 +1187,8 @@ async def registry_create_entry(req: CreateRegistryEntryRequest):
         join_hints=req.join_hints,
         suggested_aims=req.suggested_aims,
         synonyms=req.synonyms,
+        source_config=source_config,
+        data_earliest_ts=data_earliest_ts,
     )
     return {"id": entry_id, "status": "draft"}
 
@@ -1075,6 +1226,10 @@ async def _fetch_sample_rows(ds: dict, limit: int = 5) -> list[dict]:
             if not db_path:
                 return []
             result = await sqlite_executor.execute_sql(db_path, f'SELECT * FROM "{table}" LIMIT {limit}')
+            return result.get("rows", [])
+        elif ds.get("connection_id"):
+            conn = await get_connection(ds["connection_id"])
+            result = await execute_sql_on(conn, f'SELECT * FROM {quote_ident(conn, table)} LIMIT {limit}')
             return result.get("rows", [])
         else:
             result = await execute_sql(f'SELECT * FROM "{table}" LIMIT {limit}')
@@ -1306,7 +1461,7 @@ async def _handle_direct(
 
     set_progress(session_id, "executing_query", "running", "Running query...")
     try:
-        result = await execute_sql(sql)
+        result = await route_execute(datasets_data, sql)
     except Exception as e:
         set_progress(session_id, "executing_query", "done", "Query failed")
         error_msg = str(e)[:300]
@@ -1533,16 +1688,7 @@ async def _handle_focus_multi(
 
         try:
             sql = validate_sql(sql)
-            sqlite_tables = {d["table"]: d.get("sqlite_path") for d in datasets_data if d.get("sqlite_path")}
-            if sqlite_tables:
-                import re
-                referenced_sqlite = [t for t in sqlite_tables if re.search(rf'\b{re.escape(t)}\b', sql, re.IGNORECASE)]
-                if referenced_sqlite:
-                    result = await execute_sqlite_sql(sqlite_tables[referenced_sqlite[0]], sql)
-                else:
-                    result = await execute_sql(sql)
-            else:
-                result = await execute_sql(sql)
+            result = await route_execute(datasets_data, sql)
         except Exception as e:
             per_aim_summaries.append(f"### {aim}\nCould not complete this analysis: {str(e)[:200]}")
             set_progress(session_id, f"aim_{idx}", "done", f"Aim {idx+1}: error — {str(e)[:60]}")
@@ -1717,7 +1863,9 @@ async def send_message(req: MessageRequest):
                 "join_hints": reg.join_hints,
                 "suggested_aims": reg.suggested_aims,
                 "table": sc.get("table", reg.dataset_name),
-                "backend": "pg",
+                "connection_id": sc.get("connection_id"),
+                "db_type": sc.get("db_type"),
+                "backend": "external" if sc.get("connection_id") else "pg",
             })
 
     # Merge in the user's personal (uploaded CSV) datasets, if any of the attached

@@ -3,7 +3,8 @@
 import json
 import logging
 from config import get_settings, get_llm_client
-from sql_executor import explain_sql, validate_sql, validate_sql_safety, clean_sql
+from sql_executor import validate_sql, validate_sql_safety, clean_sql
+from query_router import route_explain
 from llm_client import build_enrichment_system_prompt, language_instruction
 from column_profile import profile_columns
 
@@ -124,8 +125,9 @@ SQL_GENERATION_PROMPT = """You are a PostgreSQL query generator. Given the datas
 - Output ONLY the SQL query — no explanation, no markdown formatting
 - Use the exact table names shown in the `###` headers — do NOT add schema qualifiers (write `test_fruits` not `fruits.test_fruits` or `public.test_fruits`)
 - The `###` header IS the table name — the bullet points after it are just descriptions, not tables
+- The `[backend: ...]` tag in each `###` header tells you which database that table lives in. NEVER JOIN or reference tables that have different backend tags in the same query — they live in separate databases and cannot be mixed. Query one database per statement.
 - Only reference columns listed in the schema
-- Use PostgreSQL syntax
+- Use the dialect of the backend tagged in the headers (PostgreSQL for `[postgres:...]`, MySQL for `[mysql:...]`)
 - Always include a LIMIT clause (max 200 rows)
 - Only SELECT statements are allowed
 - Use table aliases when joining multiple tables
@@ -145,12 +147,19 @@ def build_sql_context(datasets: list[dict]) -> str:
         table = ds.get("table") or name
         desc = ds.get("description") or ""
         cols = ds.get("column_definitions") or ds.get("columns", [])
+        backend = ds.get("backend", "pg")
+        if ds.get("connection_id") and backend != "sqlite":
+            tag = f"[{ds.get('db_type') or 'external'}:{name}]"
+        elif backend == "sqlite":
+            tag = "[personal:sqlite]"
+        else:
+            tag = "[postgres:main]"
         col_rows = "\n".join(
             f"- `{c.get('name', '')}` ({c.get('datatype', 'text')}) — {c.get('meaning', '')}"
             for c in cols
         )
         blocks.append(
-            f"### {table}\n*{name}: {desc}*\n\nColumns:\n{col_rows}"
+            f"### {table} {tag}\n*{name}: {desc}*\n\nColumns:\n{col_rows}"
         )
     return "\n\n".join(blocks)
 
@@ -173,9 +182,9 @@ async def criticize_sql(
     except ValueError as e:
         return {"pass": False, "issues": [str(e)[:300]], "suggestions": "Fix the validation error"}
 
-    # 1. Syntax check via EXPLAIN
+    # 1. Syntax check via EXPLAIN on the backend owning the referenced table(s)
     try:
-        await explain_sql(validated)
+        await route_explain(datasets_data, validated)
     except Exception as e:
         return {"pass": False, "issues": [str(e)[:300]], "suggestions": "Fix the syntax error"}
 

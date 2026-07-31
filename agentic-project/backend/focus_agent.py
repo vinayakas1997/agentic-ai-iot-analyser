@@ -14,8 +14,7 @@ import logging
 from difflib import get_close_matches
 
 from config import get_settings, get_llm_client
-from sql_executor import validate_sql, execute_sql
-from sqlite_executor import execute_sql as execute_sqlite_sql
+from sql_executor import validate_sql
 from llm_client import language_instruction
 from logger import log_sql
 
@@ -188,31 +187,20 @@ async def _run_query_data(sql: str, datasets_data: list[dict] | None = None) -> 
     except ValueError as e:
         return {"ok": False, "error": f"SQL validation failed: {e}"}
 
-    # Personal (uploaded CSV) datasets live in the user's own SQLite file, separate
-    # from the shared Postgres global_registry datasets — route to whichever engine
-    # actually holds the table(s) this query references.
+    # Personal (uploaded CSV) datasets live in the user's own SQLite file, shared
+    # global_registry tables in the main Postgres, and IoT-registered tables on
+    # external PostgreSQL/MySQL connections — route to whichever engine actually
+    # holds the table(s) this query references. Mixing databases is rejected.
     datasets_data = datasets_data or []
-    sqlite_tables = {d["table"]: d.get("sqlite_path") for d in datasets_data if d.get("backend") == "sqlite"}
-    pg_tables = {d["table"] for d in datasets_data if d.get("backend", "pg") == "pg"}
-    referenced_sqlite = [t for t in sqlite_tables if re.search(rf'\b{re.escape(t)}\b', validated, re.IGNORECASE)]
-    referenced_pg = [t for t in pg_tables if re.search(rf'\b{re.escape(t)}\b', validated, re.IGNORECASE)]
-
-    if referenced_sqlite and referenced_pg:
-        return {
-            "ok": False,
-            "error": (
-                "This query mixes a personal uploaded dataset with a shared dataset — "
-                "they live in separate databases and cannot be joined directly. Query them separately."
-            ),
-        }
+    try:
+        from query_router import route_execute
+        result = await route_execute(datasets_data, validated)
+    except ValueError as e:
+        return {"ok": False, "error": f"{e}"}
 
     column_map = _build_column_map(datasets_data)
 
     try:
-        if referenced_sqlite:
-            result = await execute_sqlite_sql(sqlite_tables[referenced_sqlite[0]], validated)
-        else:
-            result = await execute_sql(validated)
         log_sql("agent_tool_call", f"query_data: {validated[:150]}")
         # Normalize half-width katakana in result so the LLM doesn't hallucinate □ characters
         if result and result.get("rows"):

@@ -84,6 +84,52 @@ async def draft_column_meanings(
     return [{"name": c, "meaning": by_name.get(dn, "")} for c, dn in zip(columns, display_names)]
 
 
+_DESCRIPTION_PROMPT = """You are writing a dataset description for a data analyst.
+Table: {table_name}
+Columns and their meanings:
+{column_meanings}
+
+Write ONE concise paragraph (2-3 sentences) describing what this dataset is about and what
+kind of analysis it supports.
+{language_instruction}
+IMPORTANT: The description MUST be written in the user's language shown above.
+Return ONLY the description text — no quotes, no markdown, no headings.
+"""
+
+
+async def draft_dataset_description(
+    table_name: str, columns: list[dict], language: str = "en",
+) -> str:
+    """LLM drafts a 2-3 sentence dataset description from the table name + column meanings."""
+    settings = get_settings()
+    client = get_llm_client()
+
+    lines = []
+    for c in columns:
+        name = c.get("name", "")
+        meaning = c.get("meaning") or ""
+        lines.append(f"{name}: {meaning}")
+    if not lines:
+        lines.append("(no columns)")
+    prompt = _DESCRIPTION_PROMPT.format(
+        table_name=table_name,
+        column_meanings="\n".join(lines),
+        language_instruction=language_instruction(language),
+    )
+    try:
+        response = await client.chat.completions.create(
+            model=settings.llm_model,
+            messages=[{"role": "user", "content": prompt}],
+            max_tokens=settings.max_tokens,
+            temperature=0.2,
+            extra_body={"chat_template_kwargs": {"enable_thinking": False}},
+        )
+        return (response.choices[0].message.content or "").strip()
+    except Exception:
+        logger.exception("draft_dataset_description: LLM call failed")
+        return ""
+
+
 async def create_draft_dataset(
     user_id: str,
     dataset_name: str,

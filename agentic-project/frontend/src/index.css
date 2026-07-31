@@ -4,6 +4,7 @@
   --color-bg-deep: #08080c;
   --color-surface-1: #111116;
   --color-surface-2: #0d0d12;
+  --color-app: #16161d;
   --color-border: rgba(255,255,255,0.12);
   --color-border-2: rgba(255,255,255,0.09);
   --color-text: #eeeef2;
@@ -80,6 +81,36 @@ body {
 }
 
 .animate-shake { animation: shake 0.3s ease-in-out; }
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+.spinner {
+  width: 1em;
+  height: 1em;
+  border: 2px solid currentColor;
+  border-top-color: transparent;
+  border-radius: 9999px;
+  animation: spin 0.7s linear infinite;
+}
+
+@keyframes status-pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.45; transform: scale(0.8); }
+}
+
+.status-pulse { animation: status-pulse 1.6s ease-in-out infinite; }
+
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb {
+  background: rgba(255,255,255,0.14);
+  border-radius: 9999px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.26); background-clip: padding-box; border: 2px solid transparent; }
 
 @keyframes pulse-glow-manager {
   0%, 100% { opacity: 1; }

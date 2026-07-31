@@ -52,6 +52,26 @@ class ColumnTemplate(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
 
+class DbConnection(Base):
+    """External database connection registered by the IoT team. Tables from these connections
+    can be introspected for the global registry and queried live by the analyser.
+    Shared across all IoT users (no owner column)."""
+    __tablename__ = "db_connections"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    name: Mapped[str] = mapped_column(Text, nullable=False)
+    db_type: Mapped[str] = mapped_column(Text, nullable=False)  # postgres | mysql
+    host: Mapped[str] = mapped_column(Text, nullable=False)
+    port: Mapped[int] = mapped_column(Integer, nullable=False)
+    database_name: Mapped[str] = mapped_column(Text, nullable=False)
+    username: Mapped[str] = mapped_column(Text, nullable=False)
+    password: Mapped[str] = mapped_column(Text, nullable=False)
+    schema_name: Mapped[str | None] = mapped_column(Text, nullable=True, default="public")
+    created_by: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
 class UserRegistry(Base):
     """Personal (user-uploaded CSV) datasets — separate from the IoT team's global_registry.
     Each row points at one table inside that user's own SQLite file, never Postgres."""

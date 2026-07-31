@@ -9,6 +9,7 @@ reused unchanged here.
 """
 
 import logging
+from datetime import datetime
 
 from sqlalchemy import select, delete, text
 
@@ -74,8 +75,12 @@ async def create_draft_entry(
     join_hints: dict | list | None = None,
     suggested_aims: dict | list | None = None,
     synonyms: list[str] | None = None,
+    source_config: dict | None = None,
+    data_earliest_ts: datetime | None = None,
 ) -> int:
-    """Insert (or replace, on re-registration of the same line+dataset) a draft global_registry row."""
+    """Insert (or replace, on re-registration of the same line+dataset) a draft global_registry row.
+    `source_config` comes prebuilt from the caller (e.g. connection_id + db_type + schema for
+    external DBs); when omitted it stays the main-DB form {"table": table_name}."""
     async with AsyncSessionLocal() as db:
         existing = (await db.execute(
             select(GlobalRegistry).where(
@@ -84,13 +89,14 @@ async def create_draft_entry(
         )).scalar_one_or_none()
         if existing:
             existing.description = description
-            existing.source_type = "pg"
-            existing.source_config = {"table": table_name}
+            existing.source_type = "pg" if not source_config else "external"
+            existing.source_config = source_config or {"table": table_name}
             existing.column_definitions = column_definitions
             existing.role = role
             existing.join_hints = join_hints
             existing.suggested_aims = suggested_aims
             existing.synonyms = synonyms
+            existing.data_earliest_ts = data_earliest_ts
             existing.maintained_by = maintained_by
             existing.status = "draft"
             await db.commit()
@@ -100,13 +106,14 @@ async def create_draft_entry(
             line_name=line_name,
             dataset_name=dataset_name,
             description=description,
-            source_type="pg",
-            source_config={"table": table_name},
+            source_type="pg" if not source_config else "external",
+            source_config=source_config or {"table": table_name},
             column_definitions=column_definitions,
             role=role,
             join_hints=join_hints,
             suggested_aims=suggested_aims,
             synonyms=synonyms,
+            data_earliest_ts=data_earliest_ts,
             maintained_by=maintained_by,
             status="draft",
         )
@@ -147,6 +154,8 @@ async def list_entries(maintained_by: str | None = None) -> list[dict]:
             "line_name": r.line_name,
             "dataset_name": r.dataset_name,
             "table": r.source_config.get("table") if r.source_config else None,
+            "connection_id": (r.source_config or {}).get("connection_id"),
+            "db_type": (r.source_config or {}).get("db_type"),
             "description": r.description,
             "column_definitions": r.column_definitions,
             "role": r.role,
@@ -155,6 +164,7 @@ async def list_entries(maintained_by: str | None = None) -> list[dict]:
             "synonyms": r.synonyms,
             "status": r.status,
             "maintained_by": r.maintained_by,
+            "data_earliest_ts": r.data_earliest_ts.isoformat() if r.data_earliest_ts else None,
         }
         for r in rows
     ]

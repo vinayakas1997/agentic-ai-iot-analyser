@@ -8,8 +8,8 @@ import type { SessionMeta } from "../types/manager";
 import { panelClass, monoClass } from "../lib/styles";
 import { IconDatabase, IconEdit, IconTrash } from "../lib/icons";
 import { listDatasets, listUserDatasets, deleteUserDataset } from "../api/client";
-import { DatasetColumns } from "../components/DatasetColumns";
 import EditColumnsDialog from "../components/EditColumnsDialog";
+import DatasetDetailsDialog from "../components/DatasetDetailsDialog";
 import { useT } from "../lib/i18n";
 import type { DatasetInfo, PersonalDataset } from "../types";
 
@@ -37,7 +37,7 @@ export default function ContextSection() {
 
   const [datasets, setDatasets] = useState<DatasetInfo[]>([]);
   const [personalDatasets, setPersonalDatasets] = useState<PersonalDataset[]>([]);
-  const [expandedDataset, setExpandedDataset] = useState<string | null>(null);
+  const [detailsDataset, setDetailsDataset] = useState<DatasetInfo | PersonalDataset | null>(null);
   const [editingDataset, setEditingDataset] = useState<PersonalDataset | null>(null);
   const [editingTitle, setEditingTitle] = useState(false);
   const [titleInput, setTitleInput] = useState("");
@@ -237,9 +237,9 @@ export default function ContextSection() {
                   <button
                     type="button"
                     className="text-[11px] font-medium px-2.5 py-1 rounded-full bg-white/5 text-muted hover:bg-white/10 hover:text-text border border-border/30 transition-all shrink-0"
-                    onClick={() => setExpandedDataset(expandedDataset === ds.dataset_name ? null : ds.dataset_name)}
+                    onClick={() => setDetailsDataset(ds)}
                   >
-                    {expandedDataset === ds.dataset_name ? t("common.hide") : t("common.details")}
+                    {t("common.details")}
                   </button>
                   {storeAttached.includes(ds.dataset_name) ? (
                     lockedByAims.includes(ds.dataset_name) ? (
@@ -277,16 +277,6 @@ export default function ContextSection() {
                     </button>
                   )}
                 </div>
-                {expandedDataset === ds.dataset_name && (
-                  <div className="px-3 pb-3 space-y-2">
-                    {ds.description && (
-                      <div className="text-[11px] text-muted leading-relaxed bg-white/[0.02] rounded-lg px-3 py-2 border border-border/20 shadow-[inset_0_1px_1px_rgba(0,0,0,0.2)]">
-                        {ds.description}
-                      </div>
-                    )}
-                    <DatasetColumns columns={ds.column_definitions} />
-                  </div>
-                )}
               </div>
             ))}
           </div>
@@ -320,9 +310,9 @@ export default function ContextSection() {
                   <button
                     type="button"
                     className="text-[11px] font-medium px-2.5 py-1 rounded-full bg-white/5 text-muted hover:bg-white/10 hover:text-text border border-border/30 transition-all shrink-0"
-                    onClick={() => setExpandedDataset(expandedDataset === ds.dataset_name ? null : ds.dataset_name)}
+                    onClick={() => setDetailsDataset(ds)}
                   >
-                    {expandedDataset === ds.dataset_name ? t("common.hide") : t("common.details")}
+                    {t("common.details")}
                   </button>
                   {storeAttached.includes(ds.dataset_name) ? (
                     <button
@@ -369,21 +359,15 @@ export default function ContextSection() {
                     <IconTrash size={13} />
                   </button>
                 </div>
-                {expandedDataset === ds.dataset_name && (
-                  <div className="px-3 pb-3 space-y-2">
-                    {ds.description && (
-                      <div className="text-[11px] text-muted leading-relaxed bg-white/[0.02] rounded-lg px-3 py-2 border border-border/20 shadow-[inset_0_1px_1px_rgba(0,0,0,0.2)]">
-                        {ds.description}
-                      </div>
-                    )}
-                    <DatasetColumns columns={ds.column_definitions} />
-                  </div>
-                )}
               </div>
             ))}
           </div>
         )}
       </div>
+
+      {detailsDataset && (
+        <DatasetDetailsDialog dataset={detailsDataset} onClose={() => setDetailsDataset(null)} />
+      )}
 
       {editingDataset && (
         <EditColumnsDialog dataset={editingDataset} onClose={() => setEditingDataset(null)} />

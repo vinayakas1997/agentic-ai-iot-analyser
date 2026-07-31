@@ -684,6 +684,29 @@ export default function ChatSection() {
                           {ds.role ? ` · ${ds.role}` : ""}
                           {ds.table ? ` · ${ds.table}` : ""}
                         </div>
+                        {Array.isArray(ds.suggested_aims) && ds.suggested_aims.length > 0 && (
+                          <div className="flex flex-wrap gap-1 mt-1">
+                            {ds.suggested_aims.map((a, ai) => {
+                              const aimText = typeof a === "string" ? a : a?.aim || "";
+                              const aimDesc = typeof a === "string" ? undefined : a?.description;
+                              return (
+                                <button
+                                  key={ai}
+                                  type="button"
+                                  className="inline-flex items-center gap-1 rounded-md bg-accent/10 border border-accent/20 text-accent text-[10px] px-1.5 py-0.5 truncate max-w-full hover:bg-accent/20 transition-colors"
+                                  title={aimText}
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    useAim({ aim: aimText, description: aimDesc, datasets: [ds.dataset_name] });
+                                  }}
+                                >
+                                  <IconTarget size={9} />
+                                  {aimText}
+                                </button>
+                              );
+                            })}
+                          </div>
+                        )}
                       </div>
                       <span className="text-[11px] text-muted shrink-0 whitespace-nowrap">{ds.column_definitions.length} {t("chat.colsSuffix")}</span>
                       <span
@@ -699,6 +722,34 @@ export default function ChatSection() {
                     {expandedDataset === ds.dataset_name && (
                       <div className="px-11 pb-3">
                         <DatasetColumns columns={ds.column_definitions} />
+                        {Array.isArray(ds.suggested_aims) && ds.suggested_aims.length > 0 && (
+                          <div className="mt-2">
+                            <div className="text-[10.5px] font-semibold tracking-wider uppercase text-muted mb-1">
+                              {t("chat.suggestedAims")}
+                            </div>
+                            <div className="flex flex-wrap gap-1">
+                              {ds.suggested_aims.map((a, ai) => {
+                                const aimText = typeof a === "string" ? a : a?.aim || "";
+                                const aimDesc = typeof a === "string" ? undefined : a?.description;
+                                return (
+                                  <button
+                                    key={ai}
+                                    type="button"
+                                    className="inline-flex items-center gap-1 rounded-md bg-accent/10 border border-accent/20 text-accent text-[10px] px-1.5 py-0.5 hover:bg-accent/20 transition-colors"
+                                    title={aimText}
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      useAim({ aim: aimText, description: aimDesc, datasets: [ds.dataset_name] });
+                                    }}
+                                  >
+                                    <IconTarget size={9} />
+                                    {aimText}
+                                  </button>
+                                );
+                              })}
+                            </div>
+                          </div>
+                        )}
                       </div>
                     )}
                   </div>
