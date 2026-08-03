@@ -300,12 +300,13 @@ export default function ChatSection() {
       }
       for (const [tag, timestamps] of Object.entries(tagTurnCount)) {
         if (timestamps.length > 0 && timestamps.length % 5 === 0 && !summarizingTags.has(tag)) {
+          const group = timestamps.slice(-5);
           const existingEntries = contextSummaries[tag] || [];
+          // Cover the current group of 5 — not all timestamps (entries only store one group each).
           const alreadyCovered = existingEntries.some((e) =>
-            timestamps.every((ts) => e.turn_timestamps.includes(ts))
+            group.every((ts) => e.turn_timestamps.includes(ts))
           );
           if (alreadyCovered) continue;
-          const group = timestamps.slice(-5);
           summaryTimerRef.current = setTimeout(() => triggerSummary(tag, group), 2000);
         }
       }

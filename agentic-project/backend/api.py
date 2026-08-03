@@ -2174,7 +2174,6 @@ async def summarize_context(session_id: str, req: SummarizeContextRequest):
 
     row = await _get_session_owned(session_id, req.user_id or None)
 
-    expected_version = row.version
     state = dict(row.state_json or {})
     timestamp_set = set(req.turn_timestamps)
 
@@ -2217,26 +2216,47 @@ async def summarize_context(session_id: str, req: SummarizeContextRequest):
         "created_at": now,
     }
 
-    # Save with optimistic locking
-    async with AsyncSessionLocal() as db:
-        row = (await db.execute(
-            select(ManagerSession).where(
-                ManagerSession.session_id == session_id,
-                ManagerSession.version == expected_version
-            )
-        )).scalar_one_or_none()
-        if not row:
-            raise HTTPException(status_code=409, detail="Concurrent modification detected. Please retry.")
+    # Save with optimistic locking. Retry on version conflict without re-calling the LLM
+    # (concurrent summarize requests for different tags used to 409 → frontend retry → LLM spam).
+    from sqlalchemy import select
+    for _attempt in range(5):
+        async with AsyncSessionLocal() as db:
+            row = (await db.execute(
+                select(ManagerSession).where(ManagerSession.session_id == session_id)
+            )).scalar_one_or_none()
+            if not row:
+                raise HTTPException(status_code=404, detail="Session not found")
 
-        state = dict(row.state_json or {})
-        summaries = dict(state.get("context_summaries", {}))
-        tag_list = list(summaries.get(req.tag, []))
-        tag_list.append(summary_entry)
-        summaries[req.tag] = tag_list
-        state["context_summaries"] = summaries
-        row.state_json = state
-        row.version += 1
-        row.updated_at = datetime.now(timezone.utc)
-        await db.commit()
+            state = dict(row.state_json or {})
+            existing = state.get("context_summaries", {}).get(req.tag, [])
+            for entry in existing:
+                if all(ts in entry.get("turn_timestamps", []) for ts in req.turn_timestamps):
+                    return SummarizeContextResponse(
+                        tag=req.tag,
+                        summary=entry["summary"],
+                        created_at=entry["created_at"],
+                    )
 
-    return SummarizeContextResponse(tag=req.tag, summary=summary, created_at=now)
+            expected_version = row.version
+            locked = (await db.execute(
+                select(ManagerSession).where(
+                    ManagerSession.session_id == session_id,
+                    ManagerSession.version == expected_version,
+                )
+            )).scalar_one_or_none()
+            if not locked:
+                continue
+
+            state = dict(locked.state_json or {})
+            summaries = dict(state.get("context_summaries", {}))
+            tag_list = list(summaries.get(req.tag, []))
+            tag_list.append(summary_entry)
+            summaries[req.tag] = tag_list
+            state["context_summaries"] = summaries
+            locked.state_json = state
+            locked.version += 1
+            locked.updated_at = datetime.now(timezone.utc)
+            await db.commit()
+            return SummarizeContextResponse(tag=req.tag, summary=summary, created_at=now)
+
+    raise HTTPException(status_code=409, detail="Concurrent modification detected. Please retry.")
