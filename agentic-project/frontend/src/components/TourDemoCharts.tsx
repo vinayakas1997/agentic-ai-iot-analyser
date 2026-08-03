@@ -93,9 +93,7 @@ export default function TourDemoCharts({ onNext }: { onNext: () => void }) {
             cx="50%"
             cy="50%"
             outerRadius={70}
-            label={({ machine, defects }: { machine: string; defects: number }) =>
-              `${machine} ${defects}%`
-            }
+            label={({ name, value }) => `${name} ${value}%`}
             labelLine
           >
             {[
@@ -153,7 +151,7 @@ export default function TourDemoCharts({ onNext }: { onNext: () => void }) {
               </div>
               <div className="h-[200px] w-full">
                 <ResponsiveContainer width="100%" height="100%">
-                  <chart.ChartComp data={chart.data}>{chart.children}</chart.ChartComp>
+                  <chart.ChartComp data={chart.data as any[]}>{chart.children}</chart.ChartComp>
                 </ResponsiveContainer>
               </div>
             </div>

@@ -28,6 +28,8 @@ function turnFromResponse(res: MessageResponse, userMessage: string, attachedAim
     analysis_actions: res.analysis_actions || undefined,
     deep_iterations: res.deep_iterations || undefined,
     truncated: res.truncated || false,
+    stopped_reason: res.stopped_reason || "",
+    query_results: res.query_results ? res.query_results.map((qr: any) => ({ loading: false, ...qr })) : undefined,
   };
 }
 
@@ -82,7 +84,7 @@ interface SessionState {
   switchSession: (id: string) => Promise<void>;
   newSession: () => void;
   deleteSession: (id: string) => Promise<void>;
-  sendUserMessage: (text: string, lineName?: string, attachedAims?: string[], enrichmentMode?: string, routeOverride?: string, aimDescriptions?: Record<string, string>, formatSpec?: string) => Promise<MessageResponse | undefined>;
+  sendUserMessage: (text: string, lineName?: string, attachedAims?: string[], enrichmentMode?: string, routeOverride?: string, aimDescriptions?: Record<string, string>, formatSpec?: string, templateName?: string) => Promise<MessageResponse | undefined>;
   setError: (error: string | null) => void;
   setStatusMessage: (msg: string | null) => void;
   setPendingTurn: (user: string) => void;
@@ -233,10 +235,17 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   switchSession: async (id) => {
     const { sessionId } = get();
     if (!id || id === sessionId) return;
+    _switchEpoch++;
+    const epoch = _switchEpoch;
     set({ error: null, loading: true });
     try {
       const uid = useAuthStore.getState().userId || undefined;
       const detail = await api.getSession(id, uid);
+      // Discard this response if a newer switchSession call has started in the
+      // meantime (e.g. the user clicked another session before this one loaded) —
+      // otherwise a slow response can overwrite a session that's already been
+      // superseded, showing mismatched title/turns/datasets.
+      if (epoch !== _switchEpoch) return;
       const sessionMeta = { session_id: detail.session_id, title: detail.title, phase: detail.phase || "lines", status: detail.status || "active", mode: (detail as any).mode || "ask" };
       const loadedTurns = (detail.turns || []).map((t: any) => ({
         turn_index: 0,
@@ -253,6 +262,8 @@ export const useSessionStore = create<SessionState>((set, get) => ({
         columns: null,
         analysis_actions: t.analysis_actions || undefined,
         truncated: Boolean(t.truncated),
+        stopped_reason: t.stopped_reason || "",
+        query_results: Array.isArray(t.query_results) ? t.query_results.map((qr: any) => ({ loading: false, ...qr })) : undefined,
       }));
       set({
         sessionMeta,
@@ -277,6 +288,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
           api.listDatasets(),
           api.listUserDatasets(uid),
         ]);
+        if (epoch !== _switchEpoch) return;
         const validNames = new Set(allDatasets.map((d) => d.dataset_name));
         for (const d of (userRes.datasets || [])) {
           if (d.status === "active") validNames.add(d.dataset_name);
@@ -287,9 +299,9 @@ export const useSessionStore = create<SessionState>((set, get) => ({
         }
       }
     } catch (e) {
-      set({ error: getErrorMessage(e) });
+      if (epoch === _switchEpoch) set({ error: getErrorMessage(e) });
     } finally {
-      set({ loading: false });
+      if (epoch === _switchEpoch) set({ loading: false });
     }
   },
 
@@ -332,7 +344,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     }
   },
 
-  sendUserMessage: async (text, lineName = "", attachedAims: string[] = [], enrichmentMode = "research", routeOverride?: string, aimDescriptions?: Record<string, string>, formatSpec?: string) => {
+  sendUserMessage: async (text, lineName = "", attachedAims: string[] = [], enrichmentMode = "research", routeOverride?: string, aimDescriptions?: Record<string, string>, formatSpec?: string, templateName?: string) => {
     const { sessionId, turns, isLocalSession, pendingTitle, sessionMeta } = get();
     const isDone = turns.length > 0 && Boolean(turns[turns.length - 1]?.ui?.done);
     const origSessionId = sessionId;
@@ -344,13 +356,15 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     set({ error: null, loading: true, progressSteps: [], statusMessage: t("processing.processingLabel"), pendingTurn: null });
     get().setPendingTurn(userText);
 
-    // Progress polling — fetches live steps from backend while message is being processed
+    // Progress polling — fetches live steps from backend while message is being processed.
+    // Pinned to the session that sent this message (origSessionId), not whatever session
+    // is currently displayed — otherwise switching sessions mid-send redirects the poller
+    // to the new session's progress and overwrites its (unrelated) progressSteps.
     const progressTimer = setInterval(async () => {
-      const sid = get().sessionId;
-      if (!sid) return;
+      if (!origSessionId || get().sessionId !== origSessionId) return;
       try {
-        const res = await api.getProgress(sid, sendUid);
-        set({ progressSteps: res.steps });
+        const res = await api.getProgress(origSessionId, sendUid);
+        if (get().sessionId === origSessionId) set({ progressSteps: res.steps });
       } catch { /* ignore poll errors */ }
     }, 600);
 
@@ -381,7 +395,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
 
       // History built server-side from stored turns (via enrichment block + conv history)
       const language = useUiStore.getState().language;
-      const res = await api.sendMessage(activeSessionId, userText, lineName, attachedAims, enrichmentMode, [], routeOverride, aimDescriptions, language, sendUid, formatSpec);
+      const res = await api.sendMessage(activeSessionId, userText, lineName, attachedAims, enrichmentMode, [], routeOverride, aimDescriptions, language, sendUid, formatSpec, templateName);
       clearInterval(progressTimer);
       set({ statusMessage: t("session.responseReceived") });
 
@@ -395,6 +409,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
 
       const datasetNames = lineName.split(",").map((d) => d.trim()).filter(Boolean);
       const newTurn = turnFromResponse(res, userText, attachedAims, datasetNames);
+      _lastLocalMetaUpdate = Date.now();
       set((state) => ({
         turns: [...state.turns, newTurn],
         pendingTurn: null,
@@ -555,9 +570,14 @@ export const useSessionStore = create<SessionState>((set, get) => ({
         const list = await api.listSessions(uid);
         const state = get();
         const current = list.find((s) => s.session_id === state.sessionId);
+        // Skip merging phase/status/mode from the (lighter, possibly-lagging) list
+        // endpoint if we just set them locally from a message response — otherwise
+        // a poll tick landing right after can briefly revert the UI to a stale value
+        // until the backend's list index catches up.
+        const recentLocalUpdate = Date.now() - _lastLocalMetaUpdate < 5000;
         set({
           sessions: list,
-          sessionMeta: current
+          sessionMeta: current && !recentLocalUpdate
             ? { ...(state.sessionMeta || {}), ...current }
             : state.sessionMeta,
         });
@@ -578,6 +598,8 @@ export const useSessionStore = create<SessionState>((set, get) => ({
 // Safety net: auto-reset loading if stuck for >300s.
 // Uses epoch counter so stale callbacks from previous loading cycles don't mutate state.
 let _bootstrapEpoch = 0;
+let _switchEpoch = 0;
+let _lastLocalMetaUpdate = 0;
 let _loadingTimeout: ReturnType<typeof setTimeout> | null = null;
 let _loadingEpoch = 0;
 useSessionStore.subscribe((state, prev) => {

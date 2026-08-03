@@ -376,7 +376,7 @@ function ChartView({ rows, chart_suggestions }: {
           {advanced.map((cfg, i) => {
             const expanded = expandedSet.has(i);
             return (
-              <div key={i} ref={el => chartRefs.current[i] = el} className="rounded-lg border border-border/50 bg-black/20 overflow-hidden transition-all duration-200">
+              <div key={i} ref={el => { chartRefs.current[i] = el; }} className="rounded-lg border border-border/50 bg-black/20 overflow-hidden transition-all duration-200">
                 <div
                   className="flex items-center gap-2 px-3 py-2 cursor-pointer hover:bg-white/[0.03] transition-colors"
                   onClick={() => toggleExpand(i)}

@@ -19,8 +19,28 @@ from db_connections import get_connection, execute_sql_on, explain_sql_on
 logger = logging.getLogger(__name__)
 
 
+_TABLE_REF_RE = re.compile(
+    r'\b(?:FROM|JOIN)\s+([a-zA-Z_]\w*(?:\s*,\s*[a-zA-Z_]\w*)*)',
+    re.IGNORECASE,
+)
+
+
+def _table_refs(sql: str) -> set[str]:
+    """Identifiers that appear in table-reference position (after FROM/JOIN,
+    including comma-joined lists in a FROM clause) — not just anywhere in the SQL
+    text. A plain substring/word-boundary search over the whole query would also
+    match string literals, aliases, or column names that happen to equal a dataset
+    name, which can misroute or falsely reject single-backend queries."""
+    refs: set[str] = set()
+    for m in _TABLE_REF_RE.finditer(sql):
+        for part in m.group(1).split(','):
+            refs.add(part.strip())
+    return refs
+
+
 def _ref_names(names, sql):
-    return [n for n in names if re.search(rf'\b{re.escape(n)}\b', sql, re.IGNORECASE)]
+    refs = _table_refs(sql)
+    return [n for n in names if n in refs]
 
 
 def _split_backends(datasets_data: list[dict]):

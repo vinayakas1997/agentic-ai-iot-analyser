@@ -7,6 +7,7 @@ import { useOutputStore } from "../stores/outputStore";
 import { useSessionStore } from "../stores/sessionStore";
 import { useDatasetStore } from "../stores/datasetStore";
 import { useAuthStore } from "../stores/authStore";
+import { useUploadStore } from "../stores/uploadStore";
 import { listDatasets, listUserDatasets } from "../api/client";
 import { QueryActions, type QueryResultState } from "./QueryActions";
 import { IconDatabase, IconTarget, IconClock, IconChart } from "../lib/icons";
@@ -46,6 +47,7 @@ export default function OutputPanel() {
   const [summarizing, setSummarizing] = useState(false);
   const [datasets, setDatasets] = useState<DatasetInfo[]>([]);
   const [personalDatasets, setPersonalDatasets] = useState<{ dataset_name: string; table_name: string; description: string | null; column_definitions: { name: string; datatype: string; meaning?: string }[] }[]>([]);
+  const personalDatasetsVersion = useUploadStore((s) => s.personalDatasetsVersion);
 
   const datasetLookup = useMemo(() => {
     const map = new Map<string, DatasetInfo>();
@@ -53,6 +55,9 @@ export default function OutputPanel() {
       map.set(ds.dataset_name, ds);
     }
     for (const pds of personalDatasets) {
+      // A personal dataset never overrides a registry entry of the same name (nor
+      // vice versa) silently — personal names win here only because registry names
+      // are set first above; if this matters elsewhere, check `source` explicitly.
       if (!map.has(pds.dataset_name)) {
         map.set(pds.dataset_name, {
           line_name: pds.dataset_name,
@@ -64,6 +69,7 @@ export default function OutputPanel() {
           join_hints: null,
           suggested_aims: null,
           synonyms: null,
+          source: "personal",
         });
       }
     }
@@ -88,7 +94,7 @@ export default function OutputPanel() {
       setDatasets(globalDs);
       setPersonalDatasets((userRes.datasets || []).filter((d) => d.status === "active"));
     }).catch(console.error);
-  }, []);
+  }, [personalDatasetsVersion]);
 
   const handleSummarize = useCallback(async () => {
     if (!sessionId || summarizing) return;
@@ -193,9 +199,14 @@ export default function OutputPanel() {
                 <div className="flex items-start justify-between gap-2 mb-1">
                   <div className="flex items-center gap-1.5 min-w-0">
                     <span className={resultBadgeClass}>
-                      <IconTarget size={12} />
+                      {r.kind === "template" ? <IconChart size={12} /> : <IconTarget size={12} />}
                     </span>
                     <span className="font-medium text-text text-sm truncate">{r.aim}</span>
+                    {r.kind === "template" && (
+                      <span className="shrink-0 text-[10px] font-semibold tracking-wide uppercase px-1.5 py-0.5 rounded-full bg-ic-violet-soft/40 text-ic-violet border border-ic-violet/30">
+                        {t("output.templateBadge")}
+                      </span>
+                    )}
                   </div>
                   <div className="flex items-center gap-1">
                     <span className="flex items-center">
@@ -290,7 +301,25 @@ export default function OutputPanel() {
                       </div>
                     </div>
                   )}
-                  <QueryActions queryResult={r.result} />
+                  {r.kind === "template" && r.report && (
+                    <div className="rounded-xl border-l-3 border-l-ic-violet bg-ic-violet-soft/10 border border-border/40 p-3">
+                      <div className="text-[10.5px] font-semibold tracking-wider uppercase text-ic-violet mb-1">
+                        {t("output.templateReport")}
+                      </div>
+                      <div className="prose-custom text-sm text-text leading-relaxed">
+                        <ReactMarkdown remarkPlugins={[remarkGfm, remarkBreaks]}>{r.report}</ReactMarkdown>
+                      </div>
+                    </div>
+                  )}
+                  {r.kind === "template" && r.queryResults && r.queryResults.length > 0 ? (
+                    <div className="space-y-3">
+                      {r.queryResults.map((qr, qi) => (
+                        <QueryActions key={qi} queryResult={qr} />
+                      ))}
+                    </div>
+                  ) : (
+                    <QueryActions queryResult={r.result} />
+                  )}
                 </div>
               )}
 

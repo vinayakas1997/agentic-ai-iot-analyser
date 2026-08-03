@@ -264,7 +264,7 @@ export function TurnBubble({ turn, queryResult, selectedAims, runningAim, loadin
       </div>
       {turn.truncated && (
         <div className="rounded-lg border border-ic-amber/40 bg-ic-amber-soft/30 px-3 py-2 mt-3 text-[12px] text-ic-amber leading-snug">
-          {t("turn.truncatedWarning")}
+          {turn.stopped_reason === "error" ? t("turn.truncatedErrorWarning") : t("turn.truncatedWarning")}
         </div>
       )}
       {actionCards}
@@ -301,7 +301,16 @@ export function TurnBubble({ turn, queryResult, selectedAims, runningAim, loadin
         </div>
       )}
       {hasActions && actionsBar}
-      {!turn.deep_iterations?.length && <QueryActions queryResult={queryResult} />}
+      {!turn.deep_iterations?.length &&
+        (turn.query_results && turn.query_results.length > 0 ? (
+          <div className="space-y-3">
+            {turn.query_results.map((qr, qi) => (
+              <QueryActions key={qi} queryResult={qr as QueryResultState} />
+            ))}
+          </div>
+        ) : (
+          <QueryActions queryResult={queryResult} />
+        ))}
     </div>
   );
 

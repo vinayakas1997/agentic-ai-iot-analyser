@@ -1,0 +1,22 @@
+============================================
+Batch: batch2  |  Time: 2026-08-03_171218
+Dataset: japan_fruit_inventory (japan_fruit_inventory)
+============================================
+
+--- BATCH 2: FOCUS route ---
+2a: Single aim, clean run
+  PASS 2a route=focus
+  PASS 2a truncated=False
+  PASS 2a result_uuid present
+The `japan_fruit_inventory` table appears to be empty (0 rows). This means there is no fruit stock data available in the
+2d: recall_result reuse (rerun same aim)
+  PASS 2d rerun routes
+The `japan_fruit_inventory` table currently contains no data (0 rows). Therefore, there are no stock levels to report, a
+2e: Bad column -- did-you-mean
+  PASS 2e error handled
+The table `japan_fruit_inventory` appears to be empty, as no rows are returned when selecting all columns. This means th
+
+============================================
+Results: 5 passed, 0 failed
+Timestamp: 2026-08-03_171218
+============================================

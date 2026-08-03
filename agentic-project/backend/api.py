@@ -149,6 +149,7 @@ class MessageRequest(BaseModel):
     route_override: str = ""
     language: str = "en"
     format_spec: str = ""
+    template_name: str = ""
 
 class AimProposal(BaseModel):
     aim: str
@@ -219,6 +220,8 @@ class MessageResponse(BaseModel):
     route: str = "direct"
     deep_iterations: list = []
     truncated: bool = False
+    stopped_reason: str = ""
+    query_results: list | None = None
 
 class ExecuteQueryRequest(BaseModel):
     session_id: str
@@ -527,6 +530,14 @@ def build_enrichment_block(
     return "\n".join(blocks)
 
 
+def trim_text_to_budget(text: str, max_tokens: int) -> str:
+    """Drop oldest lines from *text* until it fits within *max_tokens*."""
+    lines = text.split("\n")
+    while estimate_tokens("\n".join(lines)) > max_tokens and len(lines) > 1:
+        lines.pop(0)
+    return "\n".join(lines)
+
+
 def build_conversation_history(turns: list[dict], max_turns: int = 5) -> str:
     """Build a conversation history block from stored turns."""
     history_blocks = []
@@ -681,9 +692,19 @@ async def bucket_proceed(req: BucketProceedRequest):
 @router.post("/execute-query", response_model=ExecuteQueryResponse)
 async def execute_query(req: ExecuteQueryRequest):
     """Generate and execute SQL from a user query, returning results."""
-    _require_user_id(req.user_id)
+    uid = _require_user_id(req.user_id)
     if not req.message.strip():
         raise HTTPException(status_code=400, detail="message is required")
+
+    async with AsyncSessionLocal() as db:
+        from sqlalchemy import select
+        session = (await db.execute(
+            select(ManagerSession).where(ManagerSession.session_id == req.session_id)
+        )).scalar_one_or_none()
+        if not session:
+            raise HTTPException(status_code=404, detail="Session not found")
+        if session.user_id != uid:
+            raise HTTPException(status_code=403, detail="You do not own this session")
 
     dataset_names = [d.strip() for d in req.line_name.split(",") if d.strip()]
     if not dataset_names:
@@ -1387,7 +1408,7 @@ async def _build_context(
     if attached_aims:
         aim_descriptions = aim_descriptions or {}
         aim_lines = [
-            f"{aim} — {aim_descriptions[aim]}" if aim_descriptions.get(aim) else aim
+            f"{aim} — {aim_descriptions[aim][:200]}" if aim_descriptions.get(aim) else aim
             for aim in attached_aims
         ]
         parts.append(f"Active research aims:\n" + "\n".join(f"- {line}" for line in aim_lines))
@@ -1722,6 +1743,8 @@ async def _handle_suggest(
         "result_uuid": None,
         "query_result": None,
         "aim_proposals": proposals,
+        "truncated": False,
+        "stopped_reason": "",
     }
 
 
@@ -1805,6 +1828,8 @@ async def _handle_focus_multi(
         "result_uuid": result_uuid,
         "query_result": None,
         "deep_iterations": deep_iterations,
+        "truncated": False,
+        "stopped_reason": "",
     }
 
 
@@ -1860,6 +1885,7 @@ async def _handle_focus(
             "result_uuid": None,
             "query_result": None,
             "truncated": agent_result.get("truncated", False),
+            "stopped_reason": agent_result.get("stopped_reason", ""),
         }
     set_progress(session_id, "focus_agent", "done", "Analysis complete")
 
@@ -1874,6 +1900,7 @@ async def _handle_focus(
         "result_uuid": result_uuid,
         "query_result": result_with_charts,
         "truncated": agent_result.get("truncated", False),
+        "stopped_reason": agent_result.get("stopped_reason", ""),
     }
 
 
@@ -1883,6 +1910,7 @@ async def _handle_template(
     dataset_names: list[str],
     datasets_data: list[dict],
     format_spec: str,
+    template_name: str = "",
     session_state: dict | None = None,
     language: str = "en",
 ):
@@ -1914,6 +1942,7 @@ async def _handle_template(
             "aim_proposals": [],
             "analysis_actions": [],
             "truncated": agent_result.get("truncated", False),
+            "stopped_reason": agent_result.get("stopped_reason", ""),
         }
 
     set_progress(session_id, "template_agent", "done", "Report complete")
@@ -1922,14 +1951,23 @@ async def _handle_template(
     result_with_charts = {**result, "chart_suggestions": chart_suggestions}
     set_progress(session_id, "building_charts", "done", "Charts ready")
 
+    # Expose every query the report was built from, so the UI can show all the
+    # underlying data — not just the last query. Only the primary (last) result
+    # carries chart suggestions to avoid one extra LLM call per query.
+    all_results = [dict(r) for r in agent_result.get("query_results", [])]
+    if all_results:
+        all_results[-1] = result_with_charts
+
     result_uuid = str(uuid.uuid4())
     return {
         "agent_message": agent_result["agent_message"],
         "result_uuid": result_uuid,
         "query_result": result_with_charts,
+        "query_results": all_results or None,
         "aim_proposals": [],
         "analysis_actions": [],
         "truncated": agent_result.get("truncated", False),
+        "stopped_reason": agent_result.get("stopped_reason", ""),
     }
 
 
@@ -2016,6 +2054,13 @@ async def send_message(req: MessageRequest):
     # TEMPLATE route: isolated report pipeline. Short-circuits before any routing,
     # classification, or aim/proposal logic. Purely datasets + the user's format spec.
     if req.format_spec.strip():
+        if not datasets_data:
+            detail = f"No datasets found for: {', '.join(unresolved)}. " if unresolved else ""
+            return MessageResponse(
+                session_id=req.session_id,
+                agent_message=f"{detail}Please attach at least one available dataset to run this template.",
+                route="direct",
+            )
         set_progress(req.session_id, "template", "running", "Building report from template...")
         handler_result = await _handle_template(
             session_id=req.session_id,
@@ -2023,6 +2068,7 @@ async def send_message(req: MessageRequest):
             dataset_names=dataset_names,
             datasets_data=datasets_data,
             format_spec=req.format_spec.strip(),
+            template_name=req.template_name.strip(),
             session_state=dict(session.state_json or {}),
             language=req.language,
         )
@@ -2031,23 +2077,27 @@ async def send_message(req: MessageRequest):
         agent_msg = handler_result["agent_message"]
         result_uuid = handler_result["result_uuid"]
         query_result_raw = handler_result["query_result"]
+        stopped_reason = handler_result.get("stopped_reason", "")
 
-        query_result_model = None
-        if query_result_raw:
-            cs_model = query_result_raw.get("chart_suggestions")
+        def _build_query_result_model(raw: dict) -> QueryResult:
+            cs_model = raw.get("chart_suggestions")
             if isinstance(cs_model, dict):
                 cs_model = ChartSuggestions(
                     advanced=[ChartConfig(**c) for c in cs_model.get("advanced", [])],
                     basic=[ChartConfig(**c) for c in cs_model.get("basic", [])],
                 )
-            query_result_model = QueryResult(
-                sql=query_result_raw.get("sql", ""),
-                columns=query_result_raw.get("columns", []),
-                column_types=query_result_raw.get("column_types", []),
-                rows=query_result_raw.get("rows", []),
-                row_count=query_result_raw.get("row_count", 0),
+            return QueryResult(
+                sql=raw.get("sql", ""),
+                columns=raw.get("columns", []),
+                column_types=raw.get("column_types", []),
+                rows=raw.get("rows", []),
+                row_count=raw.get("row_count", 0),
                 chart_suggestions=cs_model,
             )
+
+        query_result_model = _build_query_result_model(query_result_raw) if query_result_raw else None
+        query_results_raw = handler_result.get("query_results") or []
+        query_results_models = [_build_query_result_model(r) for r in query_results_raw] or None
 
         def _apply_template_turn(state: dict):
             turns = list(state.get("turns", []))
@@ -2059,6 +2109,8 @@ async def send_message(req: MessageRequest):
                 "datasets": dataset_names,
                 "route": "template",
                 "truncated": handler_result.get("truncated", False),
+                "stopped_reason": stopped_reason,
+                "template_name": req.template_name.strip(),
             }
             if result_uuid:
                 turn_entry["result_uuid"] = result_uuid
@@ -2072,6 +2124,21 @@ async def send_message(req: MessageRequest):
                     cs = query_result_raw["chart_suggestions"]
                     query_result_save["chart_suggestions"] = cs.model_dump() if hasattr(cs, "model_dump") else cs
                 turn_entry["query_result"] = query_result_save
+            if query_results_raw:
+                saved_results = []
+                for r in query_results_raw:
+                    save = {
+                        "sql": r.get("sql", ""),
+                        "columns": r.get("columns", []),
+                        "column_types": r.get("column_types", []),
+                        "rows": r.get("rows", []),
+                        "row_count": r.get("row_count", 0),
+                    }
+                    if r.get("chart_suggestions") is not None:
+                        cs = r["chart_suggestions"]
+                        save["chart_suggestions"] = cs.model_dump() if hasattr(cs, "model_dump") else cs
+                    saved_results.append(save)
+                turn_entry["query_results"] = saved_results
             turns.append(turn_entry)
             state["turns"] = turns
             if result_uuid and query_result_raw:
@@ -2101,8 +2168,10 @@ async def send_message(req: MessageRequest):
             route="template",
             result_uuid=result_uuid,
             query_result=query_result_model,
+            query_results=query_results_models,
             done=True,
             truncated=handler_result.get("truncated", False),
+            stopped_reason=stopped_reason,
         )
 
     # If SUMMARY mode, skip routing and use existing summarization flow
@@ -2211,6 +2280,9 @@ async def send_message(req: MessageRequest):
         else:
             enrichment_block = "## Conversation History\n" + conv_history
 
+    if enrichment_block:
+        enrichment_block = trim_text_to_budget(enrichment_block, settings.prompt_max_tokens)
+
     route = route.lower()
 
     handler_kwargs = dict(
@@ -2312,8 +2384,8 @@ async def send_message(req: MessageRequest):
             turn_entry["deep_iterations"] = deep_iterations_raw
         if analysis_actions_raw:
             turn_entry["analysis_actions"] = analysis_actions_raw
-        if handler_result.get("truncated"):
-            turn_entry["truncated"] = True
+        turn_entry["truncated"] = handler_result.get("truncated", False)
+        turn_entry["stopped_reason"] = handler_result.get("stopped_reason", "")
         turns.append(turn_entry)
         state["turns"] = turns
         existing = list(state.get("aim_proposals", []))
@@ -2359,6 +2431,7 @@ async def send_message(req: MessageRequest):
         aim_proposals=aim_proposals,
         deep_iterations=deep_iterations_raw,
         truncated=handler_result.get("truncated", False),
+        stopped_reason=handler_result.get("stopped_reason", ""),
     )
 
 

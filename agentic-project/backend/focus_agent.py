@@ -132,7 +132,9 @@ def _topic_label(turn: dict) -> str:
 
 
 def _build_previously_fetched_section(session_state: dict, attached_aims: list[str]) -> str:
-    """List (topic, columns, row_count) for the most recent stored result per attached aim."""
+    """List (topic, columns, row_count) for the most recent stored result per attached aim.
+    Also matches template-report turns by their template_name, so follow-up analysis after a
+    template run can recall the report's rows instead of re-querying."""
     turns = session_state.get("turns", [])
     chat_results = session_state.get("chat_query_results", {})
     lines = []
@@ -140,6 +142,10 @@ def _build_previously_fetched_section(session_state: dict, attached_aims: list[s
         match = None
         for t in reversed(turns):
             if aim in (t.get("aims") or []):
+                match = t
+                break
+            tpl = t.get("template_name") or ""
+            if tpl and (tpl in aim or aim in tpl):
                 match = t
                 break
         if not match:
@@ -244,7 +250,9 @@ def _run_recall_result(reference: str, session_state: dict) -> dict:
         tags = [a.lower() for a in (t.get("aims") or [])] + [d.lower() for d in (t.get("datasets") or [])]
         tag_hit = any(reference_lower in tag or tag in reference_lower for tag in tags)
         topic_hit = bool(reference_words & topic_words)
-        if tag_hit or topic_hit:
+        tpl = (t.get("template_name") or "").lower()
+        tpl_hit = tpl and (reference_lower in tpl or tpl in reference_lower)
+        if tag_hit or topic_hit or tpl_hit:
             match = t
             break
     if not match:
@@ -277,10 +285,11 @@ async def run_focus_agent(
     """Agentic FOCUS loop: the LLM chooses between querying fresh data and recalling
     a previously fetched result in this session, across up to max_rounds tool-call turns.
     max_rounds defaults to settings.focus_max_rounds.
-    Returns {agent_message, chart_needed (always True), query_result, truncated} —
+    Returns {agent_message, chart_needed (always True), query_result, truncated, stopped_reason} —
     query_result is the raw dict from execute_sql (no chart_suggestions attached yet),
     or None if no query ran. truncated is True when the run exhausted its round budget
-    (or hit an LLM error) and had to finish from the data gathered so far."""
+    (stopped_reason "budget") or hit an LLM error (stopped_reason "error") and had to
+    finish from the data gathered so far. stopped_reason is "" on a clean completion."""
     settings = get_settings()
     client = get_llm_client()
     if max_rounds is None:
@@ -359,6 +368,7 @@ async def run_focus_agent(
                 "chart_needed": True,
                 "query_result": last_query_result,
                 "truncated": True,
+                "stopped_reason": "error",
             }
         msg = response.choices[0].message
         if on_progress:
@@ -377,6 +387,7 @@ async def run_focus_agent(
                 "chart_needed": True,
                 "query_result": last_query_result,
                 "truncated": truncated,
+                "stopped_reason": "budget" if truncated else "",
             }
 
         messages.append({
@@ -456,4 +467,5 @@ async def run_focus_agent(
         "chart_needed": True,
         "query_result": last_query_result,
         "truncated": True,
+        "stopped_reason": "budget",
     }

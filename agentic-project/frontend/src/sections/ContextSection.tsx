@@ -45,7 +45,9 @@ export default function ContextSection() {
   const personalDatasetsVersion = useUploadStore((s) => s.personalDatasetsVersion);
 
   useEffect(() => {
-    listDatasets().then(setDatasets).catch((err) => console.error("Failed to load datasets:", err));
+    listDatasets()
+      .then((ds) => setDatasets(ds.map((d) => ({ ...d, source: "registry" as const }))))
+      .catch((err) => console.error("Failed to load datasets:", err));
   }, []);
 
   useEffect(() => {
@@ -133,14 +135,19 @@ export default function ContextSection() {
           join_hints: null,
           suggested_aims: null,
           synonyms: null,
+          source: "personal",
         });
       }
     }
     return map;
   }, [datasets, personalDatasets]);
 
+  // Personal datasets get their own dedicated box below — exclude them here so an
+  // attached personal dataset (e.g. right after upload-confirm) doesn't render twice.
   const selectedDatasetInfos = useMemo(
-    () => storeSelected.map((name) => datasetLookup.get(name)).filter(Boolean) as DatasetInfo[],
+    () => storeSelected
+      .map((name) => datasetLookup.get(name))
+      .filter((ds): ds is DatasetInfo => Boolean(ds) && ds!.source !== "personal"),
     [storeSelected, datasetLookup]
   );
 
@@ -216,11 +223,11 @@ export default function ContextSection() {
             <IconDatabase size={13} />
           </span>
           {t("common.datasets")}
-          {storeSelected.length > 0 && (
-            <span className="text-tertiary font-normal text-xs">({storeSelected.length})</span>
+          {selectedDatasetInfos.length > 0 && (
+            <span className="text-tertiary font-normal text-xs">({selectedDatasetInfos.length})</span>
           )}
         </div>
-        {storeSelected.length === 0 ? (
+        {selectedDatasetInfos.length === 0 ? (
           <p className="text-xs text-muted">{t("context.noDatasetsSelected")}</p>
         ) : (
           <div className="space-y-2">

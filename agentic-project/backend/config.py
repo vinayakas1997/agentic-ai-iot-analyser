@@ -24,6 +24,12 @@ class Settings(BaseSettings):
     focus_max_rounds: int = 12
     template_max_rounds: int = 16
 
+    # Overall token budget for the composed system prompt (context + enrichment +
+    # previously-fetched + conversation history + aim descriptions). When exceeded,
+    # components are truncated by priority: oldest conversation turns first, then
+    # oldest previously-fetched entries, then oldest enrichment summaries.
+    prompt_max_tokens: int = 6000
+
     api_host: str = "0.0.0.0"
     api_port: int = 7010
     cors_origins: str = "http://localhost:7008,http://127.0.0.1:7008,http://localhost:7010"

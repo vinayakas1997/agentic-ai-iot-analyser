@@ -1,0 +1,19 @@
+============================================
+Batch: batch4  |  Time: 2026-08-03_171343
+Dataset: japan_fruit_inventory (japan_fruit_inventory)
+============================================
+
+--- BATCH 4: Regression + persistence ---
+5a: FOCUS clean run (regression)
+  PASS 5a focus regression
+  PASS 5a result_uuid
+5b: Template clean run (regression)
+  PASS 5b template regression
+4b: Session persistence (check 5a session)
+  PASS 4b turns persisted (count=1)
+  PASS 4b template_name persisted (NIL)
+
+============================================
+Results: 5 passed, 0 failed
+Timestamp: 2026-08-03_171343
+============================================

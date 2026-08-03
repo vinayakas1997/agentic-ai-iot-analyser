@@ -1,0 +1,25 @@
+============================================
+Batch: batch2  |  Time: 2026-08-03_172723
+Dataset: production_info_5days (japan_fruit_inventory)
+============================================
+
+--- BATCH 2: FOCUS route ---
+2a: Single aim, clean run
+  PASS 2a route=focus
+  PASS 2a truncated=False
+  PASS 2a result_uuid present
+The dataset `production_info` does not contain information about prefectures or fruit types. The `機種` (model) column con
+2d: recall_result reuse (rerun same aim)
+  PASS 2d rerun routes
+Based on the production data, here are the stock levels by model (機種):
+
+1. **Model 8**: 303,388 units (highest)
+2. **Mod
+2e: Bad column -- did-you-mean
+  PASS 2e error handled
+
+
+============================================
+Results: 5 passed, 0 failed
+Timestamp: 2026-08-03_172723
+============================================

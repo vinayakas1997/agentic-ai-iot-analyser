@@ -21,6 +21,10 @@ export interface DatasetInfo {
   join_hints: any;
   suggested_aims: any;
   synonyms: string[] | null;
+  /** Origin of this entry: a global-registry dataset vs. the user's own uploaded CSV.
+   *  Lets the UI keep the two lists visually and logically separate instead of
+   *  merging them into one untagged array. */
+  source?: "registry" | "personal";
 }
 
 export interface ResolvedLine {

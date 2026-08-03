@@ -119,10 +119,12 @@ async def run_template_agent(
 ) -> dict:
     """Agentic loop for the template-report pipeline.
 
-    Returns {agent_message, query_result, truncated} — query_result is the raw dict from the
-    last executed query (or None if none ran), with no chart_suggestions attached yet.
-    truncated is True when the run exhausted its round budget (or hit an LLM error) and
-    had to finish from the data gathered so far.
+    Returns {agent_message, query_result, query_results, truncated, stopped_reason} —
+    query_result is the raw dict from the LAST executed query/recall (used for chart
+    suggestions), query_results is the list of every successful query/recall in order,
+    and truncated is True when the run exhausted its round budget (stopped_reason
+    "budget") or hit an LLM error (stopped_reason "error") and had to finish from the
+    data gathered so far. stopped_reason is "" on a clean completion.
     """
     settings = get_settings()
     client = get_llm_client()
@@ -142,7 +144,15 @@ async def run_template_agent(
     ]
 
     last_query_result: dict | None = None
+    all_query_results: list[dict] = []
     max_rounds = settings.template_max_rounds
+
+    def _record_result(res: dict) -> None:
+        """Keep every successful query/recall in order so the UI can show all the data
+        that fed the report, not just the last query."""
+        nonlocal last_query_result
+        last_query_result = res
+        all_query_results.append(res)
 
     for round_num in range(max_rounds):
         is_last_round = round_num == max_rounds - 1
@@ -181,7 +191,9 @@ async def run_template_agent(
             return {
                 "agent_message": last_content or "I hit an error while gathering data for the report. Please try again.",
                 "query_result": last_query_result,
+                "query_results": all_query_results,
                 "truncated": True,
+                "stopped_reason": "error",
             }
         msg = response.choices[0].message
         if on_progress:
@@ -195,7 +207,13 @@ async def run_template_agent(
                     "done",
                     "Report ready" if not truncated else "Tool-step limit reached — report may be incomplete",
                 )
-            return {"agent_message": msg.content or "", "query_result": last_query_result, "truncated": truncated}
+            return {
+                "agent_message": msg.content or "",
+                "query_result": last_query_result,
+                "query_results": all_query_results,
+                "truncated": truncated,
+                "stopped_reason": "budget" if truncated else "",
+            }
 
         messages.append({
             "role": "assistant",
@@ -238,18 +256,18 @@ async def run_template_agent(
                 if tc.function.name == "query_data":
                     tool_result = await _run_query_data(args.get("sql", ""), datasets_data)
                     if tool_result.get("ok"):
-                        last_query_result = tool_result["result"]
+                        _record_result(tool_result["result"])
                 elif tc.function.name == "recall_result":
                     tool_result = _run_recall_result(args.get("reference", ""), session_state)
                     log_sql("template_agent_tool_call", f"recall_result: {args.get('reference', '')}")
                     if tool_result.get("found"):
-                        last_query_result = {
+                        _record_result({
                             "sql": tool_result.get("sql", ""),
                             "columns": tool_result.get("columns", []),
                             "column_types": tool_result.get("column_types", []),
                             "rows": tool_result.get("rows", []),
                             "row_count": tool_result.get("row_count", 0),
-                        }
+                        })
                 else:
                     tool_result = {"ok": False, "error": f"Unknown tool '{tc.function.name}'"}
 
@@ -272,5 +290,7 @@ async def run_template_agent(
     return {
         "agent_message": last_content or "I couldn't complete the report within the allotted steps.",
         "query_result": last_query_result,
+        "query_results": all_query_results,
         "truncated": True,
+        "stopped_reason": "budget",
     }

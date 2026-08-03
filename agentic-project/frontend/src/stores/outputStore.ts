@@ -9,6 +9,10 @@ export interface CollectedResult {
   datasets?: string[];
   result: QueryResultState;
   created_at: number;
+  kind?: "aim" | "template";
+  template_name?: string;
+  report?: string;
+  queryResults?: QueryResultState[];
 }
 
 interface OutputState {

@@ -1,0 +1,21 @@
+============================================
+Batch: batch3  |  Time: 2026-08-03_171308
+Dataset: japan_fruit_inventory (japan_fruit_inventory)
+============================================
+
+--- BATCH 3: Prompt budget + routing ---
+3b: Descriptions truncated at 200 chars
+  PASS 3b long desc handled
+The `japan_fruit_inventory` table currently has 0 records. This means there is no stock data available to check at this 
+4a: DIRECT route (simple question)
+  PASS 4a DIRECT route
+The dataset `japan_fruit_inventory` contains **0 rows**.
+
+This indicates that the table exists in the database schema bu
+4g: No datasets -- early return
+  PASS 4g no-dataset early return
+
+============================================
+Results: 3 passed, 0 failed
+Timestamp: 2026-08-03_171308
+============================================

@@ -119,13 +119,14 @@ export async function getSession(sessionId: string, userId?: string) {
   }>(`/api/v2/sessions/${sessionId}${params}`);
 }
 
-export async function sendMessage(sessionId: string, message: string, lineName = "", attachedAims: string[] = [], enrichmentMode = "research", history?: { role: string; content: string }[], routeOverride?: string, aimDescriptions?: Record<string, string>, language?: string, userId?: string, formatSpec?: string) {
+export async function sendMessage(sessionId: string, message: string, lineName = "", attachedAims: string[] = [], enrichmentMode = "research", history?: { role: string; content: string }[], routeOverride?: string, aimDescriptions?: Record<string, string>, language?: string, userId?: string, formatSpec?: string, templateName?: string) {
   const body: Record<string, unknown> = { session_id: sessionId, message, line_name: lineName, attached_aims: attachedAims, enrichment_mode: enrichmentMode, history: history ?? [] };
   if (routeOverride) body.route_override = routeOverride;
   if (aimDescriptions && Object.keys(aimDescriptions).length > 0) body.aim_descriptions = aimDescriptions;
   if (language) body.language = language;
   if (userId) body.user_id = userId;
   if (formatSpec) body.format_spec = formatSpec;
+  if (templateName) body.template_name = templateName;
   // No withRetry: 409 after LLM work must not re-run the whole pipeline.
   // Backend retries the DB save without calling the LLM again.
   return request<{

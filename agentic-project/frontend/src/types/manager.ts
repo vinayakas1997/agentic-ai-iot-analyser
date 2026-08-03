@@ -85,6 +85,8 @@ export interface Turn {
   analysis_actions?: AnalysisAction[];
   deep_iterations?: DeepIteration[];
   truncated?: boolean;
+  stopped_reason?: string;
+  query_results?: any[];
 }
 
 export interface SessionMeta {
@@ -133,6 +135,8 @@ export interface MessageResponse {
   route?: string;
   deep_iterations?: DeepIteration[];
   truncated?: boolean;
+  stopped_reason?: string;
+  query_results?: any[];
 }
 
 export interface AnalysisAction {

@@ -112,6 +112,7 @@ export default function ChatSection() {
       listDatasets(),
       listUserDatasets(uid),
     ]).then(([globalDs, personalRes]) => {
+      const taggedGlobalDs: DatasetInfo[] = globalDs.map((d) => ({ ...d, source: "registry" }));
       const personalDs: DatasetInfo[] = (personalRes.datasets || [])
         .filter((d) => d.status === "active")
         .map((d) => ({
@@ -124,8 +125,13 @@ export default function ChatSection() {
           join_hints: null,
           suggested_aims: null,
           synonyms: null,
+          source: "personal",
         }));
-      setDatasets([...globalDs, ...personalDs]);
+      // Kept in one list for lookup/validation (filterAvailable, datasetLookup), but tagged
+      // by `source` so the registry search dropdown can exclude personal datasets — they
+      // have their own upload/attach flow and showing them in both places duplicates them
+      // in the context panel.
+      setDatasets([...taggedGlobalDs, ...personalDs]);
     }).catch((err) => console.error("Failed to load datasets:", err));
   }, [personalDatasetsVersion]);
 
@@ -135,17 +141,24 @@ export default function ChatSection() {
     return () => clearTimeout(timer);
   }, [missingDatasets]);
 
+  // Registry-only: personal (uploaded CSV) datasets are attached via the upload flow,
+  // not this search bar, so they're excluded here to avoid appearing in both places.
+  const searchableDatasets = useMemo(
+    () => datasets.filter((d) => d.source !== "personal"),
+    [datasets]
+  );
+
   const filtered = useMemo(() => {
-    if (!searchQuery.trim()) return datasets;
+    if (!searchQuery.trim()) return searchableDatasets;
     const q = searchQuery.toLowerCase();
-    return datasets.filter(
+    return searchableDatasets.filter(
       (d) =>
         d.dataset_name.toLowerCase().includes(q) ||
         d.line_name.toLowerCase().includes(q) ||
         (d.description && d.description.toLowerCase().includes(q)) ||
         (d.synonyms && d.synonyms.some((s) => s.toLowerCase().includes(q)))
     );
-  }, [datasets, searchQuery]);
+  }, [searchableDatasets, searchQuery]);
 
   const selectedDatasets = useMemo(
     () => datasets.filter((d) => storeSelected.includes(d.dataset_name)),
@@ -454,9 +467,19 @@ export default function ChatSection() {
   }, [selectedAims, sessionId, userId, isLocalSession]);
 
   const handleSend = async () => {
-    const msg = input.trim() || (selectedAims.length > 0 ? selectedAims.map((a) => a.description ? `${a.aim}: ${a.description}` : a.aim).join("\n") : "");
-    if (!msg || !sessionId) return;
     const formatSpec = appliedTemplate?.format_spec;
+    const appliedTemplateName = appliedTemplate?.template_name;
+
+    if (formatSpec && storeAttached.length === 0) {
+      useSessionStore.setState({ error: t("chat.templateNeedsDataset") });
+      return;
+    }
+    useSessionStore.setState({ error: null });
+
+    const msg = input.trim()
+      || (selectedAims.length > 0 ? selectedAims.map((a) => a.description ? `${a.aim}: ${a.description}` : a.aim).join("\n") : "")
+      || (formatSpec ? "Run template report" : "");
+    if (!msg || !sessionId) return;
     setAppliedTemplate(null);
     const sentInput = input;
     setInput("");
@@ -467,7 +490,7 @@ export default function ChatSection() {
     const aimNames = selectedAims.map((a) => a.aim);
     const aimDescriptions = Object.fromEntries(selectedAims.filter((a) => a.description).map((a) => [a.aim, a.description!]));
     try {
-      const res = await sendUserMessage(msg, lineName, aimNames, enrichmentMode, undefined, aimDescriptions, formatSpec);
+      const res = await sendUserMessage(msg, lineName, aimNames, enrichmentMode, undefined, aimDescriptions, formatSpec, appliedTemplateName);
     if (res?.result_uuid && res?.query_result) {
       const resultState: QueryResultState = { loading: false, ...res.query_result } as QueryResultState;
       setQueryResults((prev) => ({
@@ -516,6 +539,33 @@ export default function ChatSection() {
         }));
       }
       persistTurns();
+    } else if (res?.route === "template") {
+      // TEMPLATE run: create an OutputPanel card per run, named per-template with a
+      // counter ("01 · Daily report", "02 · …") so repeated runs stack as distinct cards.
+      const templateName = appliedTemplateName || "Report";
+      const priorRuns = useOutputStore.getState().results.filter(
+        (r) => r.kind === "template" && r.template_name === templateName
+      ).length;
+      const runNumber = priorRuns + 1;
+      const runLabel = `${String(runNumber).padStart(2, "0")} · ${templateName}`;
+      const resultState: QueryResultState = {
+        loading: false,
+        ...(res.query_result ? (res.query_result as QueryResultState) : {}),
+      } as QueryResultState;
+      const queryResults: QueryResultState[] | undefined = res.query_results
+        ? res.query_results.map((qr: any) => ({ loading: false, ...qr }))
+        : undefined;
+      useOutputStore.getState().addResult({
+        aim: runLabel,
+        description: templateName,
+        datasets: available,
+        result: resultState,
+        kind: "template",
+        template_name: templateName,
+        report: res.agent_message || "",
+        queryResults,
+      });
+      persistTurns();
     }
     } catch {
       setInput(sentInput);
@@ -523,7 +573,7 @@ export default function ChatSection() {
   };
 
   const handleKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
-    if (e.key === "Enter" && !e.shiftKey && (input.trim() || selectedAims.length > 0)) {
+    if (e.key === "Enter" && !e.shiftKey && (input.trim() || selectedAims.length > 0 || appliedTemplate)) {
       e.preventDefault();
       handleSend();
     }
@@ -964,7 +1014,7 @@ export default function ChatSection() {
               type="button"
               className={btnPrimary + " shrink-0"}
               onClick={() => handleSend()}
-              disabled={(!input.trim() && selectedAims.length === 0) || !sessionId || loading}
+              disabled={(!input.trim() && selectedAims.length === 0 && !appliedTemplate) || !sessionId || loading}
             >
               {t("common.send")}
             </button>

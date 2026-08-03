@@ -130,6 +130,13 @@ async def draft_dataset_description(
         return ""
 
 
+def _columns_signature(defs: list[dict] | None) -> frozenset:
+    """Schema fingerprint (name + datatype only, ignores meaning/description)
+    used to tell a cosmetic re-upload (same columns, refreshed data) apart
+    from a real schema change."""
+    return frozenset((c.get("name"), c.get("datatype")) for c in (defs or []))
+
+
 async def create_draft_dataset(
     user_id: str,
     dataset_name: str,
@@ -148,13 +155,24 @@ async def create_draft_dataset(
             )
         )).scalar_one_or_none()
         if existing:
+            schema_unchanged = _columns_signature(existing.column_definitions) == _columns_signature(column_definitions)
+            if schema_unchanged:
+                # Re-upload of the same columns (e.g. refreshed data) — carry over any
+                # curated meanings so a confirmed dataset doesn't silently drop out of
+                # `fetch_active_user_datasets` and break sessions/templates already using it.
+                old_meanings = {c.get("name"): c.get("meaning") for c in (existing.column_definitions or [])}
+                column_definitions = [
+                    {**c, "meaning": c.get("meaning") or old_meanings.get(c.get("name"), "")}
+                    for c in column_definitions
+                ]
             existing.table_name = table_name
             existing.sqlite_path = sqlite_path
             existing.original_filename = original_filename
             existing.column_definitions = column_definitions
             existing.column_profiling = column_profiling
             existing.row_count = row_count
-            existing.status = "draft"
+            if not schema_unchanged:
+                existing.status = "draft"
             await db.commit()
             return existing.id
 

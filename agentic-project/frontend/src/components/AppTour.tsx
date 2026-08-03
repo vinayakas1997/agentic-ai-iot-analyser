@@ -190,15 +190,15 @@ export default function AppTour({ active, onClose }: { active: boolean; onClose:
     for (let q = 0; q < TOUR_QUESTIONS.length; q++) {
       const question = t(TOUR_QUESTIONS[q].key);
       for (let i = 0; i <= question.length; i++) {
-        if (typewriterRef.current === false) break;
+        if (!typewriterRef.current) break;
         el.value = question.slice(0, i);
         el.dispatchEvent(new Event("input", { bubbles: true }));
         await sleep(30);
       }
-      if (typewriterRef.current === false) break;
+      if (!typewriterRef.current) break;
       await sleep(1200);
       for (let i = question.length; i >= 0; i--) {
-        if (typewriterRef.current === false) break;
+        if (!typewriterRef.current) break;
         el.value = question.slice(0, i);
         el.dispatchEvent(new Event("input", { bubbles: true }));
         await sleep(15);

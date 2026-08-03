@@ -1,0 +1,23 @@
+============================================
+Batch: batch3  |  Time: 2026-08-03_172758
+Dataset: production_info_5days (japan_fruit_inventory)
+============================================
+
+--- BATCH 3: Prompt budget + routing ---
+3b: Descriptions truncated at 200 chars
+  PASS 3b long desc handled
+Based on the production data from July 6-10, 2026, here is the stock breakdown by model (機種):
+
+| 機種 | Total Records | OK
+4a: DIRECT route (simple question)
+  PASS 4a DIRECT route
+The dataset contains **666,249 rows**.
+
+I used the `COUNT(*)` function on the `production_info` table to get this total.
+4g: No datasets -- early return
+  PASS 4g no-dataset early return
+
+============================================
+Results: 3 passed, 0 failed
+Timestamp: 2026-08-03_172758
+============================================

@@ -73,6 +73,7 @@ export const translations: Record<Language, Record<string, string>> = {
     "chat.uploadingProgress": "Uploading {current}/{total}: {filename}",
     "chat.uploadTooLarge": "The file size is too big max 50MB",
     "chat.datasetsNotAvailable": "Dataset not found: {names}. Could not attach this aim.",
+    "chat.templateNeedsDataset": "Please attach at least one dataset to run the template report.",
 
     // ContextSection
     "context.title": "Context",
@@ -120,6 +121,8 @@ export const translations: Record<Language, Record<string, string>> = {
     "output.noPriorContext": "No prior context for this aim.",
     "output.nothingToShow": "Nothing to show yet — results from analysis will appear here",
     "output.proposals": "Other Proposals",
+    "output.templateBadge": "Template",
+    "output.templateReport": "Report",
 
     // QueryActions
     "query.generating": "Generating query...",
@@ -158,6 +161,7 @@ export const translations: Record<Language, Record<string, string>> = {
     "turn.iteration": "Iteration {count}",
     "turn.benefitsLabel": "Benefits:",
     "turn.truncatedWarning": "The analysis stopped at its tool-step limit — the result may be incomplete.",
+    "turn.truncatedErrorWarning": "An error interrupted the analysis — the result may be incomplete.",
 
     // Upload/processing
     "upload.processing": "Processing...",
@@ -454,6 +458,7 @@ export const translations: Record<Language, Record<string, string>> = {
     "chat.uploadingProgress": "アップロード中 {current}/{total}: {filename}",
     "chat.uploadTooLarge": "ファイルサイズが大きすぎます。最大50MBです",
     "chat.datasetsNotAvailable": "データセットが見つかりません: {names}. この分析目的を追加できません。",
+    "chat.templateNeedsDataset": "テンプレートレポートを実行するには、少なくとも1つのデータセットを添付してください。",
 
     "context.title": "コンテキスト",
     "context.session": "セッション",
@@ -499,6 +504,8 @@ export const translations: Record<Language, Record<string, string>> = {
     "output.noPriorContext": "この分析目的の過去のコンテキストはありません。",
     "output.nothingToShow": "まだ何も表示されていません — 分析結果がここに表示されます",
     "output.proposals": "その他の提案",
+    "output.templateBadge": "テンプレート",
+    "output.templateReport": "レポート",
 
     "query.generating": "クエリを生成中...",
     "query.sqlQuery": "SQLクエリ",
@@ -532,6 +539,7 @@ export const translations: Record<Language, Record<string, string>> = {
     "turn.iteration": "イテレーション {count}",
     "turn.benefitsLabel": "メリット:",
     "turn.truncatedWarning": "ツールステップ数の上限に達したため、結果が不完全な可能性があります。",
+    "turn.truncatedErrorWarning": "分析中にエラーが発生したため、結果が不完全な可能性があります。",
 
     "upload.processing": "処理中...",
 

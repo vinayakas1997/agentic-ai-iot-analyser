@@ -1,0 +1,33 @@
+============================================
+Batch: batch1  |  Time: 2026-08-03_172628
+Dataset: production_info_5days (japan_fruit_inventory)
+============================================
+
+--- BATCH 1: Template route ---
+1a: Single dataset, clean run
+  PASS 1a route=template
+  PASS 1a truncated=False
+  PASS 1a stopped_reason empty
+  PASS 1a query_results_count=1
+# Report
+
+Most common prefecture: No data
+Fruit count: No data
+
+The dataset `production_info` contains manufacturing lin
+  PASS 1a template_name on turn
+1c: Template with no data (wrong column)
+  PASS 1c route=template
+# Report
+
+NonExistent: No data
+1e: Bad column -- did-you-mean (via FOCUS route)
+  PASS 1e FOCUS response
+1f: Template -- attach card as aim -- follow-up
+  PASS 1f template result_uuid=ab57d71f-8764-4338-9ab8-eb2681d6baad
+  PASS 1f follow-up routes correctly
+
+============================================
+Results: 9 passed, 0 failed
+Timestamp: 2026-08-03_172628
+============================================

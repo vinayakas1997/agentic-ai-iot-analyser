@@ -13,7 +13,7 @@ function formatTime(ts: number): string {
 }
 
 function stepLabel(step: string): string {
-  if (step.startsWith("agent_round_")) return t("processing.agent_round");
+  if (step.startsWith("agent_round_") || step.startsWith("agent_template_round_")) return t("processing.agent_round");
   if (step.startsWith("aim_")) return t("processing.aim_prefix");
   if (step.includes("llm")) return t("processing.thinking");
   if (step.includes("tool")) return t("processing.tool_call");
