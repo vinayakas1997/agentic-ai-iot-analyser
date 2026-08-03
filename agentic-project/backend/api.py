@@ -8,6 +8,7 @@ from datetime import datetime, timezone
 
 from fastapi import APIRouter, HTTPException, UploadFile, File, Form
 from pydantic import BaseModel
+from sqlalchemy import select
 
 from resolve import resolve_line_lookup, fetch_datasets, save_task_definition
 from aims import generate_chat_response, generate_sql, fix_sql, criticize_sql, extract_aims_from_text, extract_analysis_actions, _fallback_chart_configs, _llm_chart_configs, _compute_diagnostics, BASIC_CHART_TYPES, generate_aim, _pivot_data, _crosstab_chart_configs, _aggregate_chart_rows
@@ -538,7 +539,6 @@ async def _get_session_owned(session_id: str, user_id: str | None) -> ManagerSes
     if not user_id:
         raise HTTPException(status_code=403, detail="user_id is required for this operation")
     async with AsyncSessionLocal() as db:
-        from sqlalchemy import select
         row = (await db.execute(
             select(ManagerSession).where(ManagerSession.session_id == session_id)
         )).scalar_one_or_none()
@@ -547,6 +547,40 @@ async def _get_session_owned(session_id: str, user_id: str | None) -> ManagerSes
     if row.user_id != user_id:
         raise HTTPException(status_code=403, detail="You do not own this session")
     return row
+
+
+async def _commit_session_state(session_id: str, apply, max_attempts: int = 5) -> None:
+    """Apply a state mutation and commit with optimistic locking.
+
+    Retries on version conflict without re-running LLM work. `apply(state)` mutates
+    the state dict in place and may return an optional new session title.
+    """
+    for _ in range(max_attempts):
+        async with AsyncSessionLocal() as db:
+            row = (await db.execute(
+                select(ManagerSession).where(ManagerSession.session_id == session_id)
+            )).scalar_one_or_none()
+            if not row:
+                raise HTTPException(status_code=404, detail="Session not found")
+            expected_version = row.version
+            state = dict(row.state_json or {})
+            new_title = apply(state)
+            locked = (await db.execute(
+                select(ManagerSession).where(
+                    ManagerSession.session_id == session_id,
+                    ManagerSession.version == expected_version,
+                )
+            )).scalar_one_or_none()
+            if not locked:
+                continue
+            locked.state_json = state
+            locked.version += 1
+            locked.updated_at = datetime.now(timezone.utc)
+            if new_title:
+                locked.title = new_title
+            await db.commit()
+            return
+    raise HTTPException(status_code=409, detail="Concurrent modification detected. Please retry.")
 
 
 # ── Routes ──
@@ -1824,8 +1858,6 @@ async def send_message(req: MessageRequest):
     if session.user_id != uid:
         raise HTTPException(status_code=403, detail="You do not own this session")
 
-    expected_version = session.version
-
     dataset_names = [d.strip() for d in req.line_name.split(",") if d.strip()]
 
     # Guard: RESEARCH mode with no attachments → early return (no LLM call)
@@ -1929,18 +1961,8 @@ async def send_message(req: MessageRequest):
         analysis_actions_raw = await extract_analysis_actions(agent_msg, dataset_names) if dataset_names else []
         analysis_actions = [AnalysisAction(**a) for a in analysis_actions_raw if isinstance(a, dict)]
 
-        # Save turn
-        async with AsyncSessionLocal() as db:
-            from sqlalchemy import select
-            row = (await db.execute(
-                select(ManagerSession).where(
-                    ManagerSession.session_id == req.session_id,
-                    ManagerSession.version == expected_version
-                )
-            )).scalar_one_or_none()
-            if not row:
-                raise HTTPException(status_code=409, detail="Concurrent modification detected. Please retry.")
-            state = dict(row.state_json or {})
+        # Save turn (retry on version conflict — do not re-run LLM)
+        def _apply_summary_turn(state: dict):
             turns = list(state.get("turns", []))
             turn_entry = {
                 "user": req.message,
@@ -1960,14 +1982,12 @@ async def send_message(req: MessageRequest):
                 ):
                     existing.append(ap)
             state["aim_proposals"] = existing
-            row.state_json = state
-            row.version += 1
-            row.updated_at = datetime.now(timezone.utc)
-            if len(turns) == 1 and re.match(r"^Session [a-f0-9]{8}$", row.title or ""):
+            if len(turns) == 1 and re.match(r"^Session [a-f0-9]{8}$", (session.title or "")):
                 new_title = req.message.strip()[:50]
-                if new_title:
-                    row.title = new_title
-            await db.commit()
+                return new_title or None
+            return None
+
+        await _commit_session_state(req.session_id, _apply_summary_turn)
 
         return MessageResponse(
             session_id=req.session_id,
@@ -2078,18 +2098,8 @@ async def send_message(req: MessageRequest):
         ]
     analysis_actions = [AnalysisAction(**a) for a in analysis_actions_raw if isinstance(a, dict)]
 
-    # Save turn
-    async with AsyncSessionLocal() as db:
-        from sqlalchemy import select
-        row = (await db.execute(
-            select(ManagerSession).where(
-                ManagerSession.session_id == req.session_id,
-                ManagerSession.version == expected_version
-            )
-        )).scalar_one_or_none()
-        if not row:
-            raise HTTPException(status_code=409, detail="Concurrent modification detected. Please retry.")
-        state = dict(row.state_json or {})
+    # Save turn (retry on version conflict — do not re-run LLM)
+    def _apply_research_turn(state: dict):
         turns = list(state.get("turns", []))
         turn_entry = {
             "user": req.message,
@@ -2125,8 +2135,6 @@ async def send_message(req: MessageRequest):
                 existing.append(ap)
         state["aim_proposals"] = existing
 
-        # Persist full query result (including rows and chart_suggestions) to
-        # chat_query_results so the frontend finds it on page reload.
         if result_uuid and query_result_raw:
             chat_results = dict(state.get("chat_query_results", {}))
             chat_result = {
@@ -2142,14 +2150,12 @@ async def send_message(req: MessageRequest):
             chat_results[result_uuid] = chat_result
             state["chat_query_results"] = chat_results
 
-        row.state_json = state
-        row.version += 1
-        row.updated_at = datetime.now(timezone.utc)
-        if len(turns) == 1 and re.match(r"^Session [a-f0-9]{8}$", row.title or ""):
+        if len(turns) == 1 and re.match(r"^Session [a-f0-9]{8}$", (session.title or "")):
             new_title = req.message.strip()[:50]
-            if new_title:
-                row.title = new_title
-        await db.commit()
+            return new_title or None
+        return None
+
+    await _commit_session_state(req.session_id, _apply_research_turn)
 
     clear_progress(req.session_id)
     return MessageResponse(

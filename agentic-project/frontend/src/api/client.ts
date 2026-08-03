@@ -125,7 +125,9 @@ export async function sendMessage(sessionId: string, message: string, lineName =
   if (aimDescriptions && Object.keys(aimDescriptions).length > 0) body.aim_descriptions = aimDescriptions;
   if (language) body.language = language;
   if (userId) body.user_id = userId;
-  return withRetry(() => request<{
+  // No withRetry: 409 after LLM work must not re-run the whole pipeline.
+  // Backend retries the DB save without calling the LLM again.
+  return request<{
     session_id: string;
     turn_index?: number;
     agent_message?: string;
@@ -162,7 +164,7 @@ export async function sendMessage(sessionId: string, message: string, lineName =
   }>("/api/v2/messages", {
     method: "POST",
     body: JSON.stringify(body),
-  }));
+  });
 }
 
 export async function updateSessionState(sessionId: string, state: Record<string, unknown>, userId?: string) {
@@ -182,7 +184,8 @@ export async function updateSessionTitle(sessionId: string, title: string) {
 import type { ChartConfig } from "../sections/QueryActions";
 
 export async function executeQuery(sessionId: string, message: string, lineName = "", history?: { role: string; content: string }[], userId?: string) {
-  return withRetry(() => request<{
+  // No withRetry: SQL/LLM critic loop must not be replayed on 409.
+  return request<{
     session_id: string;
     sql: string;
     columns: string[];
@@ -193,7 +196,7 @@ export async function executeQuery(sessionId: string, message: string, lineName 
   }>("/api/v2/execute-query", {
     method: "POST",
     body: JSON.stringify({ session_id: sessionId, message, line_name: lineName, history, user_id: userId }),
-  }));
+  });
 }
 
 export async function getProgress(sessionId: string, userId?: string) {
@@ -204,14 +207,15 @@ export async function getProgress(sessionId: string, userId?: string) {
 }
 
 export async function summarizeContext(sessionId: string, tag: string, turnTimestamps: string[], userId?: string) {
-  return withRetry(() => request<{
+  // No withRetry: backend already retries save without re-calling the LLM.
+  return request<{
     tag: string;
     summary: string;
     created_at: string;
   }>(`/api/v2/sessions/${sessionId}/summarize-context`, {
     method: "POST",
     body: JSON.stringify({ tag, turn_timestamps: turnTimestamps, user_id: userId }),
-  }));
+  });
 }
 
 export async function listDatasets() {

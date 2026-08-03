@@ -75,7 +75,8 @@ export default function ChatSection() {
   const composerRef = useRef<HTMLTextAreaElement>(null);
   const chatScrollRef = useRef<HTMLDivElement>(null);
   const [summarizingTags, setSummarizingTags] = useState<Set<string>>(new Set());
-  const summaryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const summaryTimersRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
+  const summaryFailUntilRef = useRef<Map<string, number>>(new Map());
 
   const scrollToBottom = useCallback(() => {
     const container = chatScrollRef.current;
@@ -251,17 +252,10 @@ export default function ChatSection() {
 
   const triggerSummary = useCallback(async (tag: string, timestamps: string[]) => {
     if (!sessionId) return;
-    const timeoutId = setTimeout(() => {
-      setSummarizingTags((prev) => {
-        const next = new Set(prev);
-        next.delete(tag);
-        return next;
-      });
-    }, 5000);
     setSummarizingTags((prev) => new Set(prev).add(tag));
     try {
       const res = await summarizeContext(sessionId, tag, timestamps, userId || undefined);
-      clearTimeout(timeoutId);
+      summaryFailUntilRef.current.delete(tag);
       useSessionStore.setState((s) => {
         const existing = s.contextSummaries[tag] || [];
         if (!existing.some((e) => e.created_at === res.created_at)) {
@@ -269,8 +263,10 @@ export default function ChatSection() {
         }
         return {};
       });
-    } catch {
-      clearTimeout(timeoutId);
+    } catch (err) {
+      // Back off 30s on failure so a persistent error cannot spam the LLM.
+      summaryFailUntilRef.current.set(tag, Date.now() + 30_000);
+      console.warn("[triggerSummary] failed", tag, err);
     } finally {
       setSummarizingTags((prev) => {
         const next = new Set(prev);
@@ -278,11 +274,10 @@ export default function ChatSection() {
         return next;
       });
     }
-  }, [sessionId]);
+  }, [sessionId, userId]);
 
   // Auto-summarize turns in groups of 5 per tag
   useEffect(() => {
-    if (summaryTimerRef.current) clearTimeout(summaryTimerRef.current);
     if (!turns.length) return;
 
     const tagTurnCount: Record<string, string[]> = {};
@@ -298,19 +293,40 @@ export default function ChatSection() {
           if (t.created_at) tagTurnCount[tag].push(t.created_at);
         }
       }
+
+      const timers = summaryTimersRef.current;
+      const keep = new Set<string>();
       for (const [tag, timestamps] of Object.entries(tagTurnCount)) {
-        if (timestamps.length > 0 && timestamps.length % 5 === 0 && !summarizingTags.has(tag)) {
-          const group = timestamps.slice(-5);
-          const existingEntries = contextSummaries[tag] || [];
-          // Cover the current group of 5 — not all timestamps (entries only store one group each).
-          const alreadyCovered = existingEntries.some((e) =>
-            group.every((ts) => e.turn_timestamps.includes(ts))
-          );
-          if (alreadyCovered) continue;
-          summaryTimerRef.current = setTimeout(() => triggerSummary(tag, group), 2000);
+        if (timestamps.length <= 0 || timestamps.length % 5 !== 0 || summarizingTags.has(tag)) continue;
+        const group = timestamps.slice(-5);
+        const existingEntries = contextSummaries[tag] || [];
+        const alreadyCovered = existingEntries.some((e) =>
+          group.every((ts) => e.turn_timestamps.includes(ts))
+        );
+        if (alreadyCovered) continue;
+        const failUntil = summaryFailUntilRef.current.get(tag) || 0;
+        if (Date.now() < failUntil) continue;
+        keep.add(tag);
+        if (timers.has(tag)) continue;
+        timers.set(tag, setTimeout(() => {
+          timers.delete(tag);
+          triggerSummary(tag, group);
+        }, 2000));
+      }
+      for (const [tag, timer] of [...timers.entries()]) {
+        if (!keep.has(tag)) {
+          clearTimeout(timer);
+          timers.delete(tag);
         }
       }
-  }, [turns, enrichmentMode, contextSummaries, summarizingTags, triggerSummary]);
+  }, [turns, contextSummaries, summarizingTags, triggerSummary]);
+
+  useEffect(() => {
+    return () => {
+      for (const timer of summaryTimersRef.current.values()) clearTimeout(timer);
+      summaryTimersRef.current.clear();
+    };
+  }, []);
 
   const persistTurns = useCallback(() => {
     if (!sessionId) return;
