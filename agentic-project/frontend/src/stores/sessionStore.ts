@@ -27,6 +27,7 @@ function turnFromResponse(res: MessageResponse, userMessage: string, attachedAim
     columns: res.columns || null,
     analysis_actions: res.analysis_actions || undefined,
     deep_iterations: res.deep_iterations || undefined,
+    truncated: res.truncated || false,
   };
 }
 
@@ -81,7 +82,7 @@ interface SessionState {
   switchSession: (id: string) => Promise<void>;
   newSession: () => void;
   deleteSession: (id: string) => Promise<void>;
-  sendUserMessage: (text: string, lineName?: string, attachedAims?: string[], enrichmentMode?: string, routeOverride?: string, aimDescriptions?: Record<string, string>) => Promise<MessageResponse | undefined>;
+  sendUserMessage: (text: string, lineName?: string, attachedAims?: string[], enrichmentMode?: string, routeOverride?: string, aimDescriptions?: Record<string, string>, formatSpec?: string) => Promise<MessageResponse | undefined>;
   setError: (error: string | null) => void;
   setStatusMessage: (msg: string | null) => void;
   setPendingTurn: (user: string) => void;
@@ -251,6 +252,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
         benefits: null,
         columns: null,
         analysis_actions: t.analysis_actions || undefined,
+        truncated: Boolean(t.truncated),
       }));
       set({
         sessionMeta,
@@ -330,7 +332,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     }
   },
 
-  sendUserMessage: async (text, lineName = "", attachedAims: string[] = [], enrichmentMode = "research", routeOverride?: string, aimDescriptions?: Record<string, string>) => {
+  sendUserMessage: async (text, lineName = "", attachedAims: string[] = [], enrichmentMode = "research", routeOverride?: string, aimDescriptions?: Record<string, string>, formatSpec?: string) => {
     const { sessionId, turns, isLocalSession, pendingTitle, sessionMeta } = get();
     const isDone = turns.length > 0 && Boolean(turns[turns.length - 1]?.ui?.done);
     const origSessionId = sessionId;
@@ -379,7 +381,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
 
       // History built server-side from stored turns (via enrichment block + conv history)
       const language = useUiStore.getState().language;
-      const res = await api.sendMessage(activeSessionId, userText, lineName, attachedAims, enrichmentMode, [], routeOverride, aimDescriptions, language, sendUid);
+      const res = await api.sendMessage(activeSessionId, userText, lineName, attachedAims, enrichmentMode, [], routeOverride, aimDescriptions, language, sendUid, formatSpec);
       clearInterval(progressTimer);
       set({ statusMessage: t("session.responseReceived") });
 

@@ -14,12 +14,13 @@ import { QueryResultState } from "./QueryActions";
 import type { Turn } from "../types/manager";
 import { DatasetColumns } from "../components/DatasetColumns";
 import { TurnBubble } from "../components/TurnBubble";
+import { FormatTemplateModal } from "../components/FormatTemplateModal";
 import ProcessingPanel from "../components/ProcessingPanel";
 import { AimBar } from "../components/AimBar";
 import { PreviewModal } from "../components/PreviewModal";
 import { ViewingResultModal } from "../components/ViewingResultModal";
 import { datasetColor } from "../lib/datasetColors";
-import type { DatasetInfo } from "../types";
+import type { DatasetInfo, AnswerTemplate } from "../types";
 
 interface Aim {
   aim: string;
@@ -56,6 +57,8 @@ export default function ChatSection() {
   const [datasets, setDatasets] = useState<DatasetInfo[]>([]);
   const [searchQuery, setSearchQuery] = useState("");
   const [input, setInput] = useState("");
+  const [showTemplateModal, setShowTemplateModal] = useState(false);
+  const [appliedTemplate, setAppliedTemplate] = useState<AnswerTemplate | null>(null);
   const [previewAim, setPreviewAim] = useState<Aim | null>(null);
   const selectedAims = useSessionStore((s) => s.selectedAims);
   const [expandedDataset, setExpandedDataset] = useState<string | null>(null);
@@ -453,6 +456,8 @@ export default function ChatSection() {
   const handleSend = async () => {
     const msg = input.trim() || (selectedAims.length > 0 ? selectedAims.map((a) => a.description ? `${a.aim}: ${a.description}` : a.aim).join("\n") : "");
     if (!msg || !sessionId) return;
+    const formatSpec = appliedTemplate?.format_spec;
+    setAppliedTemplate(null);
     const sentInput = input;
     setInput("");
     setShowSearch(false);
@@ -462,7 +467,7 @@ export default function ChatSection() {
     const aimNames = selectedAims.map((a) => a.aim);
     const aimDescriptions = Object.fromEntries(selectedAims.filter((a) => a.description).map((a) => [a.aim, a.description!]));
     try {
-      const res = await sendUserMessage(msg, lineName, aimNames, enrichmentMode, undefined, aimDescriptions);
+      const res = await sendUserMessage(msg, lineName, aimNames, enrichmentMode, undefined, aimDescriptions, formatSpec);
     if (res?.result_uuid && res?.query_result) {
       const resultState: QueryResultState = { loading: false, ...res.query_result } as QueryResultState;
       setQueryResults((prev) => ({
@@ -915,6 +920,21 @@ export default function ChatSection() {
       />
 
       <div className="shrink-0 mt-3 space-y-2">
+        {appliedTemplate && (
+          <div className="flex items-center gap-2 bg-accent/10 border-2 border-accent/30 rounded-xl px-3 py-2">
+            <span className="text-[11px] font-medium text-accent truncate">
+              {t("templateModal.applied", { name: appliedTemplate.template_name })}
+            </span>
+            <button
+              type="button"
+              className="shrink-0 ml-auto text-accent hover:text-text transition-colors"
+              title={t("common.clear")}
+              onClick={() => setAppliedTemplate(null)}
+            >
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" width="14" height="14" strokeWidth="2.5"><path d="M18 6L6 18M6 6l12 12" /></svg>
+            </button>
+          </div>
+        )}
         {/* Composer */}
         <div className="flex gap-2 items-end">
           <textarea
@@ -927,14 +947,28 @@ export default function ChatSection() {
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={handleKeyDown}
           />
-          <button
-            type="button"
-            className={btnPrimary + " shrink-0"}
-            onClick={() => handleSend()}
-            disabled={(!input.trim() && selectedAims.length === 0) || !sessionId || loading}
-          >
-            {t("common.send")}
-          </button>
+          <div className="flex flex-col gap-2 shrink-0">
+            <button
+              type="button"
+              className={`flex items-center gap-1.5 text-[11px] font-semibold text-accent rounded-lg px-2.5 py-2 ${btnGlass}`}
+              onClick={() => setShowTemplateModal(true)}
+              title={t("templateModal.title")}
+            >
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" width="14" height="14" strokeWidth="2.2">
+                <path d="M12 5v14M5 12h14" />
+                <path d="M5 4h6l8 8" opacity="0" />
+              </svg>
+              {t("templateModal.addButton")}
+            </button>
+            <button
+              type="button"
+              className={btnPrimary + " shrink-0"}
+              onClick={() => handleSend()}
+              disabled={(!input.trim() && selectedAims.length === 0) || !sessionId || loading}
+            >
+              {t("common.send")}
+            </button>
+          </div>
         </div>
       </div>
 
@@ -956,6 +990,16 @@ export default function ChatSection() {
           onClose={() => setViewingResult(null)}
         />
       )}
+
+      <FormatTemplateModal
+        open={showTemplateModal}
+        onClose={() => setShowTemplateModal(false)}
+        onApply={(tmpl) => {
+          setAppliedTemplate(tmpl);
+          setShowTemplateModal(false);
+          composerRef.current?.focus();
+        }}
+      />
     </section>
   );
 }

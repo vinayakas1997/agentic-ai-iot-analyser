@@ -21,6 +21,14 @@ from logger import log_sql
 logger = logging.getLogger(__name__)
 
 
+def _last_assistant_content(messages: list[dict]) -> str:
+    """Scan backwards for the most recent non-empty assistant text."""
+    for m in reversed(messages):
+        if m.get("role") == "assistant" and m.get("content"):
+            return m["content"]
+    return ""
+
+
 def normalize_halfwidth(text: str) -> str:
     """Convert half-width katakana to full-width so the LLM can read them properly.
     Half-width katakana (e.g. ﾜｰｸ) are valid Unicode but uncommon in modern text and
@@ -192,13 +200,14 @@ async def _run_query_data(sql: str, datasets_data: list[dict] | None = None) -> 
     # external PostgreSQL/MySQL connections — route to whichever engine actually
     # holds the table(s) this query references. Mixing databases is rejected.
     datasets_data = datasets_data or []
+    column_map = _build_column_map(datasets_data)
     try:
         from query_router import route_execute
         result = await route_execute(datasets_data, validated)
-    except ValueError as e:
-        return {"ok": False, "error": f"{e}"}
-
-    column_map = _build_column_map(datasets_data)
+    except Exception as e:
+        msg = str(e)[:300]
+        msg = _suggest_column_fix(msg, column_map)
+        return {"ok": False, "error": f"SQL execution failed: {msg}"}
 
     try:
         log_sql("agent_tool_call", f"query_data: {validated[:150]}")
@@ -260,17 +269,22 @@ async def run_focus_agent(
     attached_aims: list[str],
     enrichment_block: str,
     session_state: dict,
-    max_rounds: int = 6,
+    max_rounds: int | None = None,
     datasets_data: list[dict] | None = None,
     language: str = "en",
     on_progress: callable = None,
 ) -> dict:
     """Agentic FOCUS loop: the LLM chooses between querying fresh data and recalling
     a previously fetched result in this session, across up to max_rounds tool-call turns.
-    Returns {agent_message, chart_needed (always True), query_result} — query_result is the raw dict
-    from execute_sql (no chart_suggestions attached yet), or None if no query ran."""
+    max_rounds defaults to settings.focus_max_rounds.
+    Returns {agent_message, chart_needed (always True), query_result, truncated} —
+    query_result is the raw dict from execute_sql (no chart_suggestions attached yet),
+    or None if no query ran. truncated is True when the run exhausted its round budget
+    (or hit an LLM error) and had to finish from the data gathered so far."""
     settings = get_settings()
     client = get_llm_client()
+    if max_rounds is None:
+        max_rounds = settings.focus_max_rounds
 
     # If this aim+datasets combo already has a successful focus result in this session,
     # hide the "Previously Fetched" section. Otherwise the LLM may pivot to "explain
@@ -332,15 +346,38 @@ async def run_focus_agent(
             create_kwargs["tool_choice"] = "auto"
         if on_progress:
             on_progress(f"round_{round_num}_llm", "running", "Thinking...")
-        response = await client.chat.completions.create(**create_kwargs)
+        try:
+            response = await client.chat.completions.create(**create_kwargs)
+        except Exception as e:
+            logger.error("focus_agent LLM call failed", extra={"error": str(e)[:300]})
+            if on_progress:
+                on_progress(f"round_{round_num}_llm", "error", "LLM call failed")
+                on_progress(f"round_{round_num}", "done", "Stopped early")
+            last_content = _last_assistant_content(messages)
+            return {
+                "agent_message": last_content or "I hit an error while analyzing the data. Please try again.",
+                "chart_needed": True,
+                "query_result": last_query_result,
+                "truncated": True,
+            }
         msg = response.choices[0].message
         if on_progress:
             on_progress(f"round_{round_num}_llm", "done", "Response received")
 
         if not msg.tool_calls:
+            truncated = is_last_round
             if on_progress:
-                on_progress(f"round_{round_num}", "done", "Answer ready")
-            return {"agent_message": msg.content or "", "chart_needed": True, "query_result": last_query_result}
+                on_progress(
+                    f"round_{round_num}",
+                    "done",
+                    "Answer ready" if not truncated else "Tool-step limit reached — answer may be incomplete",
+                )
+            return {
+                "agent_message": msg.content or "",
+                "chart_needed": True,
+                "query_result": last_query_result,
+                "truncated": truncated,
+            }
 
         messages.append({
             "role": "assistant",
@@ -413,13 +450,10 @@ async def run_focus_agent(
     # same shape as today's "no SQL found" fallback in _handle_focus.
     if on_progress:
         on_progress(f"round_{round_num}", "done", "Max rounds reached")
-    last_content = ""
-    for m in reversed(messages):
-        if m.get("role") == "assistant" and m.get("content"):
-            last_content = m["content"]
-            break
+    last_content = _last_assistant_content(messages)
     return {
         "agent_message": last_content or "I wasn't able to complete this within the allotted steps — could you rephrase or narrow the question?",
         "chart_needed": True,
         "query_result": last_query_result,
+        "truncated": True,
     }

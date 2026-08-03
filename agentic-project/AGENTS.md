@@ -199,6 +199,8 @@ docker compose logs -f backend
 | `CORS_ORIGINS` | `http://localhost:7008,http://localhost` | backend | Allowed CORS origins |
 | `DEBUG` | `false` | backend | Debug mode |
 | `LOG_LEVEL` | `0` | backend | 0=off, 1=console, 2=file |
+| `FOCUS_MAX_ROUNDS` | `12` | backend | Agentic tool-call round budget for the FOCUS agent |
+| `TEMPLATE_MAX_ROUNDS` | `16` | backend | Agentic tool-call round budget for the template-report agent |
 | `VITE_API_URL` | `http://localhost:7010` | frontend (build arg) | Backend API URL |
 | `VITE_WS_URL` | `ws://localhost:7009` | frontend (build arg) | WebSocket URL |
 

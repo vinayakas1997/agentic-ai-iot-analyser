@@ -15,6 +15,7 @@ export const translations: Record<Language, Record<string, string>> = {
     "common.send": "Send",
     "common.close": "Close",
     "common.cancel": "Cancel",
+    "common.clear": "Clear",
     "common.retry": "Retry",
     "common.rerun": "Re-run",
     "common.remove": "Remove",
@@ -156,6 +157,7 @@ export const translations: Record<Language, Record<string, string>> = {
     "turn.researchSteps": "Research Steps ({count})",
     "turn.iteration": "Iteration {count}",
     "turn.benefitsLabel": "Benefits:",
+    "turn.truncatedWarning": "The analysis stopped at its tool-step limit — the result may be incomplete.",
 
     // Upload/processing
     "upload.processing": "Processing...",
@@ -190,6 +192,25 @@ export const translations: Record<Language, Record<string, string>> = {
     "clarify.selectTemplate": "Select template...",
     "clarify.matchingBanner": "Templates matching your columns",
     "clarify.dismiss": "Dismiss",
+
+    // Template modal
+    "templateModal.title": "Report Format Template",
+    "templateModal.addButton": "+ Template",
+    "templateModal.templateName": "Template name",
+    "templateModal.namePlaceholder": "e.g. Daily sensor report",
+    "templateModal.formatSpec": "Report format (free text)",
+    "templateModal.specPlaceholder": "Write the exact layout the answer must follow, e.g.\n\n# Daily Report\n\n## Machine: <name>\n- Max value: ?\n- Average value: ?\n- Min value: ?\n- Last value: ?",
+    "templateModal.specHint": "The LLM will run the queries it needs and fill in the report exactly in this format.",
+    "templateModal.save": "Save Template",
+    "templateModal.saving": "Saving...",
+    "templateModal.saved": "Template saved",
+    "templateModal.saveFailed": "Could not save template",
+    "templateModal.fillBoth": "Enter a name and the report format first",
+    "templateModal.savedTemplates": "Saved templates",
+    "templateModal.noTemplates": "No templates yet — create one above",
+    "templateModal.delete": "Delete template",
+    "templateModal.deleteConfirm": "Delete this template?",
+    "templateModal.applied": "Format: {name} — applies to your next message",
 
     // Login
     "login.title": "Sign in",
@@ -377,6 +398,7 @@ export const translations: Record<Language, Record<string, string>> = {
     "common.send": "送信",
     "common.close": "閉じる",
     "common.cancel": "キャンセル",
+    "common.clear": "クリア",
     "common.retry": "再試行",
     "common.rerun": "再実行",
     "common.remove": "削除",
@@ -509,6 +531,7 @@ export const translations: Record<Language, Record<string, string>> = {
     "turn.researchSteps": "リサーチステップ ({count})",
     "turn.iteration": "イテレーション {count}",
     "turn.benefitsLabel": "メリット:",
+    "turn.truncatedWarning": "ツールステップ数の上限に達したため、結果が不完全な可能性があります。",
 
     "upload.processing": "処理中...",
 
@@ -541,6 +564,25 @@ export const translations: Record<Language, Record<string, string>> = {
     "clarify.selectTemplate": "テンプレートを選択...",
     "clarify.matchingBanner": "列に一致するテンプレート",
     "clarify.dismiss": "閉じる",
+
+    // Template modal
+    "templateModal.title": "レポート形式テンプレート",
+    "templateModal.addButton": "+ テンプレート",
+    "templateModal.templateName": "テンプレート名",
+    "templateModal.namePlaceholder": "例: 日次センサーレポート",
+    "templateModal.formatSpec": "レポート形式（自由記述）",
+    "templateModal.specPlaceholder": "回答が従うべき正確なレイアウトを記述してください。例:\n\n# 日次レポート\n\n## 機械: <名前>\n- 最大値: ?\n- 平均値: ?\n- 最小値: ?\n- 最終値: ?",
+    "templateModal.specHint": "LLMが必要なクエリを実行し、この形式の通りにレポートを作成します。",
+    "templateModal.save": "テンプレートを保存",
+    "templateModal.saving": "保存中...",
+    "templateModal.saved": "テンプレートを保存しました",
+    "templateModal.saveFailed": "テンプレートを保存できませんでした",
+    "templateModal.fillBoth": "名前とレポート形式を入力してください",
+    "templateModal.savedTemplates": "保存済みテンプレート",
+    "templateModal.noTemplates": "テンプレートはまだありません — 上で作成してください",
+    "templateModal.delete": "テンプレートを削除",
+    "templateModal.deleteConfirm": "このテンプレートを削除しますか？",
+    "templateModal.applied": "形式: {name} — 次のメッセージに適用されます",
 
     "login.title": "サインイン",
     "login.subtitle": "続けるにはIDを入力してください。",

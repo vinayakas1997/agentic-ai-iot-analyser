@@ -52,6 +52,22 @@ class ColumnTemplate(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
 
+class AnswerTemplate(Base):
+    """User-defined report-format templates. The format_spec is free text the user
+    writes once (e.g. a daily report layout with title, per-machine sections and
+    questions). When applied, the separate template pipeline fills it in from the
+    attached datasets. Purely datasets + format spec — not a research flow."""
+    __tablename__ = "answer_templates"
+    __table_args__ = (UniqueConstraint("user_id", "template_name", name="uq_answer_templates_user_name"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[str] = mapped_column(Text, nullable=False)
+    template_name: Mapped[str] = mapped_column(Text, nullable=False)
+    format_spec: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
 class DbConnection(Base):
     """External database connection registered by the IoT team. Tables from these connections
     can be introspected for the global registry and queried live by the analyser.

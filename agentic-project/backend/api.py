@@ -16,6 +16,7 @@ from llm_client import parse_numbered_suggestions
 from logger import log_route, log_llm_call, log_sql, log_aims, log_response, log_full_prompt
 from llm_client import summarize_turns, classify_route, extract_sql, extract_sql_fallback, generate_llm_response, interpret_results, direct_prompt, suggest_prompt, focus_prompt, language_instruction
 from focus_agent import run_focus_agent, normalize_halfwidth
+from template_agent import run_template_agent
 from sql_executor import validate_sql
 from sql_executor import execute_sql
 from db.models import GlobalRegistry, ManagerSession
@@ -41,6 +42,11 @@ from column_templates import (
     list_templates,
     delete_template,
     match_templates,
+)
+from answer_templates import (
+    save_answer_template,
+    list_answer_templates,
+    delete_answer_template,
 )
 from registry_admin import (
     TableNotFoundError,
@@ -142,6 +148,7 @@ class MessageRequest(BaseModel):
     history: list[dict] | None = None
     route_override: str = ""
     language: str = "en"
+    format_spec: str = ""
 
 class AimProposal(BaseModel):
     aim: str
@@ -211,6 +218,7 @@ class MessageResponse(BaseModel):
     query_result: QueryResult | None = None
     route: str = "direct"
     deep_iterations: list = []
+    truncated: bool = False
 
 class ExecuteQueryRequest(BaseModel):
     session_id: str
@@ -275,6 +283,11 @@ class SaveTemplateRequest(BaseModel):
 class MatchTemplatesRequest(BaseModel):
     user_id: str = ""
     column_names: list[str]
+
+class SaveAnswerTemplateRequest(BaseModel):
+    user_id: str = ""
+    template_name: str
+    format_spec: str
 
 class LoginRequest(BaseModel):
     user_id: str
@@ -1062,6 +1075,30 @@ async def match_columns_against_templates(req: MatchTemplatesRequest):
     matches = await match_templates(uid, req.column_names)
     return {"matches": matches}
 
+@router.post("/answer-templates")
+async def create_answer_template(req: SaveAnswerTemplateRequest):
+    uid = _require_user_id(req.user_id)
+    if not req.template_name.strip():
+        raise HTTPException(status_code=400, detail="template_name is required")
+    if not req.format_spec.strip():
+        raise HTTPException(status_code=400, detail="format_spec is required")
+    return await save_answer_template(uid, req.template_name.strip(), req.format_spec.strip())
+
+@router.get("/answer-templates")
+async def list_answer_templates_route(user_id: str = ""):
+    uid = _require_user_id(user_id)
+    templates = await list_answer_templates(uid)
+    return {"templates": templates}
+
+@router.delete("/answer-templates/{template_id}")
+async def remove_answer_template(template_id: int, user_id: str = ""):
+    uid = _require_user_id(user_id)
+    try:
+        await delete_answer_template(uid, template_id)
+    except ValueError:
+        raise HTTPException(status_code=404, detail="Template not found")
+    return {"status": "deleted", "id": template_id}
+
 @router.post("/login", response_model=LoginResponse)
 async def login(req: LoginRequest):
     """Stateless ID-only allowlist check — no passwords. Decides which top-level view the
@@ -1822,6 +1859,7 @@ async def _handle_focus(
             "agent_message": agent_result["agent_message"],
             "result_uuid": None,
             "query_result": None,
+            "truncated": agent_result.get("truncated", False),
         }
     set_progress(session_id, "focus_agent", "done", "Analysis complete")
 
@@ -1835,6 +1873,63 @@ async def _handle_focus(
         "agent_message": agent_result["agent_message"],
         "result_uuid": result_uuid,
         "query_result": result_with_charts,
+        "truncated": agent_result.get("truncated", False),
+    }
+
+
+async def _handle_template(
+    session_id: str,
+    message: str,
+    dataset_names: list[str],
+    datasets_data: list[dict],
+    format_spec: str,
+    session_state: dict | None = None,
+    language: str = "en",
+):
+    """TEMPLATE route: the isolated report pipeline. Purely attached datasets + the user's
+    format spec — no aims, no proposals, no suggestions, no route classification. The agent
+    runs as many SQL queries as the format needs and writes the report exactly in that format."""
+    set_progress(session_id, "building_context", "running", "Analyzing dataset schema...")
+    context = await _build_context(dataset_names, datasets_data, [], None, include_samples=False)
+    set_progress(session_id, "building_context", "done", f"{len(datasets_data)} datasets analyzed")
+
+    set_progress(session_id, "template_agent", "running", "Gathering data for report...")
+    agent_result = await run_template_agent(
+        message=message,
+        context=context,
+        format_spec=format_spec,
+        datasets_data=datasets_data,
+        session_state=session_state or {},
+        language=language,
+        on_progress=lambda step, status, detail="": set_progress(session_id, f"agent_{step}", status, detail),
+    )
+
+    result = agent_result["query_result"]
+    if result is None:
+        set_progress(session_id, "template_agent", "done", "Report complete (no data query)")
+        return {
+            "agent_message": agent_result["agent_message"],
+            "result_uuid": None,
+            "query_result": None,
+            "aim_proposals": [],
+            "analysis_actions": [],
+            "truncated": agent_result.get("truncated", False),
+        }
+
+    set_progress(session_id, "template_agent", "done", "Report complete")
+    set_progress(session_id, "building_charts", "running", "Building chart suggestions...")
+    chart_suggestions = await _build_chart_suggestions(result, datasets_data)
+    result_with_charts = {**result, "chart_suggestions": chart_suggestions}
+    set_progress(session_id, "building_charts", "done", "Charts ready")
+
+    result_uuid = str(uuid.uuid4())
+    return {
+        "agent_message": agent_result["agent_message"],
+        "result_uuid": result_uuid,
+        "query_result": result_with_charts,
+        "aim_proposals": [],
+        "analysis_actions": [],
+        "truncated": agent_result.get("truncated", False),
     }
 
 
@@ -1917,6 +2012,98 @@ async def send_message(req: MessageRequest):
                 agent_message=f"No datasets found for: {', '.join(unresolved)}. Please attach available datasets.",
                 route="direct",
             )
+
+    # TEMPLATE route: isolated report pipeline. Short-circuits before any routing,
+    # classification, or aim/proposal logic. Purely datasets + the user's format spec.
+    if req.format_spec.strip():
+        set_progress(req.session_id, "template", "running", "Building report from template...")
+        handler_result = await _handle_template(
+            session_id=req.session_id,
+            message=req.message,
+            dataset_names=dataset_names,
+            datasets_data=datasets_data,
+            format_spec=req.format_spec.strip(),
+            session_state=dict(session.state_json or {}),
+            language=req.language,
+        )
+        set_progress(req.session_id, "template", "done", "Report ready")
+
+        agent_msg = handler_result["agent_message"]
+        result_uuid = handler_result["result_uuid"]
+        query_result_raw = handler_result["query_result"]
+
+        query_result_model = None
+        if query_result_raw:
+            cs_model = query_result_raw.get("chart_suggestions")
+            if isinstance(cs_model, dict):
+                cs_model = ChartSuggestions(
+                    advanced=[ChartConfig(**c) for c in cs_model.get("advanced", [])],
+                    basic=[ChartConfig(**c) for c in cs_model.get("basic", [])],
+                )
+            query_result_model = QueryResult(
+                sql=query_result_raw.get("sql", ""),
+                columns=query_result_raw.get("columns", []),
+                column_types=query_result_raw.get("column_types", []),
+                rows=query_result_raw.get("rows", []),
+                row_count=query_result_raw.get("row_count", 0),
+                chart_suggestions=cs_model,
+            )
+
+        def _apply_template_turn(state: dict):
+            turns = list(state.get("turns", []))
+            turn_entry = {
+                "user": req.message,
+                "agent": agent_msg,
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "aims": [],
+                "datasets": dataset_names,
+                "route": "template",
+                "truncated": handler_result.get("truncated", False),
+            }
+            if result_uuid:
+                turn_entry["result_uuid"] = result_uuid
+            if query_result_raw:
+                query_result_save = {
+                    "sql": query_result_raw.get("sql", ""),
+                    "columns": query_result_raw.get("columns", []),
+                    "row_count": query_result_raw.get("row_count", 0),
+                }
+                if query_result_raw.get("chart_suggestions") is not None:
+                    cs = query_result_raw["chart_suggestions"]
+                    query_result_save["chart_suggestions"] = cs.model_dump() if hasattr(cs, "model_dump") else cs
+                turn_entry["query_result"] = query_result_save
+            turns.append(turn_entry)
+            state["turns"] = turns
+            if result_uuid and query_result_raw:
+                chat_results = dict(state.get("chat_query_results", {}))
+                chat_result = {
+                    "sql": query_result_raw.get("sql", ""),
+                    "columns": query_result_raw.get("columns", []),
+                    "column_types": query_result_raw.get("column_types", []),
+                    "rows": query_result_raw.get("rows", []),
+                    "row_count": query_result_raw.get("row_count", 0),
+                }
+                if query_result_raw.get("chart_suggestions") is not None:
+                    cs = query_result_raw["chart_suggestions"]
+                    chat_result["chart_suggestions"] = cs.model_dump() if hasattr(cs, "model_dump") else cs
+                chat_results[result_uuid] = chat_result
+                state["chat_query_results"] = chat_results
+            if len(turns) == 1 and re.match(r"^Session [a-f0-9]{8}$", (session.title or "")):
+                return req.message.strip()[:50] or None
+            return None
+
+        await _commit_session_state(req.session_id, _apply_template_turn)
+        clear_progress(req.session_id)
+        return MessageResponse(
+            session_id=req.session_id,
+            turn_index=0,
+            agent_message=agent_msg,
+            route="template",
+            result_uuid=result_uuid,
+            query_result=query_result_model,
+            done=True,
+            truncated=handler_result.get("truncated", False),
+        )
 
     # If SUMMARY mode, skip routing and use existing summarization flow
     if req.enrichment_mode == "summary":
@@ -2125,6 +2312,8 @@ async def send_message(req: MessageRequest):
             turn_entry["deep_iterations"] = deep_iterations_raw
         if analysis_actions_raw:
             turn_entry["analysis_actions"] = analysis_actions_raw
+        if handler_result.get("truncated"):
+            turn_entry["truncated"] = True
         turns.append(turn_entry)
         state["turns"] = turns
         existing = list(state.get("aim_proposals", []))
@@ -2169,6 +2358,7 @@ async def send_message(req: MessageRequest):
         done=True,
         aim_proposals=aim_proposals,
         deep_iterations=deep_iterations_raw,
+        truncated=handler_result.get("truncated", False),
     )
 
 

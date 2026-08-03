@@ -84,6 +84,7 @@ export interface Turn {
   columns?: { dataset: string; name: string }[] | null;
   analysis_actions?: AnalysisAction[];
   deep_iterations?: DeepIteration[];
+  truncated?: boolean;
 }
 
 export interface SessionMeta {
@@ -131,6 +132,7 @@ export interface MessageResponse {
   };
   route?: string;
   deep_iterations?: DeepIteration[];
+  truncated?: boolean;
 }
 
 export interface AnalysisAction {

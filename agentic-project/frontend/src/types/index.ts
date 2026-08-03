@@ -114,6 +114,13 @@ export interface TemplateMatch {
   matched_columns: { name: string; meaning: string }[];
 }
 
+export interface AnswerTemplate {
+  id: number;
+  template_name: string;
+  format_spec: string;
+  created_at?: string | null;
+}
+
 export interface PersonalDataset {
   id: number;
   dataset_name: string;

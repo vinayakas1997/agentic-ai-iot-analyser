@@ -19,6 +19,11 @@ class Settings(BaseSettings):
     llm_max_retries: int = 3
     llm_request_timeout: float = 120.0
 
+    # Agentic tool-call round budgets. When a run exhausts its budget it is forced to
+    # answer from the data gathered so far and the response is flagged `truncated`.
+    focus_max_rounds: int = 12
+    template_max_rounds: int = 16
+
     api_host: str = "0.0.0.0"
     api_port: int = 7010
     cors_origins: str = "http://localhost:7008,http://127.0.0.1:7008,http://localhost:7010"

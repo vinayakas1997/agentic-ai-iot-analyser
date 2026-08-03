@@ -119,12 +119,13 @@ export async function getSession(sessionId: string, userId?: string) {
   }>(`/api/v2/sessions/${sessionId}${params}`);
 }
 
-export async function sendMessage(sessionId: string, message: string, lineName = "", attachedAims: string[] = [], enrichmentMode = "research", history?: { role: string; content: string }[], routeOverride?: string, aimDescriptions?: Record<string, string>, language?: string, userId?: string) {
+export async function sendMessage(sessionId: string, message: string, lineName = "", attachedAims: string[] = [], enrichmentMode = "research", history?: { role: string; content: string }[], routeOverride?: string, aimDescriptions?: Record<string, string>, language?: string, userId?: string, formatSpec?: string) {
   const body: Record<string, unknown> = { session_id: sessionId, message, line_name: lineName, attached_aims: attachedAims, enrichment_mode: enrichmentMode, history: history ?? [] };
   if (routeOverride) body.route_override = routeOverride;
   if (aimDescriptions && Object.keys(aimDescriptions).length > 0) body.aim_descriptions = aimDescriptions;
   if (language) body.language = language;
   if (userId) body.user_id = userId;
+  if (formatSpec) body.format_spec = formatSpec;
   // No withRetry: 409 after LLM work must not re-run the whole pipeline.
   // Backend retries the DB save without calling the LLM again.
   return request<{
@@ -232,7 +233,7 @@ export async function listDatasets() {
   }[]>("/api/v2/datasets");
 }
 
-import type { UploadedFileDraft, UploadFailure, PersonalDataset, ColumnDraft, ColumnTemplate, TemplateMatch } from "../types";
+import type { UploadedFileDraft, UploadFailure, PersonalDataset, ColumnDraft, ColumnTemplate, TemplateMatch, AnswerTemplate } from "../types";
 
 export async function uploadCsvFiles(files: File[], userId?: string) {
   const form = new FormData();
@@ -478,4 +479,21 @@ export async function matchColumnTemplates(columnNames: string[], userId?: strin
     method: "POST",
     body: JSON.stringify({ column_names: columnNames, user_id: userId }),
   });
+}
+
+export async function saveAnswerTemplate(templateName: string, formatSpec: string, userId?: string) {
+  return request<AnswerTemplate>("/api/v2/answer-templates", {
+    method: "POST",
+    body: JSON.stringify({ template_name: templateName, format_spec: formatSpec, user_id: userId }),
+  });
+}
+
+export async function listAnswerTemplates(userId?: string) {
+  const params = userId ? `?user_id=${encodeURIComponent(userId)}` : "";
+  return request<{ templates: AnswerTemplate[] }>(`/api/v2/answer-templates${params}`);
+}
+
+export async function deleteAnswerTemplate(templateId: number, userId?: string) {
+  const params = userId ? `?user_id=${encodeURIComponent(userId)}` : "";
+  return request<{ status: string; id: number }>(`/api/v2/answer-templates/${templateId}${params}`, { method: "DELETE" });
 }

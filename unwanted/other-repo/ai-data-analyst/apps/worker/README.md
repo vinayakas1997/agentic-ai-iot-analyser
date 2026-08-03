@@ -1,3 +1,0 @@
-# Worker
-
-BullMQ worker.

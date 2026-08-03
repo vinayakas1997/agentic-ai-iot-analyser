@@ -109,6 +109,19 @@ async def create_tables() -> None:
         await conn.execute(text("CREATE INDEX IF NOT EXISTS idx_column_templates_user_id ON column_templates(user_id)"))
 
         await conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS answer_templates (
+                id                  SERIAL PRIMARY KEY,
+                user_id             TEXT NOT NULL,
+                template_name       TEXT NOT NULL,
+                format_spec         TEXT NOT NULL DEFAULT '',
+                created_at          TIMESTAMPTZ DEFAULT NOW(),
+                updated_at          TIMESTAMPTZ DEFAULT NOW(),
+                UNIQUE (user_id, template_name)
+            )
+        """))
+        await conn.execute(text("CREATE INDEX IF NOT EXISTS idx_answer_templates_user_id ON answer_templates(user_id)"))
+
+        await conn.execute(text("""
             CREATE TABLE IF NOT EXISTS db_connections (
                 id              SERIAL PRIMARY KEY,
                 name            TEXT NOT NULL,

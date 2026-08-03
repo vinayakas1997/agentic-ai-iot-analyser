@@ -262,6 +262,11 @@ export function TurnBubble({ turn, queryResult, selectedAims, runningAim, loadin
           <ReactMarkdown remarkPlugins={[remarkGfm, remarkBreaks]}>{escapeAsterisks(turn.agent)}</ReactMarkdown>
         )}
       </div>
+      {turn.truncated && (
+        <div className="rounded-lg border border-ic-amber/40 bg-ic-amber-soft/30 px-3 py-2 mt-3 text-[12px] text-ic-amber leading-snug">
+          {t("turn.truncatedWarning")}
+        </div>
+      )}
       {actionCards}
       {deepIterationBlocks}
       {turn.description && (
