@@ -12,16 +12,33 @@ export class ApiError extends Error {
 /** Matches backend max_upload_size_mb / nginx client_max_body_size. */
 export const MAX_UPLOAD_BYTES = 50 * 1024 * 1024;
 
+/** Abort any request that doesn't complete within 700s (under nginx's 900s read timeout).
+ * Template runs split into multiple sections can take several minutes; 700s covers the
+ * worst reasonable case, and the session store recovers gracefully if it still trips. */
+const REQUEST_TIMEOUT_MS = 700_000;
+
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
-  const res = await fetch(`${API}${path}`, {
-    headers: { "Content-Type": "application/json" },
-    ...options,
-  });
-  if (!res.ok) {
-    const body = await res.text();
-    throw new ApiError(body || res.statusText, res.status);
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+  try {
+    const res = await fetch(`${API}${path}`, {
+      headers: { "Content-Type": "application/json" },
+      signal: controller.signal,
+      ...options,
+    });
+    if (!res.ok) {
+      const body = await res.text();
+      throw new ApiError(body || res.statusText, res.status);
+    }
+    return res.json();
+  } catch (e) {
+    if (e instanceof DOMException && e.name === "AbortError") {
+      throw new ApiError(`Request timed out after ${REQUEST_TIMEOUT_MS / 1000}s`, 0);
+    }
+    throw e;
+  } finally {
+    clearTimeout(timeout);
   }
-  return res.json();
 }
 
 async function withRetry<T>(fn: () => Promise<T>, maxRetries = 3): Promise<T> {
@@ -115,7 +132,7 @@ export async function getSession(sessionId: string, userId?: string) {
     status: string;
     mode?: string;
     state: any;
-    turns: { user: string; agent: string; timestamp: string; aims?: string[]; datasets?: string[]; analysis_actions?: any; result_uuid?: string }[];
+    turns: { user: string; agent: string; timestamp: string; created_at?: string; aims?: string[]; datasets?: string[]; analysis_actions?: any; result_uuid?: string; route?: string; phase?: string; status?: string; truncated?: boolean; stopped_reason?: string; template_name?: string; query_result?: any; query_results?: any[] }[];
   }>(`/api/v2/sessions/${sessionId}${params}`);
 }
 

@@ -330,11 +330,11 @@ export function TurnBubble({ turn, queryResult, selectedAims, runningAim, loadin
             <IconStar size={11} />
           </span>
           {hasDetail ? (
-            <div className="flex-1 rounded-xl border-2 border-stage-manager-line border-l-3 border-l-stage-manager bg-surface-2 p-4">
+            <div className="flex-1 min-w-0 rounded-xl border-2 border-stage-manager-line border-l-3 border-l-stage-manager bg-surface-2 p-4">
               {agentContent}
             </div>
           ) : (
-            <div className="flex-1 rounded-xl border-2 border-stage-manager-line border-l-3 border-l-stage-manager bg-surface-2 p-3 text-sm">
+            <div className="flex-1 min-w-0 rounded-xl border-2 border-stage-manager-line border-l-3 border-l-stage-manager bg-surface-2 p-3 text-sm">
               {agentContent}
             </div>
           )}

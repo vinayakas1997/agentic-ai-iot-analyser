@@ -23,6 +23,17 @@ class Settings(BaseSettings):
     # answer from the data gathered so far and the response is flagged `truncated`.
     focus_max_rounds: int = 12
     template_max_rounds: int = 16
+    # Per-section round budget when a template format spec is split into multiple
+    # numbered analyses and each runs independently. Each section is a smaller task,
+    # so it needs far fewer rounds than the combined run.
+    template_section_max_rounds: int = 6
+
+    # How many result rows each agent sees in a single tool result. Template reports
+    # need complete per-machine/per-hour matrices, so they get a high cap (matches the
+    # executor's auto-LIMIT 200 — full result sets are never silently cut). The FOCUS
+    # agent keeps a moderate cap: it answers narrower questions and re-queries per topic.
+    template_tool_max_rows: int = 200
+    focus_tool_max_rows: int = 50
 
     # Overall token budget for the composed system prompt (context + enrichment +
     # previously-fetched + conversation history + aim descriptions). When exceeded,

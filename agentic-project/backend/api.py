@@ -3,6 +3,7 @@
 import re
 import uuid
 import time
+import asyncio
 import logging
 from datetime import datetime, timezone
 
@@ -14,9 +15,9 @@ from resolve import resolve_line_lookup, fetch_datasets, save_task_definition
 from aims import generate_chat_response, generate_sql, fix_sql, criticize_sql, extract_aims_from_text, extract_analysis_actions, _fallback_chart_configs, _llm_chart_configs, _compute_diagnostics, BASIC_CHART_TYPES, generate_aim, _pivot_data, _crosstab_chart_configs, _aggregate_chart_rows
 from llm_client import parse_numbered_suggestions
 from logger import log_route, log_llm_call, log_sql, log_aims, log_response, log_full_prompt
-from llm_client import summarize_turns, classify_route, extract_sql, extract_sql_fallback, generate_llm_response, interpret_results, direct_prompt, suggest_prompt, focus_prompt, language_instruction
+from llm_client import summarize_turns, classify_route, extract_sql, extract_sql_fallback, generate_llm_response, interpret_results, direct_prompt, suggest_prompt, focus_prompt, language_instruction, humanize_column_names
 from focus_agent import run_focus_agent, normalize_halfwidth
-from template_agent import run_template_agent
+from template_agent import run_template_agent, split_format_spec
 from sql_executor import validate_sql
 from sql_executor import execute_sql
 from db.models import GlobalRegistry, ManagerSession
@@ -202,6 +203,7 @@ class QueryResult(BaseModel):
     rows: list[dict]
     row_count: int
     chart_suggestions: ChartSuggestions | None = None
+    note: str = ""
 
 class MessageResponse(BaseModel):
     session_id: str
@@ -1823,7 +1825,7 @@ async def _handle_focus_multi(
             "iteration": len(deep_iterations),
             "aim": aim,
             "result_uuid": str(uuid.uuid4()),
-            "explanation": f"**{aim}**\n\n{interpretation}",
+            "explanation": humanize_column_names(f"**{aim}**\n\n{interpretation}", datasets_data),
             "sql": result.get("sql", ""),
             "columns": result.get("columns", []),
             "column_types": result.get("column_types", []),
@@ -1940,21 +1942,77 @@ async def _handle_template(
 ):
     """TEMPLATE route: the isolated report pipeline. Purely attached datasets + the user's
     format spec — no aims, no proposals, no suggestions, no route classification. The agent
-    runs as many SQL queries as the format needs and writes the report exactly in that format."""
+    runs as many SQL queries as the format needs and writes the report exactly in that format.
+
+    When the format spec has multiple numbered analyses, each runs as its own independent
+    agent (with a tighter round budget, since each section is a smaller task) and the
+    per-section reports are stitched into a single message."""
+    settings = get_settings()
     set_progress(session_id, "building_context", "running", "Analyzing dataset schema...")
     context = await _build_context(dataset_names, datasets_data, [], None, include_samples=False)
     set_progress(session_id, "building_context", "done", f"{len(datasets_data)} datasets analyzed")
 
-    set_progress(session_id, "template_agent", "running", "Gathering data for report...")
-    agent_result = await run_template_agent(
-        message=message,
-        context=context,
-        format_spec=format_spec,
-        datasets_data=datasets_data,
-        session_state=session_state or {},
-        language=language,
-        on_progress=lambda step, status, detail="": set_progress(session_id, f"agent_{step}", status, detail),
+    sections, notes = split_format_spec(format_spec)
+    # Safety cap: don't fan out more than 8 independent agent runs for one report.
+    if len(sections) > 8:
+        sections = [format_spec]
+    multi = len(sections) > 1
+
+    def _section_spec(section: str, index: int) -> str:
+        """The section's format spec plus a note pinning its number in the final report —
+        a section run in isolation would otherwise renumber itself from 1)."""
+        label = f"{index + 1})"
+        note = (
+            f"IMPORTANT: this is section {index + 1} of {len(sections)} of the final report. "
+            f'Keep the leading number "{label}" exactly in the report heading for this section.'
+        )
+        body = f"{section}\n\n{notes}".strip() if notes else section
+        return f"{note}\n\n{body}"
+
+    async def _run_one(section: str, index: int) -> dict:
+        label = f"{index + 1}/{len(sections)}"
+        set_progress(session_id, f"template_section_{index}", "running", f"Section {label}")
+        result = await run_template_agent(
+            message=message,
+            context=context,
+            format_spec=_section_spec(section, index),
+            datasets_data=datasets_data,
+            session_state=session_state or {},
+            language=language,
+            max_rounds=settings.template_section_max_rounds if multi else settings.template_max_rounds,
+            on_progress=lambda step, status, detail="": set_progress(
+                session_id, f"agent_{index}_{step}", status, detail
+            ),
+        )
+        set_progress(session_id, f"template_section_{index}", "done", f"Section {label} done")
+        return result
+
+    set_progress(
+        session_id, "template_agent", "running",
+        f"Gathering data for {len(sections)} report sections..." if multi else "Gathering data for report...",
     )
+    if multi:
+        results = await asyncio.gather(*[_run_one(s, i) for i, s in enumerate(sections)])
+        # Stitch per-section reports into a single message, with one merged result list.
+        # query_results are deduped by SQL so identical/recalled queries count once.
+        seen_sql: set[str] = set()
+        merged_results: list[dict] = []
+        for r in results:
+            for qr in r.get("query_results", []) or []:
+                norm = " ".join((qr.get("sql") or "").split())
+                if norm in seen_sql:
+                    continue
+                seen_sql.add(norm)
+                merged_results.append(qr)
+        agent_result = {
+            "agent_message": "\n\n".join(r.get("agent_message", "") for r in results if r.get("agent_message")),
+            "query_result": next((r["query_result"] for r in reversed(results) if r.get("query_result")), None),
+            "query_results": merged_results,
+            "truncated": any(r.get("truncated") for r in results),
+            "stopped_reason": "budget" if any(r.get("stopped_reason") for r in results) else "",
+        }
+    else:
+        agent_result = await _run_one(sections[0], 0)
 
     result = agent_result["query_result"]
     if result is None:
@@ -1971,22 +2029,38 @@ async def _handle_template(
 
     set_progress(session_id, "template_agent", "done", "Report complete")
     set_progress(session_id, "building_charts", "running", "Building chart suggestions...")
-    chart_suggestions = await _build_chart_suggestions(result, datasets_data)
-    result_with_charts = {**result, "chart_suggestions": chart_suggestions}
-    set_progress(session_id, "building_charts", "done", "Charts ready")
 
     # Expose every query the report was built from, so the UI can show all the
-    # underlying data — not just the last query. Only the primary (last) result
-    # carries chart suggestions to avoid one extra LLM call per query.
-    all_results = [dict(r) for r in agent_result.get("query_results", [])]
+    # underlying data — not just the last query. Each unique result gets its own chart
+    # suggestions (one parallel LLM call per unique query, so total added latency is
+    # roughly one chart call rather than N). Results are deduped by SQL so sections
+    # that recalled or re-issued the same query don't each spawn a chart LLM call.
+    all_results: list[dict] = []
+    seen_sql: set[str] = set()
+    for r in agent_result.get("query_results", []) or []:
+        # Empty (0-row) result sets are evidence to the model ("no data for that
+        # breakdown") but useless as display tables — don't clutter the UI or spend a
+        # chart-suggestion LLM call on them.
+        if int(r.get("row_count", 0) or 0) <= 0:
+            continue
+        norm = " ".join((r.get("sql") or "").split())
+        if norm and norm in seen_sql:
+            continue
+        seen_sql.add(norm)
+        all_results.append(dict(r))
     if all_results:
-        all_results[-1] = result_with_charts
+        charts = await asyncio.gather(
+            *[_build_chart_suggestions(r, datasets_data) for r in all_results]
+        )
+        for r, cs in zip(all_results, charts):
+            r["chart_suggestions"] = cs
+    set_progress(session_id, "building_charts", "done", "Charts ready")
 
     result_uuid = str(uuid.uuid4())
     return {
         "agent_message": agent_result["agent_message"],
         "result_uuid": result_uuid,
-        "query_result": result_with_charts,
+        "query_result": all_results[-1] if all_results else None,
         "query_results": all_results or None,
         "aim_proposals": [],
         "analysis_actions": [],
@@ -2098,7 +2172,7 @@ async def send_message(req: MessageRequest):
         )
         set_progress(req.session_id, "template", "done", "Report ready")
 
-        agent_msg = handler_result["agent_message"]
+        agent_msg = humanize_column_names(handler_result["agent_message"], datasets_data)
         result_uuid = handler_result["result_uuid"]
         query_result_raw = handler_result["query_result"]
         stopped_reason = handler_result.get("stopped_reason", "")
@@ -2117,6 +2191,7 @@ async def send_message(req: MessageRequest):
                 rows=raw.get("rows", []),
                 row_count=raw.get("row_count", 0),
                 chart_suggestions=cs_model,
+                note=raw.get("note", ""),
             )
 
         query_result_model = _build_query_result_model(query_result_raw) if query_result_raw else None
@@ -2143,6 +2218,7 @@ async def send_message(req: MessageRequest):
                     "sql": query_result_raw.get("sql", ""),
                     "columns": query_result_raw.get("columns", []),
                     "row_count": query_result_raw.get("row_count", 0),
+                    "note": query_result_raw.get("note", ""),
                 }
                 if query_result_raw.get("chart_suggestions") is not None:
                     cs = query_result_raw["chart_suggestions"]
@@ -2157,6 +2233,7 @@ async def send_message(req: MessageRequest):
                         "column_types": r.get("column_types", []),
                         "rows": r.get("rows", []),
                         "row_count": r.get("row_count", 0),
+                        "note": r.get("note", ""),
                     }
                     if r.get("chart_suggestions") is not None:
                         cs = r["chart_suggestions"]
@@ -2173,6 +2250,7 @@ async def send_message(req: MessageRequest):
                     "column_types": query_result_raw.get("column_types", []),
                     "rows": query_result_raw.get("rows", []),
                     "row_count": query_result_raw.get("row_count", 0),
+                    "note": query_result_raw.get("note", ""),
                 }
                 if query_result_raw.get("chart_suggestions") is not None:
                     cs = query_result_raw["chart_suggestions"]
@@ -2235,6 +2313,8 @@ async def send_message(req: MessageRequest):
                 enrichment_mode=req.enrichment_mode,
                 language=req.language,
             )
+
+        agent_msg = humanize_column_names(agent_msg, datasets_data)
 
         aim_proposals_raw = await extract_aims_from_text(agent_msg, dataset_names)
         aim_proposals = [AimProposal(**a) for a in aim_proposals_raw if isinstance(a, dict)]
@@ -2327,7 +2407,7 @@ async def send_message(req: MessageRequest):
         handler_result = await _handle_focus(req.session_id, **handler_kwargs)
     set_progress(req.session_id, "processing", "done", f"{route.upper()} completed")
 
-    agent_msg = handler_result["agent_message"]
+    agent_msg = humanize_column_names(handler_result["agent_message"], datasets_data)
     result_uuid = handler_result.get("result_uuid")
     query_result_raw = handler_result.get("query_result")
     handler_proposals = handler_result.get("aim_proposals", [])

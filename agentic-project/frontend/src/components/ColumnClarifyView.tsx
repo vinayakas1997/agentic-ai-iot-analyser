@@ -73,7 +73,7 @@ export default function ColumnClarifyView() {
     if (pendingDrafts.length === 0) return;
     const draft = pendingDrafts[index];
     if (!draft) return;
-    const columnNames = draft.columns.map((c) => c.original_name || c.name);
+    const columnNames = draft.columns.map((c) => c.name);
     const uid = useAuthStore.getState().userId || undefined;
 
     listColumnTemplates(uid).then((res) => {

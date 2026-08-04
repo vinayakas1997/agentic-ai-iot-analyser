@@ -1,4 +1,5 @@
 import { useState, useMemo, useRef, useEffect } from "react";
+import { formatDialect, postgresql } from "sql-formatter";
 import { monoClass } from "../lib/styles";
 import { IconGrid, IconChart } from "../lib/icons";
 import { useT, tCount } from "../lib/i18n";
@@ -38,10 +39,19 @@ export interface QueryResultState {
   row_count?: number;
   error?: string;
   chart_suggestions?: ChartSuggestions | null;
+  note?: string;
 }
 
 const CHART_COLORS = ["#06b6d4", "#f59e0b", "#8b5cf6", "#3b82f6", "#ef4444", "#ec4899", "#f97316", "#22c55e", "#14b8a6", "#a855f7"];
 const VALID_CHART_TYPES = new Set(["composed", "stackedArea", "treemap", "radialBar", "funnel", "sunburst", "scatter", "radar", "bar", "line", "area", "pie"]);
+
+function formatSqlDisplay(sql: string): string {
+  try {
+    return formatDialect(sql, { dialect: postgresql });
+  } catch {
+    return sql;
+  }
+}
 
 function sanitizeSuggestions(raw: ChartSuggestions | undefined): { advanced: ChartConfig[]; basic: ChartConfig[] } {
   if (!raw) return { advanced: [], basic: [] };
@@ -507,22 +517,23 @@ export function QueryActions({ queryResult }: { queryResult?: QueryResultState }
   }
 
   if (queryResult?.columns && queryResult?.rows) {
+    const sqlText = queryResult.sql ? formatSqlDisplay(queryResult.sql) : undefined;
     return (
       <div className="mt-3 space-y-2">
-        {queryResult.sql && (
+        {sqlText && (
           <details className="text-xs">
             <summary className="text-muted cursor-pointer hover:text-text transition-colors bg-black/[0.08] px-2.5 py-1 rounded-lg">{t("query.sqlQuery")}</summary>
             <div className="relative mt-1">
-              <pre className={`${monoClass} p-2 rounded-lg bg-black/30 border border-border/50 text-text/80 text-[11px] overflow-x-auto`}>{queryResult.sql}</pre>
+              <pre className={`${monoClass} p-2 rounded-lg bg-black/30 border border-border/50 text-text/80 text-[11px] overflow-x-auto`}>{sqlText}</pre>
               <button
                 type="button"
                 className="absolute top-2 right-2 w-6 h-6 flex items-center justify-center rounded hover:bg-white/[0.08] text-muted hover:text-text transition-colors"
                 onClick={async () => {
                   try {
-                    await navigator.clipboard.writeText(queryResult.sql || "");
+                    await navigator.clipboard.writeText(sqlText || "");
                   } catch {
                     const ta = document.createElement("textarea");
-                    ta.value = queryResult.sql || "";
+                    ta.value = sqlText || "";
                     ta.style.position = "fixed";
                     ta.style.opacity = "0";
                     document.body.appendChild(ta);
@@ -540,6 +551,9 @@ export function QueryActions({ queryResult }: { queryResult?: QueryResultState }
               </button>
             </div>
           </details>
+        )}
+        {queryResult.note && (
+          <div className="text-[11px] font-semibold text-ic-blue/90 px-1">{queryResult.note}</div>
         )}
         <div className="flex items-center gap-2">
           <div className="text-[11px] text-muted">{tCount(t, "query.rowsReturned", queryResult.row_count ?? 0)}</div>

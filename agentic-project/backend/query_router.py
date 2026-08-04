@@ -21,18 +21,22 @@ logger = logging.getLogger(__name__)
 
 _TABLE_REF_RE = re.compile(
     r'\b(?:FROM|JOIN)\s+'
-    r'((?:"[^"]+"|[^"\s,()]+)(?:\s*,\s*(?:"[^"]+"|[^"\s,()]+))*)',
+    r'((?:"[^"]+"|`[^`]+`|\[[^\]]+\]|[^"\s,()]+)'
+    r'(?:\s*,\s*(?:"[^"]+"|`[^`]+`|\[[^\]]+\]|[^"\s,()]+))*)',
     re.IGNORECASE,
 )
 
 
 def _norm_table_ref(part: str) -> str:
     """Normalize a raw table-reference token so it can be compared against the
-    dataset `table` values: strip surrounding double quotes and any schema prefix
-    (e.g. `public.shipments` -> `shipments`, `"生産情報_2026_07_10"` -> `生産情報_2026_07_10`)."""
+    dataset `table` values: strip surrounding double quotes, backticks, or square
+    brackets and any schema prefix
+    (e.g. `public.shipments` -> `shipments`, `"生産情報_2026_07_10"` -> `生産情報_2026_07_10`,
+    `` `生産情報_2026_07_10` `` -> `生産情報_2026_07_10`)."""
     p = part.strip()
-    if p.startswith('"') and p.endswith('"') and len(p) >= 2:
-        p = p[1:-1]
+    if len(p) >= 2:
+        if (p.startswith('"') and p.endswith('"')) or (p.startswith('`') and p.endswith('`')) or (p.startswith('[') and p.endswith(']')):
+            p = p[1:-1]
     return p.split('.')[-1]
 
 

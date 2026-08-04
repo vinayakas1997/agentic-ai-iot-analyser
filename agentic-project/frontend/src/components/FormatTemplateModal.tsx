@@ -5,6 +5,67 @@ import { useAuthStore } from "../stores/authStore";
 import { saveAnswerTemplate, listAnswerTemplates, deleteAnswerTemplate, updateAnswerTemplate } from "../api/client";
 import type { AnswerTemplate } from "../types";
 
+const MAX_ANALYSES = 3;
+
+interface AnalysisItem {
+  analysis: string;
+  explanation: string;
+}
+
+/** Split a stored format_spec back into its structured parts: numbered
+ *  analysis lines (max MAX_ANALYSES) each with an optional per-analysis
+ *  Explanation, plus the trailing Notes block. Legacy free-text templates
+ *  (single shared Explanation) are converted here on edit. */
+function parseSpec(spec: string): { analyses: AnalysisItem[]; explanation: string; notes: string } {
+  const analyses: AnalysisItem[] = [];
+  let sharedExplanation = "";
+  const rest: string[] = [];
+  let current: AnalysisItem | null = null;
+  for (const line of spec.split("\n")) {
+    const m = line.match(/^\s*\d+\s*[).\s]\s*(.+)$/);
+    if (!m) {
+      const trimmed = line.trim();
+      if (current && /^Explanation:\s*(.+)$/i.test(trimmed)) {
+        current.explanation = trimmed.replace(/^Explanation:\s*/i, "").trim();
+        continue;
+      }
+      rest.push(line);
+      continue;
+    }
+    const text = m[1].trim();
+    const em = text.match(/^Explanation:\s*(.+)$/i);
+    if (em) sharedExplanation = em[1].trim();
+    else {
+      current = { analysis: text, explanation: "" };
+      analyses.push(current);
+    }
+  }
+  const items = analyses.slice(0, MAX_ANALYSES);
+  if (sharedExplanation) {
+    if (items.length > 0) items[items.length - 1].explanation = sharedExplanation;
+    else items.push({ analysis: "", explanation: sharedExplanation });
+  }
+  return {
+    analyses: items.length > 0 ? items : [{ analysis: "", explanation: "" }],
+    explanation: sharedExplanation,
+    notes: rest.map((l) => l.trim()).filter(Boolean).join("\n"),
+  };
+}
+
+/** Compose a stored format_spec from the structured editor state. */
+function composeSpec(analyses: AnalysisItem[], notes: string): string {
+  const clean = analyses.map((a) => ({ analysis: a.analysis.trim(), explanation: a.explanation.trim() })).filter((a) => a.analysis);
+  const parts: string[] = [];
+  for (const [i, a] of clean.entries()) {
+    const block = `${i + 1}) ${a.analysis}`;
+    parts.push(a.explanation ? `${block}\n   Explanation: ${a.explanation}` : block);
+  }
+  let spec = parts.join("\n");
+  const n = notes.trim();
+  if (n) spec += `\n\nNotes:\n${n}`;
+  return spec;
+}
+
 export function FormatTemplateModal({
   open,
   onClose,
@@ -18,7 +79,8 @@ export function FormatTemplateModal({
   const userId = useAuthStore((s) => s.userId);
   const [templates, setTemplates] = useState<AnswerTemplate[]>([]);
   const [name, setName] = useState("");
-  const [spec, setSpec] = useState("");
+  const [analyses, setAnalyses] = useState<AnalysisItem[]>([{ analysis: "", explanation: "" }]);
+  const [notes, setNotes] = useState("");
   const [saving, setSaving] = useState(false);
   const [deletingId, setDeletingId] = useState<number | null>(null);
   const [editingId, setEditingId] = useState<number | null>(null);
@@ -37,17 +99,30 @@ export function FormatTemplateModal({
   useEffect(() => {
     if (open) {
       setName("");
-      setSpec("");
+      setAnalyses([{ analysis: "", explanation: "" }]);
+      setNotes("");
       setEditingId(null);
       setStatus("");
       reload();
     }
   }, [open]);
 
+  const addAnalysis = () => {
+    setAnalyses((a) => (a.length >= MAX_ANALYSES ? a : [...a, { analysis: "", explanation: "" }]));
+  };
+
+  const removeAnalysis = (idx: number) => {
+    setAnalyses((a) => (a.length <= 1 ? a : a.filter((_, i) => i !== idx)));
+  };
+
+  const setAnalysis = (idx: number, field: keyof AnalysisItem, value: string) => {
+    setAnalyses((a) => a.map((v, i) => (i === idx ? { ...v, [field]: value } : v)));
+  };
+
   const handleSave = async () => {
     const trimmedName = name.trim();
-    const trimmedSpec = spec.trim();
-    if (!trimmedName || !trimmedSpec) {
+    const spec = composeSpec(analyses, notes);
+    if (!trimmedName || !spec) {
       setStatus(t("templateModal.fillBoth"));
       return;
     }
@@ -55,14 +130,15 @@ export function FormatTemplateModal({
     setStatus("");
     try {
       if (editingId != null) {
-        await updateAnswerTemplate(editingId, trimmedName, trimmedSpec, userId || undefined);
+        await updateAnswerTemplate(editingId, trimmedName, spec, userId || undefined);
         setStatus(t("templateModal.updated"));
       } else {
-        await saveAnswerTemplate(trimmedName, trimmedSpec, userId || undefined);
+        await saveAnswerTemplate(trimmedName, spec, userId || undefined);
         setStatus(t("templateModal.saved"));
       }
       setName("");
-      setSpec("");
+      setAnalyses([{ analysis: "", explanation: "" }]);
+      setNotes("");
       setEditingId(null);
       await reload();
     } catch (e) {
@@ -74,9 +150,11 @@ export function FormatTemplateModal({
   };
 
   const handleEdit = (tmpl: AnswerTemplate) => {
+    const parsed = parseSpec(tmpl.format_spec || "");
     setEditingId(tmpl.id);
     setName(tmpl.template_name);
-    setSpec(tmpl.format_spec);
+    setAnalyses(parsed.analyses);
+    setNotes(parsed.notes);
     setStatus("");
     setTimeout(() => nameInputRef.current?.focus(), 0);
   };
@@ -84,7 +162,8 @@ export function FormatTemplateModal({
   const handleCancelEdit = () => {
     setEditingId(null);
     setName("");
-    setSpec("");
+    setAnalyses([{ analysis: "", explanation: "" }]);
+    setNotes("");
     setStatus("");
   };
 
@@ -109,7 +188,7 @@ export function FormatTemplateModal({
       onClick={onClose}
     >
       <div
-        className="bg-surface-1 rounded-2xl border-2 border-border shadow-2xl w-full max-w-lg mx-4 max-h-[85vh] overflow-y-auto"
+        className="bg-surface-1 rounded-2xl border-2 border-border shadow-2xl w-full max-w-2xl mx-4 max-h-[85vh] overflow-y-auto"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-center justify-between px-5 pt-5 pb-3 border-b border-border/50">
@@ -137,14 +216,72 @@ export function FormatTemplateModal({
           </div>
 
           <div>
-            <div className="text-[10.5px] font-semibold tracking-wider uppercase text-tertiary mb-1.5">{t("templateModal.formatSpec")}</div>
+            <div className="flex items-center justify-between mb-1.5">
+              <div className="text-[10.5px] font-semibold tracking-wider uppercase text-tertiary">{t("templateModal.analyses")}</div>
+              <button
+                type="button"
+                className="text-[11px] font-medium text-accent hover:text-accent/80 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                disabled={analyses.length >= MAX_ANALYSES}
+                onClick={addAnalysis}
+              >
+                {t("templateModal.addAnalysis")}
+              </button>
+            </div>
+            {analyses.length === 0 ? (
+              <div className="text-sm text-muted text-center py-3 rounded-xl border-2 border-dashed border-border/60">
+                {t("templateModal.noAnalyses")}
+              </div>
+            ) : (
+              <div className="space-y-3">
+                {analyses.map((a, i) => (
+                  <div key={i} className="rounded-xl border-2 border-border/60 bg-surface-2 p-3">
+                    <div className="flex items-center justify-between mb-2">
+                      <div className="w-5 shrink-0 text-right text-[12px] font-semibold text-tertiary">{i + 1})</div>
+                      <button
+                        type="button"
+                        className="shrink-0 w-7 h-7 flex items-center justify-center rounded-lg text-muted hover:text-red-400 transition-colors"
+                        title={t("templateModal.removeAnalysis")}
+                        disabled={analyses.length <= 1}
+                        onClick={() => removeAnalysis(i)}
+                      >
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" width="14" height="14" strokeWidth="2">
+                          <path d="M18 6L6 18M6 6l12 12" />
+                        </svg>
+                      </button>
+                    </div>
+                    <input
+                      type="text"
+                      className="w-full rounded-xl border-2 border-border bg-surface-1 text-text text-sm px-3 py-2.5 focus:outline-none focus:border-accent transition-colors"
+                      placeholder={t("templateModal.analysisPlaceholder")}
+                      value={a.analysis}
+                      onChange={(e) => setAnalysis(i, "analysis", e.target.value)}
+                    />
+                    <div className="text-[10.5px] font-semibold tracking-wider uppercase text-ic-violet mt-3 mb-1.5">
+                      {t("templateModal.explanationFor", { index: i + 1 })}
+                    </div>
+                    <textarea
+                      className="w-full rounded-xl border-2 border-border bg-surface-1 text-text text-sm px-3 py-2.5 min-h-[56px] resize-y focus:outline-none focus:border-accent transition-colors"
+                      placeholder={t("templateModal.explanationPlaceholder")}
+                      value={a.explanation}
+                      onChange={(e) => setAnalysis(i, "explanation", e.target.value)}
+                    />
+                    <p className="text-[11px] text-muted mt-1">{t("templateModal.explanationHint")}</p>
+                  </div>
+                ))}
+              </div>
+            )}
+            <p className="text-[11px] text-muted mt-1">{t("templateModal.analysisHint")}</p>
+          </div>
+
+          <div>
+            <div className="text-[10.5px] font-semibold tracking-wider uppercase text-tertiary mb-1.5">{t("templateModal.notes")}</div>
             <textarea
-              className="w-full rounded-xl border-2 border-border bg-surface-1 text-text text-sm px-3 py-2.5 min-h-[140px] resize-y focus:outline-none focus:border-accent transition-colors"
-              placeholder={t("templateModal.specPlaceholder")}
-              value={spec}
-              onChange={(e) => setSpec(e.target.value)}
+              className="w-full rounded-xl border-2 border-border bg-surface-1 text-text text-sm px-3 py-2.5 min-h-[72px] resize-y focus:outline-none focus:border-accent transition-colors"
+              placeholder={t("templateModal.notesPlaceholder")}
+              value={notes}
+              onChange={(e) => setNotes(e.target.value)}
             />
-            <p className="text-[11px] text-muted mt-1">{t("templateModal.specHint")}</p>
+            <p className="text-[11px] text-muted mt-1">{t("templateModal.notesHint")}</p>
           </div>
 
           <div className="flex items-center justify-end gap-2">

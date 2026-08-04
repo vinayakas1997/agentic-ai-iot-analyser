@@ -79,6 +79,59 @@ function reconstructTemplateCards(rawTurns: any[], existing: CollectedResult[]):
 
 let _pollTimer: ReturnType<typeof setInterval> | null = null;
 
+/** If the client aborts the send (REQUEST_TIMEOUT_MS), the backend keeps processing and
+ * eventually persists the completed turn. Poll the session until that turn appears, then
+ * reconstruct a MessageResponse so the normal rendering path can show the result instead
+ * of surfacing a spurious timeout error. */
+async function pollForCompletedTurn(
+  sessionId: string,
+  userId: string | undefined,
+  sentAt: number,
+  userText: string,
+): Promise<MessageResponse> {
+  const deadline = Date.now() + 10 * 60 * 1000; // up to 10 extra minutes
+  while (Date.now() < deadline) {
+    await new Promise((r) => setTimeout(r, 2000));
+    try {
+      const detail = await api.getSession(sessionId, userId);
+      const turns = detail?.turns || [];
+      const match = [...turns]
+        .reverse()
+        .find(
+          (t: any) =>
+            t.user === userText &&
+            new Date(t.timestamp || t.created_at || 0).getTime() >= sentAt &&
+            Boolean(t.agent)
+        );
+      if (match) {
+        const qResults: QueryResultState[] | undefined = Array.isArray(match.query_results)
+          ? match.query_results.map((qr: any) => ({ loading: false, ...qr }))
+          : undefined;
+        return {
+          session_id: sessionId,
+          turn_index: 0,
+          agent_message: match.agent || "",
+          route: match.route || "template",
+          phase: match.phase || "chat",
+          status: match.status || "active",
+          done: true,
+          result_uuid: match.result_uuid || undefined,
+          query_result: (qResults?.length ? qResults[qResults.length - 1] : undefined) as any,
+          query_results: qResults,
+          truncated: Boolean(match.truncated),
+          stopped_reason: match.stopped_reason || "",
+          aim_proposals: [],
+          analysis_actions: match.analysis_actions || undefined,
+          deep_iterations: [],
+        } as MessageResponse;
+      }
+    } catch {
+      // keep polling
+    }
+  }
+  throw new api.ApiError("The report is still being generated on the server. Please refresh in a moment.", 0);
+}
+
 function getErrorMessage(e: unknown): string {
   if (e instanceof Error) return e.message;
   if (typeof e === "object" && e !== null) {
@@ -405,11 +458,15 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   },
 
   sendUserMessage: async (text, lineName = "", attachedAims: string[] = [], enrichmentMode = "research", routeOverride?: string, aimDescriptions?: Record<string, string>, formatSpec?: string, templateName?: string) => {
-    const { sessionId, turns, isLocalSession, pendingTitle, sessionMeta } = get();
+    const { sessionId, turns, isLocalSession, pendingTitle, sessionMeta, loading } = get();
     const isDone = turns.length > 0 && Boolean(turns[turns.length - 1]?.ui?.done);
-    const origSessionId = sessionId;
 
-    if (!sessionId || !text.trim() || isDone) return;
+    if (!sessionId || !text.trim() || isDone || loading) return;
+
+    // Track the session that will actually process this message. For the first prompt in a
+    // fresh (local) session this starts as the temp id and is reassigned to the real session
+    // id after createSession() — the poller must follow it, or progress steps never appear.
+    let activeSessionId = sessionId;
 
     const userText = text.trim();
     const sendUid = useAuthStore.getState().userId || undefined;
@@ -417,19 +474,18 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     get().setPendingTurn(userText);
 
     // Progress polling — fetches live steps from backend while message is being processed.
-    // Pinned to the session that sent this message (origSessionId), not whatever session
+    // Pinned to the session that sent this message (activeSessionId), not whatever session
     // is currently displayed — otherwise switching sessions mid-send redirects the poller
     // to the new session's progress and overwrites its (unrelated) progressSteps.
     const progressTimer = setInterval(async () => {
-      if (!origSessionId || get().sessionId !== origSessionId) return;
+      if (!activeSessionId || get().sessionId !== activeSessionId) return;
       try {
-        const res = await api.getProgress(origSessionId, sendUid);
-        if (get().sessionId === origSessionId) set({ progressSteps: res.steps });
+        const res = await api.getProgress(activeSessionId, sendUid);
+        if (get().sessionId === activeSessionId) set({ progressSteps: res.steps });
       } catch { /* ignore poll errors */ }
     }, 600);
 
     try {
-      let activeSessionId = sessionId;
 
       if (isLocalSession) {
         set({ statusMessage: t("session.creating") });
@@ -455,7 +511,18 @@ export const useSessionStore = create<SessionState>((set, get) => ({
 
       // History built server-side from stored turns (via enrichment block + conv history)
       const language = useUiStore.getState().language;
-      const res = await api.sendMessage(activeSessionId, userText, lineName, attachedAims, enrichmentMode, [], routeOverride, aimDescriptions, language, sendUid, formatSpec, templateName);
+      let res: MessageResponse;
+      const sentAt = Date.now();
+      try {
+        res = await api.sendMessage(activeSessionId, userText, lineName, attachedAims, enrichmentMode, [], routeOverride, aimDescriptions, language, sendUid, formatSpec, templateName);
+      } catch (e) {
+        // Client-side abort (REQUEST_TIMEOUT_MS) while the backend is still working on a
+        // long template run: don't surface a timeout error — keep polling progress and,
+        // once the backend persists the turn, render the completed result normally.
+        const timedOut = e instanceof api.ApiError && e.status === 0 && /timed out/i.test(e.message);
+        if (!timedOut) throw e;
+        res = await pollForCompletedTurn(activeSessionId, sendUid, sentAt, userText);
+      }
       clearInterval(progressTimer);
       set({ statusMessage: t("session.responseReceived") });
 
@@ -526,11 +593,14 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       }
       const nextIdx = useUiStore.getState().selectedTurnIndex;
       useUiStore.getState().selectTurn(nextIdx < 0 ? 0 : nextIdx + 1);
-      await get().refreshSessions(useAuthStore.getState().userId || undefined);
+      // Clear the "Processing..." indicator the moment the response is rendered —
+      // the non-critical session-list refresh must not keep it visible if it stalls.
+      set({ loading: false, progressSteps: [], statusMessage: null });
+      get().refreshSessions(useAuthStore.getState().userId || undefined).catch(() => {});
       return res;
     } catch (e) {
       clearInterval(progressTimer);
-      if (get().sessionId === origSessionId || !origSessionId) {
+      if (get().sessionId === activeSessionId) {
         set({ error: getErrorMessage(e), pendingTurn: null });
       }
       throw e;

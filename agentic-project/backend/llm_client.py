@@ -76,7 +76,7 @@ The user asked a specific factual question. You MUST generate a SQL query to ans
 ## Instructions
 1. Write a SQL query that directly answers the user's question
 2. Wrap the SQL in a ```sql code block so the system can extract and execute it
-3. After the SQL, explain what the query does (1-2 sentences)
+3. After the SQL, explain what the query does in 1-2 short markdown lines (not a dense paragraph) — bold any key column/value names
 
 ## CRITICAL RULES
 - You MUST output a SQL query in a ```sql code block. This is REQUIRED.
@@ -151,10 +151,10 @@ The user wants to deep-dive on one specific analysis topic. Generate a comprehen
 ## Instructions
 1. Generate ONE SQL query that explores the specific analysis in depth
 2. Wrap the SQL in a ```sql code block so the system can extract and execute it
-3. After the SQL, provide:
-   - What the query analyzes and why it matters
-   - Interpretation of expected results
-   - 1-2 follow-up questions the user might ask next
+3. After the SQL, provide the interpretation as markdown — NOT one prose paragraph:
+   - A one-line statement of what the query analyzes and why it matters
+   - A bullet list (`- `) of the interpretation points / expected findings, one point per line, with key numbers **bolded**
+   - A final line with 1-2 follow-up questions the user might ask next, prefixed "Next: "
 
 ## Rules
 - Only use columns and tables from the datasets above
@@ -196,10 +196,17 @@ Write a concise answer to the user's question based on these results. Include:
 2. 1-2 notable observations or patterns
 3. One follow-up suggestion (as a question)
 
+## Formatting
+- Respond in markdown, not a single paragraph
+- Start with a one-line direct answer
+- Put observations and patterns as a markdown bullet list (`- `), one point per line — not folded into prose
+- **Bold** the key numbers/values in each bullet
+- Put the follow-up suggestion on its own line at the end, prefixed with "Next: "
+
 ## Rules
 - Only reference data that appears in the results
 - Be specific (use actual numbers/values from the data)
-- Keep it concise (3-5 sentences)
+- Keep it concise (3-5 short lines total, not counting formatting)
 - Name the specific column(s) you used to derive each number in your answer — e.g., "Based on the 発注数月合計 column (monthly total), the value is 200"
 - CRITICAL: Never calculate totals/sums/averages in your head. If you need an aggregate that isn't in the results, the SQL should have done it — report the raw data as-is
 {language_instruction}
@@ -552,6 +559,45 @@ async def interpret_results(question: str, sql: str, result: dict, language: str
     except Exception as e:
         logger.exception("Result interpretation failed")
         return f"The query returned {row_count} rows. Here are the results: ..."  # fallback
+
+
+def humanize_column_names(text: str, datasets_data: list[dict]) -> str:
+    """Rewrite sanitized SQL column names back to their original CSV headers in
+    human-readable prose, leaving fenced code blocks (e.g. ```sql) untouched so
+    queries keep the real column names. No-op when no mapping exists."""
+    if not text or not datasets_data:
+        return text
+    mapping: dict[str, str] = {}
+    for ds in datasets_data:
+        for c in ds.get("column_definitions", []) or []:
+            name = c.get("name") or ""
+            original = c.get("original_name") or ""
+            if name and original and original != name and name not in mapping:
+                mapping[name] = original
+    if not mapping:
+        return text
+
+    # Longest names first so a name that is a substring of another is handled correctly
+    ordered = sorted(mapping.keys(), key=len, reverse=True)
+    # Require word boundaries on both sides so short sanitized names (e.g. "st", "mt")
+    # never get replaced inside English words like "suggests" / "constant"
+    pattern = re.compile(
+        r"|".join(r"(?<!\w)" + re.escape(n) + r"(?!\w)" for n in ordered),
+        re.UNICODE,
+    )
+
+    def _replace_in_segment(seg: str, in_code: bool) -> str:
+        if in_code:
+            return seg
+        return pattern.sub(lambda m: mapping[m.group(0)], seg)
+
+    # Split on fenced code blocks, replacing only outside them
+    parts = re.split(r"(```[\s\S]*?```)", text)
+    out = []
+    for i, part in enumerate(parts):
+        in_code = bool(part.startswith("```") and part.endswith("```") and len(part) >= 6)
+        out.append(_replace_in_segment(part, in_code))
+    return "".join(out)
 
 
 async def summarize_turns(thread_text: str, language: str = "en") -> str:

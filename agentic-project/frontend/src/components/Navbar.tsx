@@ -72,7 +72,7 @@ export default function Navbar({ onBackToManage, onHelp }: { onBackToManage?: ()
         </div>
       </div>
 
-      <div className="absolute left-1/2 -translate-x-1/2 text-sm font-bold text-muted">
+      <div className="absolute left-1/2 -translate-x-1/2 text-sm font-bold text-muted max-w-[22vw] lg:max-w-[38vw] text-center leading-snug whitespace-normal">
         {t("brand.note")} {t("nav.noDatasetsInfo")}
       </div>
 

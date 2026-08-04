@@ -36,6 +36,42 @@ def normalize_halfwidth(text: str) -> str:
     return unicodedata.normalize("NFKC", text)
 
 
+MAX_TOOL_ROWS = 15
+
+
+def _cap_rows(d: dict, max_rows: int = MAX_TOOL_ROWS) -> dict:
+    """Return a copy of a result dict with its row list capped to `max_rows`.
+    Never truncates mid-JSON: the true row_count and a rows_truncated flag are added
+    so the model knows it saw a sample and can re-query more narrowly if it needs to."""
+    if not isinstance(d, dict):
+        return d
+    out = dict(d)
+    rows = d.get("rows")
+    if isinstance(rows, list) and len(rows) > max_rows:
+        out["rows"] = rows[:max_rows]
+        out["row_count"] = len(rows)
+        out["rows_truncated"] = True
+    return out
+
+
+def serialize_tool_result(tool_result: dict, max_rows: int = MAX_TOOL_ROWS) -> str:
+    """Serialize a tool result for the LLM as valid JSON. Handles both shapes:
+    query_data's {"ok": true, "result": {...rows...}} and recall_result's
+    flat {found, rows, row_count, ...}. The old [:4000] character slice produced
+    broken JSON for large results, which made the model re-run identical queries.
+    `max_rows` is per-agent: template reports pass a high cap so complete per-machine
+    matrices are returned in full."""
+    try:
+        if isinstance(tool_result, dict) and isinstance(tool_result.get("result"), dict):
+            out = dict(tool_result)
+            out["result"] = _cap_rows(tool_result["result"], max_rows)
+        else:
+            out = _cap_rows(tool_result, max_rows)
+        return json.dumps(out, default=str)
+    except Exception:
+        return json.dumps({"ok": False, "error": "Failed to serialize tool result."}, default=str)
+
+
 TOOLS = [
     {
         "type": "function",
@@ -52,7 +88,11 @@ TOOLS = [
                     "sql": {
                         "type": "string",
                         "description": "A single SELECT/WITH SQL query. Use the exact SQL table names given in the dataset context.",
-                    }
+                    },
+                    "note": {
+                        "type": "string",
+                        "description": "Optional short human-readable label describing what this query returns (e.g. 'machine names found in the production table'). Shown to the user as the caption of the result table.",
+                    },
                 },
                 "required": ["sql"],
             },
@@ -113,6 +153,12 @@ You have two tools available:
 - Only answer without data if you have exhausted the last available tool round (the system will tell you when no more tool calls are available).
 - If query_data returns 0 rows, broaden the query (fewer joins, looser filters) and retry once before concluding no data exists.
 - Once a tool call returns a valid, usable result (rows > 0), answer from it. Do not call query_data again for the same question just to double-check or rephrase the same query.
+
+## Round Budget
+- You have at most {max_rounds} tool-call rounds. Be economical: batch several metrics into one query
+  (e.g. SELECT MAX(v), AVG(v), MIN(v) ...) and you may issue multiple query_data calls in a single round.
+- Once a query returns usable rows, answer from it — do not spend extra rounds re-checking or exploring
+  "just in case". The answer is judged on content, not on how many queries you ran.
 
 ## Your Final Answer
 Once you have enough information, respond with plain text (no more tool calls):
@@ -296,9 +342,11 @@ async def run_focus_agent(
     max_rounds defaults to settings.focus_max_rounds.
     Returns {agent_message, chart_needed (always True), query_result, truncated, stopped_reason} —
     query_result is the raw dict from execute_sql (no chart_suggestions attached yet),
-    or None if no query ran. truncated is True when the run exhausted its round budget
-    (stopped_reason "budget") or hit an LLM error (stopped_reason "error") and had to
-    finish from the data gathered so far. stopped_reason is "" on a clean completion."""
+    or None if no query ran. truncated is True only when the run hit an LLM error
+    (stopped_reason "error") or exhausted the loop without a final answer
+    (stopped_reason "budget"). Producing the answer on the final allowed round is a
+    NORMAL completion — the final round simply strips tools and asks for the answer.
+    stopped_reason is "" on a clean completion."""
     settings = get_settings()
     client = get_llm_client()
     if max_rounds is None:
@@ -322,6 +370,7 @@ async def run_focus_agent(
         context=context,
         previously_fetched=previously_fetched,
         language_instruction=language_instruction(language),
+        max_rounds=max_rounds,
     )
     if enrichment_block:
         system_prompt += f"\n\n## Previous Context\n{enrichment_block}"
@@ -332,6 +381,7 @@ async def run_focus_agent(
     ]
 
     last_query_result: dict | None = None
+    executed_sql: set[str] = set()
 
     for round_num in range(max_rounds):
         is_last_round = round_num == max_rounds - 1
@@ -384,19 +434,18 @@ async def run_focus_agent(
             on_progress(f"round_{round_num}_llm", "done", "Response received")
 
         if not msg.tool_calls:
-            truncated = is_last_round
+            # A plain-text answer is a normal completion whether the model chose to
+            # write it early or was guided to write it on the final round — the last
+            # round simply strips tools and asks for the answer; it is not a failure.
+            # Only a real LLM error or loop exhaustion flags the run as truncated.
             if on_progress:
-                on_progress(
-                    f"round_{round_num}",
-                    "done",
-                    "Answer ready" if not truncated else "Tool-step limit reached — answer may be incomplete",
-                )
+                on_progress(f"round_{round_num}", "done", "Answer ready")
             return {
                 "agent_message": msg.content or "",
                 "chart_needed": True,
                 "query_result": last_query_result,
-                "truncated": truncated,
-                "stopped_reason": "budget" if truncated else "",
+                "truncated": False,
+                "stopped_reason": "",
             }
 
         messages.append({
@@ -434,9 +483,18 @@ async def run_focus_agent(
                 tool_result = {"ok": False, "error": "Malformed tool call arguments — please retry with valid JSON."}
             else:
                 if tc.function.name == "query_data":
-                    tool_result = await _run_query_data(args.get("sql", ""), datasets_data)
-                    if tool_result.get("ok"):
-                        last_query_result = tool_result["result"]
+                    sql = (args.get("sql") or "").strip()
+                    norm_sql = " ".join(sql.split())
+                    if norm_sql and norm_sql in executed_sql:
+                        tool_result = {
+                            "ok": False,
+                            "error": "This exact query already ran successfully above. Use the data already provided and proceed — do not re-run identical SQL.",
+                        }
+                    else:
+                        tool_result = await _run_query_data(sql, datasets_data)
+                        if tool_result.get("ok"):
+                            last_query_result = {**tool_result["result"], "note": (args.get("note") or "").strip()}
+                            executed_sql.add(norm_sql)
                 elif tc.function.name == "recall_result":
                     tool_result = _run_recall_result(args.get("reference", ""), session_state)
                     log_sql("agent_tool_call", f"recall_result: {args.get('reference', '')}")
@@ -457,7 +515,7 @@ async def run_focus_agent(
             messages.append({
                 "role": "tool",
                 "tool_call_id": tc.id,
-                "content": json.dumps(tool_result, default=str)[:4000],
+                "content": serialize_tool_result(tool_result, settings.focus_tool_max_rows),
             })
             if on_progress:
                 status = "done" if tool_result.get("ok") or tool_result.get("found") else "error"
