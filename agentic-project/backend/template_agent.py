@@ -92,6 +92,10 @@ data and write the completed report.
 - Every number in the report MUST come from an actual query result. Never invent or guess values.
 - Only reference columns that are actually listed in the dataset schemas above (each dataset shows its
   exact SQL table name and its columns with their meanings).
+- Use the EXACT SQL column name shown for each column (the name before any "(original header: ...)" note) —
+  the schema may show a friendlier original header name in parentheses, but the SQL column name is the one
+  that exists in the table. If a column name starts with a digit or contains characters other than letters,
+  digits, and underscore, you MUST double-quote it in SQL, e.g. "c_5st内径値1".
 - Map each '?' field in the format spec to a column ONLY when the column name OR its stated meaning
   actually matches what the field asks for. If a requested metric or column does not exist in ANY
   attached dataset, write "No data" for that field — NEVER pick a different column merely because it

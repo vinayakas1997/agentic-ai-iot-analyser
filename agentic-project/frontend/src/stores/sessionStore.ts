@@ -33,6 +33,50 @@ function turnFromResponse(res: MessageResponse, userMessage: string, attachedAim
   };
 }
 
+function reconstructTemplateCards(rawTurns: any[], existing: CollectedResult[]): CollectedResult[] {
+  // Rebuild an OutputPanel card for any stored template turn that doesn't already have one.
+  // Cards are normally created by ChatSection.handleSend (browser-only) and persisted as
+  // session_state.output_results; template runs done before that path existed — or before the
+  // route===template branch was ordered first — left no card, so we synthesize it from the turn.
+  const results = [...existing];
+  const byName = new Map<string, number>();
+  const seen = new Set<string>();
+  for (const r of existing) {
+    if (r.kind !== "template") continue;
+    const name = r.template_name || "Report";
+    byName.set(name, (byName.get(name) || 0) + 1);
+    seen.add(`${name}|${r.aim}`);
+  }
+  for (const t of rawTurns) {
+    const isTemplate = t?.route === "template" || Boolean(t?.template_name && String(t.template_name).trim());
+    if (!isTemplate) continue;
+    const templateName = (t?.template_name && String(t.template_name).trim()) || "Report";
+    const prior = byName.get(templateName) || 0;
+    const runNumber = prior + 1;
+    byName.set(templateName, runNumber);
+    const runLabel = `${String(runNumber).padStart(2, "0")} · ${templateName}`;
+    if (seen.has(`${templateName}|${runLabel}`)) continue;
+    seen.add(`${templateName}|${runLabel}`);
+    const resultState: QueryResultState = { loading: false, ...(t.query_result || {}) } as QueryResultState;
+    const queryResults: QueryResultState[] | undefined = Array.isArray(t.query_results)
+      ? t.query_results.map((qr: any) => ({ loading: false, ...qr }))
+      : undefined;
+    results.push({
+      id: newId(),
+      aim: runLabel,
+      description: templateName,
+      datasets: Array.isArray(t.datasets) ? t.datasets : undefined,
+      result: resultState,
+      created_at: Date.now(),
+      kind: "template",
+      template_name: templateName,
+      report: t.agent || "",
+      queryResults,
+    });
+  }
+  return results;
+}
+
 let _pollTimer: ReturnType<typeof setInterval> | null = null;
 
 function getErrorMessage(e: unknown): string {
@@ -181,7 +225,16 @@ export const useSessionStore = create<SessionState>((set, get) => ({
           benefits: null,
           columns: null,
           analysis_actions: t.analysis_actions || undefined,
+          truncated: Boolean(t.truncated),
+          stopped_reason: t.stopped_reason || "",
+          template_name: t.template_name || undefined,
+          route: t.route || undefined,
+          query_results: Array.isArray(t.query_results) ? t.query_results.map((qr: any) => ({ loading: false, ...qr })) : undefined,
         }));
+        const outputResults = reconstructTemplateCards(
+          apiTurns,
+          Array.isArray(detail.state?.output_results) ? detail.state.output_results : []
+        );
         set({
           sessionMeta,
           turns: loadedTurns,
@@ -189,14 +242,14 @@ export const useSessionStore = create<SessionState>((set, get) => ({
           isLocalSession: false,
           aimProposals: detail.state?.aim_proposals || [],
           selectedAims: Array.isArray(detail.state?.selected_aims) ? detail.state.selected_aims : [],
-          outputResults: Array.isArray(detail.state?.output_results) ? detail.state.output_results : [],
+          outputResults,
           chatQueryResults: detail.state?.chat_query_results || {},
           completedActions: detail.state?.completed_actions || {},
           contextSummaries: detail.state?.context_summaries || {},
           enrichmentMode: detail.state?.enrichment_mode || "research",
         });
         useUiStore.getState().selectTurn(loadedTurns.length - 1);
-        useOutputStore.getState().setResults(Array.isArray(detail.state?.output_results) ? detail.state.output_results : []);
+        useOutputStore.getState().setResults(outputResults);
         const attachedDs = detail.state?.attached_datasets;
         if (Array.isArray(attachedDs) && attachedDs.length > 0) {
           const [allDatasets, userRes] = await Promise.all([
@@ -247,7 +300,8 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       // superseded, showing mismatched title/turns/datasets.
       if (epoch !== _switchEpoch) return;
       const sessionMeta = { session_id: detail.session_id, title: detail.title, phase: detail.phase || "lines", status: detail.status || "active", mode: (detail as any).mode || "ask" };
-      const loadedTurns = (detail.turns || []).map((t: any) => ({
+      const rawTurns = detail.turns || [];
+      const loadedTurns = rawTurns.map((t: any) => ({
         turn_index: 0,
         user: t.user,
         agent: t.agent || "",
@@ -263,8 +317,14 @@ export const useSessionStore = create<SessionState>((set, get) => ({
         analysis_actions: t.analysis_actions || undefined,
         truncated: Boolean(t.truncated),
         stopped_reason: t.stopped_reason || "",
+        template_name: t.template_name || undefined,
+        route: t.route || undefined,
         query_results: Array.isArray(t.query_results) ? t.query_results.map((qr: any) => ({ loading: false, ...qr })) : undefined,
       }));
+      const outputResults = reconstructTemplateCards(
+        rawTurns,
+        Array.isArray(detail.state?.output_results) ? detail.state.output_results : []
+      );
       set({
         sessionMeta,
         turns: loadedTurns,
@@ -273,14 +333,14 @@ export const useSessionStore = create<SessionState>((set, get) => ({
         pendingTitle: null,
         aimProposals: detail.state?.aim_proposals || [],
         selectedAims: Array.isArray(detail.state?.selected_aims) ? detail.state.selected_aims : [],
-        outputResults: Array.isArray(detail.state?.output_results) ? detail.state.output_results : [],
+        outputResults,
         chatQueryResults: detail.state?.chat_query_results || {},
         completedActions: detail.state?.completed_actions || {},
         contextSummaries: detail.state?.context_summaries || {},
         enrichmentMode: detail.state?.enrichment_mode || "research",
       });
       useUiStore.getState().selectTurn(loadedTurns.length - 1);
-      useOutputStore.getState().setResults(Array.isArray(detail.state?.output_results) ? detail.state.output_results : []);
+      useOutputStore.getState().setResults(outputResults);
       useDatasetStore.getState().clear();
       const attachedDs = detail.state?.attached_datasets;
       if (Array.isArray(attachedDs) && attachedDs.length > 0) {

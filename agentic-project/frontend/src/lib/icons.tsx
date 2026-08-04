@@ -194,6 +194,15 @@ export function IconHelp(props: Props) {
   );
 }
 
+export function IconSend(props: Props) {
+  return (
+    <Icon {...props} strokeWidth="2.2">
+      <path d="M22 2L11 13" />
+      <path d="M22 2l-7 20-4-9-9-4 20-7z" />
+    </Icon>
+  );
+}
+
 /** Looping bowling-ball-hits-pins -> glowing lightbulb animation, used for the navbar help/tour trigger. */
 export function IconHelpAnimated({ size = 20 }: { size?: number }) {
   return (

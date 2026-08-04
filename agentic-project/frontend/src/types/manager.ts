@@ -86,6 +86,8 @@ export interface Turn {
   deep_iterations?: DeepIteration[];
   truncated?: boolean;
   stopped_reason?: string;
+  template_name?: string;
+  route?: string;
   query_results?: any[];
 }
 

@@ -1,8 +1,8 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { btnPrimary, btnSecondary } from "../lib/styles";
 import { useT } from "../lib/i18n";
 import { useAuthStore } from "../stores/authStore";
-import { saveAnswerTemplate, listAnswerTemplates, deleteAnswerTemplate } from "../api/client";
+import { saveAnswerTemplate, listAnswerTemplates, deleteAnswerTemplate, updateAnswerTemplate } from "../api/client";
 import type { AnswerTemplate } from "../types";
 
 export function FormatTemplateModal({
@@ -21,7 +21,9 @@ export function FormatTemplateModal({
   const [spec, setSpec] = useState("");
   const [saving, setSaving] = useState(false);
   const [deletingId, setDeletingId] = useState<number | null>(null);
+  const [editingId, setEditingId] = useState<number | null>(null);
   const [status, setStatus] = useState<string>("");
+  const nameInputRef = useRef<HTMLInputElement>(null);
 
   const reload = async () => {
     try {
@@ -36,6 +38,7 @@ export function FormatTemplateModal({
     if (open) {
       setName("");
       setSpec("");
+      setEditingId(null);
       setStatus("");
       reload();
     }
@@ -51,17 +54,38 @@ export function FormatTemplateModal({
     setSaving(true);
     setStatus("");
     try {
-      await saveAnswerTemplate(trimmedName, trimmedSpec, userId || undefined);
+      if (editingId != null) {
+        await updateAnswerTemplate(editingId, trimmedName, trimmedSpec, userId || undefined);
+        setStatus(t("templateModal.updated"));
+      } else {
+        await saveAnswerTemplate(trimmedName, trimmedSpec, userId || undefined);
+        setStatus(t("templateModal.saved"));
+      }
       setName("");
       setSpec("");
-      setStatus(t("templateModal.saved"));
+      setEditingId(null);
       await reload();
     } catch (e) {
       console.error("Failed to save template:", e);
-      setStatus(t("templateModal.saveFailed"));
+      setStatus(t("templateModal.updateFailed"));
     } finally {
       setSaving(false);
     }
+  };
+
+  const handleEdit = (tmpl: AnswerTemplate) => {
+    setEditingId(tmpl.id);
+    setName(tmpl.template_name);
+    setSpec(tmpl.format_spec);
+    setStatus("");
+    setTimeout(() => nameInputRef.current?.focus(), 0);
+  };
+
+  const handleCancelEdit = () => {
+    setEditingId(null);
+    setName("");
+    setSpec("");
+    setStatus("");
   };
 
   const handleDelete = async (templateId: number) => {
@@ -103,6 +127,7 @@ export function FormatTemplateModal({
           <div>
             <div className="text-[10.5px] font-semibold tracking-wider uppercase text-tertiary mb-1.5">{t("templateModal.templateName")}</div>
             <input
+              ref={nameInputRef}
               type="text"
               className="w-full rounded-xl border-2 border-border bg-surface-1 text-text text-sm px-3 py-2.5 focus:outline-none focus:border-accent transition-colors"
               placeholder={t("templateModal.namePlaceholder")}
@@ -123,8 +148,17 @@ export function FormatTemplateModal({
           </div>
 
           <div className="flex items-center justify-end gap-2">
-            <button type="button" className={btnSecondary} onClick={handleSave} disabled={saving}>
-              {saving ? t("templateModal.saving") : t("templateModal.save")}
+            {editingId != null && (
+              <button type="button" className={btnSecondary} onClick={handleCancelEdit} disabled={saving}>
+                {t("templateModal.cancelEdit")}
+              </button>
+            )}
+            <button type="button" className={btnPrimary} onClick={handleSave} disabled={saving}>
+              {saving
+                ? t("templateModal.saving")
+                : editingId != null
+                ? t("templateModal.update")
+                : t("templateModal.save")}
             </button>
           </div>
           {status && <div className="text-[12px] text-accent">{status}</div>}
@@ -150,13 +184,24 @@ export function FormatTemplateModal({
                       <div className="text-sm font-medium text-text truncate">{tmpl.template_name}</div>
                       <div className="text-[11px] text-muted truncate whitespace-pre-line line-clamp-1">{tmpl.format_spec}</div>
                     </button>
-                    <button
-                      type="button"
-                      className="shrink-0 text-muted hover:text-red-400 transition-colors"
-                      title={t("templateModal.delete")}
-                      disabled={deletingId === tmpl.id}
-                      onClick={() => handleDelete(tmpl.id)}
-                    >
+                      <button
+                        type="button"
+                        className="shrink-0 text-muted hover:text-accent transition-colors"
+                        title={t("templateModal.edit")}
+                        disabled={deletingId === tmpl.id || saving}
+                        onClick={() => handleEdit(tmpl)}
+                      >
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" width="15" height="15" strokeWidth="2">
+                          <path d="M12 20h9M16.5 3.5a2.121 2.121 0 013 3L7 19l-4 1 1-4L16.5 3.5z" />
+                        </svg>
+                      </button>
+                      <button
+                        type="button"
+                        className="shrink-0 text-muted hover:text-red-400 transition-colors"
+                        title={t("templateModal.delete")}
+                        disabled={deletingId === tmpl.id}
+                        onClick={() => handleDelete(tmpl.id)}
+                      >
                       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" width="15" height="15" strokeWidth="2">
                         <path d="M3 6h18M8 6V4a2 2 0 012-2h4a2 2 0 012 2v2m3 0v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6M10 11v6M14 11v6" />
                       </svg>

@@ -74,6 +74,8 @@ export const translations: Record<Language, Record<string, string>> = {
     "chat.uploadTooLarge": "The file size is too big max 50MB",
     "chat.datasetsNotAvailable": "Dataset not found: {names}. Could not attach this aim.",
     "chat.templateNeedsDataset": "Please attach at least one dataset to run the template report.",
+    "chat.templateRunMessage": "Run the {name} template on: {datasets}",
+    "chat.templateReady": "Ready to run \"{name}\" on: {datasets}",
 
     // ContextSection
     "context.title": "Context",
@@ -214,6 +216,11 @@ export const translations: Record<Language, Record<string, string>> = {
     "templateModal.noTemplates": "No templates yet — create one above",
     "templateModal.delete": "Delete template",
     "templateModal.deleteConfirm": "Delete this template?",
+    "templateModal.edit": "Edit template",
+    "templateModal.update": "Update Template",
+    "templateModal.cancelEdit": "Cancel edit",
+    "templateModal.updated": "Template updated",
+    "templateModal.updateFailed": "Could not update template — a template with this name may already exist",
     "templateModal.applied": "Format: {name} — applies to your next message",
 
     // Login
@@ -459,6 +466,8 @@ export const translations: Record<Language, Record<string, string>> = {
     "chat.uploadTooLarge": "ファイルサイズが大きすぎます。最大50MBです",
     "chat.datasetsNotAvailable": "データセットが見つかりません: {names}. この分析目的を追加できません。",
     "chat.templateNeedsDataset": "テンプレートレポートを実行するには、少なくとも1つのデータセットを添付してください。",
+    "chat.templateRunMessage": "{name}テンプレートを実行: {datasets}",
+    "chat.templateReady": "実行準備完了「{name}」対象: {datasets}",
 
     "context.title": "コンテキスト",
     "context.session": "セッション",
@@ -590,6 +599,11 @@ export const translations: Record<Language, Record<string, string>> = {
     "templateModal.noTemplates": "テンプレートはまだありません — 上で作成してください",
     "templateModal.delete": "テンプレートを削除",
     "templateModal.deleteConfirm": "このテンプレートを削除しますか？",
+    "templateModal.edit": "テンプレートを編集",
+    "templateModal.update": "テンプレートを更新",
+    "templateModal.cancelEdit": "編集をキャンセル",
+    "templateModal.updated": "テンプレートを更新しました",
+    "templateModal.updateFailed": "テンプレートを更新できませんでした — 同名のテンプレートが既に存在する可能性があります",
     "templateModal.applied": "形式: {name} — 次のメッセージに適用されます",
 
     "login.title": "サインイン",

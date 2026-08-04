@@ -498,3 +498,10 @@ export async function deleteAnswerTemplate(templateId: number, userId?: string) 
   const params = userId ? `?user_id=${encodeURIComponent(userId)}` : "";
   return request<{ status: string; id: number }>(`/api/v2/answer-templates/${templateId}${params}`, { method: "DELETE" });
 }
+
+export async function updateAnswerTemplate(templateId: number, templateName: string, formatSpec: string, userId?: string) {
+  return request<AnswerTemplate>(`/api/v2/answer-templates/${templateId}`, {
+    method: "PATCH",
+    body: JSON.stringify({ template_name: templateName, format_spec: formatSpec, user_id: userId }),
+  });
+}

@@ -101,6 +101,7 @@ You have two tools available:
 - TIME-PERIOD QUESTIONS: If the user specifies a time period (e.g., '8月', 'August', 'this month', '2026年') and a column is tagged [pre-aggregated: monthly/yearly/... total], the user is asking for that aggregated value — use the [pre-aggregated] column even if they mentioned a different raw column by name. Example: user asks "8月の発注予定数" but 発注数月合計 is tagged [pre-aggregated: monthly total] → use 発注数月合計, not raw weekly 発注予定数.
 - Before writing SQL, verify every column name exists in its table by checking the schema above.
 - Only use columns and tables from the datasets listed above — never invent column names. Use the exact SQL table name given in parentheses for each dataset.
+- Use the EXACT SQL column name shown for each column (the name before any "(original header: ...)" note) — the schema may show a friendlier original header name in parentheses, but the SQL column name is the one that exists in the table. If a column name starts with a digit or contains characters other than letters, digits, and underscore, you MUST double-quote it in SQL, e.g. "c_5st内径値1".
 - If the user asks for a total/sum/average and a column is tagged [pre-aggregated: ...] (e.g., "monthly total"), use that column directly instead of applying SUM/AVG to a raw column.
 - Always include LIMIT 100 in any SQL you run unless the user asks for all results.
 - If a TEXT column represents a time-of-day or duration in "H:MM" / "HH:MM" format (not zero-padded), NEVER `ORDER BY` it directly — that sorts alphabetically (e.g. "10:20" before "2:20") not chronologically. Instead order by its numeric hour/minute parts using functions that work in both SQLite and PostgreSQL, e.g. `ORDER BY CAST(SUBSTR(col, 1, LENGTH(col)-3) AS INTEGER), CAST(SUBSTR(col, LENGTH(col)-1, 2) AS INTEGER)` (this assumes the minutes are always 2 digits, which they are in "H:MM"/"HH:MM")
@@ -180,6 +181,14 @@ def _suggest_column_fix(error_msg: str, column_map: dict[str, set[str]]) -> str:
     if not m:
         m = re.search(r"column\s+\"?(\w+)\"?\s+does not exist", error_msg, re.IGNORECASE)
     if not m:
+        if re.search(r"unrecognized token|syntax error|near \"", error_msg, re.IGNORECASE):
+            return (
+                f"{error_msg} Hint: this is usually an unquoted identifier. Column/table names "
+                "that start with a digit or contain special characters MUST be double-quoted in "
+                "SQL. Copy the SQL column name exactly as shown in the dataset schema — the "
+                "schema may list an original header name in parentheses, but always use the SQL "
+                "name it belongs to (e.g. \"c_5st内径値1\")."
+            )
         return error_msg
     bad_col = m.group(1)
     # Strip table alias prefix if any (e.g. "a.異常№" -> "異常№")

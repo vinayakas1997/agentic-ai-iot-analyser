@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo, useRef, useCallback, KeyboardEvent } from "react";
-import { panelClass, btnPrimary, btnGlass } from "../lib/styles";
+import { panelClass, btnGlass } from "../lib/styles";
 import { useSessionStore } from "../stores/sessionStore";
 import { useOutputStore } from "../stores/outputStore";
 import { listDatasets, listUserDatasets, updateSessionState, summarizeContext, uploadCsvFiles, ApiError, MAX_UPLOAD_BYTES } from "../api/client";
@@ -9,7 +9,7 @@ import { useUploadStore } from "../stores/uploadStore";
 import { useAuthStore } from "../stores/authStore";
 import { useT, tCount } from "../lib/i18n";
 import { newId } from "../lib/id";
-import { IconDatabase, IconCheck, IconUser, IconTarget, IconUpload } from "../lib/icons";
+import { IconDatabase, IconCheck, IconUser, IconTarget, IconUpload, IconSend } from "../lib/icons";
 import { QueryResultState } from "./QueryActions";
 import type { Turn } from "../types/manager";
 import { DatasetColumns } from "../components/DatasetColumns";
@@ -476,22 +476,54 @@ export default function ChatSection() {
     }
     useSessionStore.setState({ error: null });
 
+    const { available, missing } = filterAvailable(storeAttached);
+    if (missing.length > 0) setMissingDatasets((prev) => [...new Set([...prev, ...missing])]);
+
     const msg = input.trim()
       || (selectedAims.length > 0 ? selectedAims.map((a) => a.description ? `${a.aim}: ${a.description}` : a.aim).join("\n") : "")
+      || (formatSpec && available.length > 0 ? t("chat.templateRunMessage", { name: appliedTemplateName || "Report", datasets: available.join(", ") }) : "")
       || (formatSpec ? "Run template report" : "");
     if (!msg || !sessionId) return;
     setAppliedTemplate(null);
     const sentInput = input;
     setInput("");
     setShowSearch(false);
-    const { available, missing } = filterAvailable(storeAttached);
-    if (missing.length > 0) setMissingDatasets((prev) => [...new Set([...prev, ...missing])]);
     const lineName = available.join(",");
     const aimNames = selectedAims.map((a) => a.aim);
     const aimDescriptions = Object.fromEntries(selectedAims.filter((a) => a.description).map((a) => [a.aim, a.description!]));
     try {
       const res = await sendUserMessage(msg, lineName, aimNames, enrichmentMode, undefined, aimDescriptions, formatSpec, appliedTemplateName);
-    if (res?.result_uuid && res?.query_result) {
+    if (res?.route === "template") {
+      // TEMPLATE run: create an OutputPanel card per run, named per-template with a
+      // counter ("01 · Daily report", "02 · …") so repeated runs stack as distinct cards.
+      // Checked FIRST — a successful template response also carries result_uuid +
+      // query_result, which would otherwise match the aim-result branch below and
+      // silently skip card creation (template runs have no selected aims).
+      const templateName = appliedTemplateName || "Report";
+      const priorRuns = useOutputStore.getState().results.filter(
+        (r) => r.kind === "template" && r.template_name === templateName
+      ).length;
+      const runNumber = priorRuns + 1;
+      const runLabel = `${String(runNumber).padStart(2, "0")} · ${templateName}`;
+      const resultState: QueryResultState = {
+        loading: false,
+        ...(res.query_result ? (res.query_result as QueryResultState) : {}),
+      } as QueryResultState;
+      const queryResults: QueryResultState[] | undefined = res.query_results
+        ? res.query_results.map((qr: any) => ({ loading: false, ...qr }))
+        : undefined;
+      useOutputStore.getState().addResult({
+        aim: runLabel,
+        description: templateName,
+        datasets: available,
+        result: resultState,
+        kind: "template",
+        template_name: templateName,
+        report: res.agent_message || "",
+        queryResults,
+      });
+      persistTurns();
+    } else if (res?.result_uuid && res?.query_result) {
       const resultState: QueryResultState = { loading: false, ...res.query_result } as QueryResultState;
       setQueryResults((prev) => ({
         ...prev,
@@ -538,33 +570,6 @@ export default function ChatSection() {
           completedActions: { ...s.completedActions, ...newCompleted },
         }));
       }
-      persistTurns();
-    } else if (res?.route === "template") {
-      // TEMPLATE run: create an OutputPanel card per run, named per-template with a
-      // counter ("01 · Daily report", "02 · …") so repeated runs stack as distinct cards.
-      const templateName = appliedTemplateName || "Report";
-      const priorRuns = useOutputStore.getState().results.filter(
-        (r) => r.kind === "template" && r.template_name === templateName
-      ).length;
-      const runNumber = priorRuns + 1;
-      const runLabel = `${String(runNumber).padStart(2, "0")} · ${templateName}`;
-      const resultState: QueryResultState = {
-        loading: false,
-        ...(res.query_result ? (res.query_result as QueryResultState) : {}),
-      } as QueryResultState;
-      const queryResults: QueryResultState[] | undefined = res.query_results
-        ? res.query_results.map((qr: any) => ({ loading: false, ...qr }))
-        : undefined;
-      useOutputStore.getState().addResult({
-        aim: runLabel,
-        description: templateName,
-        datasets: available,
-        result: resultState,
-        kind: "template",
-        template_name: templateName,
-        report: res.agent_message || "",
-        queryResults,
-      });
       persistTurns();
     }
     } catch {
@@ -971,9 +976,12 @@ export default function ChatSection() {
 
       <div className="shrink-0 mt-3 space-y-2">
         {appliedTemplate && (
-          <div className="flex items-center gap-2 bg-accent/10 border-2 border-accent/30 rounded-xl px-3 py-2">
-            <span className="text-[11px] font-medium text-accent truncate">
-              {t("templateModal.applied", { name: appliedTemplate.template_name })}
+          <div className="flex items-center gap-2 w-fit max-w-full bg-accent/10 border-2 border-accent/30 rounded-xl px-3 py-2">
+            <span className="text-[11px] font-medium text-accent">
+              {t("chat.templateReady", {
+                name: appliedTemplate.template_name,
+                datasets: storeAttached.length > 0 ? storeAttached.join(", ") : t("context.noDatasetsSelected"),
+              })}
             </span>
             <button
               type="button"
@@ -987,38 +995,40 @@ export default function ChatSection() {
         )}
         {/* Composer */}
         <div className="flex gap-2 items-end">
-          <textarea
-            ref={composerRef}
-            data-tour="composer"
-            className="flex-1 rounded-xl border-2 border-border bg-surface-1 text-text text-sm px-3 py-2.5 resize-none overflow-y-auto focus:outline-none focus:border-accent transition-colors min-h-[42px] max-h-[120px]"
-            placeholder={t("chat.composerResearchPlaceholder")}
-            rows={1}
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
-            onKeyDown={handleKeyDown}
-          />
-          <div className="flex flex-col gap-2 shrink-0">
+          <div className="relative flex-1">
+            <textarea
+              ref={composerRef}
+              data-tour="composer"
+              className="w-full rounded-xl border-2 border-border bg-surface-1 text-text text-sm px-3 py-2.5 pr-10 resize-none overflow-y-auto focus:outline-none focus:border-accent transition-colors min-h-[42px] max-h-[120px]"
+              placeholder={t("chat.composerResearchPlaceholder")}
+              rows={1}
+              value={input}
+              onChange={(e) => setInput(e.target.value)}
+              onKeyDown={handleKeyDown}
+            />
             <button
               type="button"
-              className={`flex items-center gap-1.5 text-[11px] font-semibold text-accent rounded-lg px-2.5 py-2 ${btnGlass}`}
-              onClick={() => setShowTemplateModal(true)}
-              title={t("templateModal.title")}
-            >
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" width="14" height="14" strokeWidth="2.2">
-                <path d="M12 5v14M5 12h14" />
-                <path d="M5 4h6l8 8" opacity="0" />
-              </svg>
-              {t("templateModal.addButton")}
-            </button>
-            <button
-              type="button"
-              className={btnPrimary + " shrink-0"}
+              aria-label={t("common.send")}
+              title={t("common.send")}
+              className="absolute bottom-2 right-2 w-7 h-7 flex items-center justify-center rounded-full bg-accent text-white hover:bg-[#1d8cf0] transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
               onClick={() => handleSend()}
               disabled={(!input.trim() && selectedAims.length === 0 && !appliedTemplate) || !sessionId || loading}
             >
-              {t("common.send")}
+              <IconSend size={13} />
             </button>
           </div>
+          <button
+            type="button"
+            className={`flex items-center gap-1.5 text-[11px] font-semibold text-accent rounded-lg px-2.5 py-2 shrink-0 ${btnGlass}`}
+            onClick={() => setShowTemplateModal(true)}
+            title={t("templateModal.title")}
+          >
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" width="14" height="14" strokeWidth="2.2">
+              <path d="M12 5v14M5 12h14" />
+              <path d="M5 4h6l8 8" opacity="0" />
+            </svg>
+            {t("templateModal.addButton")}
+          </button>
         </div>
       </div>
 

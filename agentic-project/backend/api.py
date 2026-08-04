@@ -47,6 +47,8 @@ from answer_templates import (
     save_answer_template,
     list_answer_templates,
     delete_answer_template,
+    update_answer_template,
+    TemplateNameConflictError,
 )
 from registry_admin import (
     TableNotFoundError,
@@ -1120,6 +1122,20 @@ async def remove_answer_template(template_id: int, user_id: str = ""):
         raise HTTPException(status_code=404, detail="Template not found")
     return {"status": "deleted", "id": template_id}
 
+@router.patch("/answer-templates/{template_id}")
+async def edit_answer_template(template_id: int, req: SaveAnswerTemplateRequest):
+    uid = _require_user_id(req.user_id)
+    if not req.template_name.strip():
+        raise HTTPException(status_code=400, detail="template_name is required")
+    if not req.format_spec.strip():
+        raise HTTPException(status_code=400, detail="format_spec is required")
+    try:
+        return await update_answer_template(uid, template_id, req.template_name.strip(), req.format_spec.strip())
+    except TemplateNameConflictError:
+        raise HTTPException(status_code=409, detail="A template with this name already exists")
+    except ValueError:
+        raise HTTPException(status_code=404, detail="Template not found")
+
 @router.post("/login", response_model=LoginResponse)
 async def login(req: LoginRequest):
     """Stateless ID-only allowlist check — no passwords. Decides which top-level view the
@@ -1424,18 +1440,26 @@ async def _build_context(
         profiling = ds.get("column_profiling", {})
         col_lines = []
         for c in cols:
-            name_display = c.get('original_name', c.get('name', '?'))
+            # The LLM writes SQL against the SANITIZED column name (c.get('name')) — e.g.
+            # CSV header "5ST内径値1" becomes "c_5st内径値1". Showing the original header as
+            # the primary name made the LLM copy an identifier that doesn't exist in the
+            # table (and starts with a digit, which SQL requires quoting anyway). Show the
+            # executable SQL name first, keeping the original header as a readability hint.
+            sql_name = c.get('name', '')
+            original = c.get('original_name', '')
             dtype = c.get('datatype', '?')
             meaning = c.get('meaning', '')
-            sql_name = c.get('name', '')
             samples = _format_sample_values(sample_rows, sql_name) if include_samples and sql_name and sample_rows else ""
-            col_info = f"{name_display} ({dtype})"
+            if sql_name and original and original != sql_name:
+                col_info = f"{sql_name} (original header: {original}, {dtype})"
+            else:
+                col_info = f"{sql_name or original or '?'} ({dtype})"
             if meaning:
                 col_info += f" — {meaning}"
             if samples:
                 col_info += samples
             # Detect pre-aggregated columns (e.g., monthly totals)
-            agg_tag = _detect_aggregate_col(name_display, meaning)
+            agg_tag = _detect_aggregate_col(sql_name or original, meaning)
             # Also append profiling hints
             p = profiling.get(sql_name, {})
             hints = []

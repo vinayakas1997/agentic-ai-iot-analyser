@@ -70,3 +70,39 @@ lightweight regex-based identifier parser, not a full SQL parser — still
 needs the unit test noted in the test plan and a check against real
 generated-SQL shapes from `generate_sql`/`generate_sql_data` for edge cases
 (e.g. CTEs, subqueries) not covered by the quick manual check.
+
+## Regression found in this fix (fixed 2026-08-04)
+
+The original `_TABLE_REF_RE` restricted identifiers to `[a-zA-Z_]\w*`,
+which silently broke routing for **non-ASCII (e.g. Japanese) table names**:
+Python's `\b`/`\w` are unicode-aware, so the previous `\b{name}\b` matched
+`FROM 生産情報_2026_07_10` fine, but the new ASCII-only token matcher could
+not. `_ref_names()` then returned `[]` for every backend, `route_execute`
+fell through to the main shared Postgres, and any query against a Japanese
+table failed with `asyncpg.UndefinedTableError: relation "生産…" does not
+exist` — surfaced to the agent as a truncated `SQL execution failed:
+(sqlalchemy.dialects.postgresql.asyncp…`, which the template/FOCUS agents
+retried until their round budget (16/12) was exhausted and they reported
+"no data".
+
+Fix (same commit): `_TABLE_REF_RE` now captures identifier tokens
+permissively (up to whitespace/comma/paren, quoted names supported) and
+`_norm_table_ref()` strips surrounding double quotes and any schema prefix
+(`public.x` → `x`). The bug-07 literal case is preserved: a string literal
+such as `WHERE category = 'orders'` still does not match, because the
+regex only inspects table-reference position. Verified:
+
+- `SELECT COUNT(*) FROM 生産実績_01` (exists in user SQLite) → now routes to
+  SQLite and returns data (previously fell through to Postgres and errored).
+- The user's failing template run on `生産情報_2026_07_10` now completes:
+  `route=template`, `done=True`, 2 query results returned with real rows.
+- Added a defensive guard in `route_execute`/`route_explain`: if datasets
+  are attached but **zero** referenced tables resolve, it raises a clear
+  "table not present among the attached datasets" error instead of falling
+  through to the shared Postgres — so a name mismatch can never silently
+  burn the full agent round budget again.
+
+Note: the `生産情報_2026_07_0X` datasets themselves had also lost their data
+tables (registry rows were `active` but the SQLite file predated the
+upload); they were re-uploaded from `prod-info-test-files-5-days/` and all
+five now query correctly.

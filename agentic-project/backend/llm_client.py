@@ -86,6 +86,7 @@ The user asked a specific factual question. You MUST generate a SQL query to ans
 
 ## SQL Rules
 - Only use columns and tables from the datasets above — never invent column names
+- Use the EXACT SQL column name shown for each column (the name before any "(original header: ...)" note) — the schema may show a friendlier original header name in parentheses, but the SQL column name is the one that exists in the table. If a column name starts with a digit or contains characters other than letters, digits, and underscore, you MUST double-quote it in SQL, e.g. "c_5st内径値1"
 - In the FROM/JOIN clause, use the exact "SQL table name" given in parentheses for each dataset — NOT the dataset's display name if they differ
 - Always include LIMIT 100 unless the user asks for all results
 - Use explicit JOIN conditions when combining datasets

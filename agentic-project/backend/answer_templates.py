@@ -66,6 +66,47 @@ async def list_answer_templates(user_id: str) -> list[dict]:
     ]
 
 
+class TemplateNameConflictError(ValueError):
+    pass
+
+
+async def update_answer_template(user_id: str, template_id: int, template_name: str, format_spec: str) -> dict:
+    """Rename and/or change the format_spec of an existing template, by id, with an
+    ownership check. Raises ValueError('template_not_found') when the row is missing or
+    not owned, and TemplateNameConflictError when another template already uses the
+    requested name."""
+    async with AsyncSessionLocal() as db:
+        row = (await db.execute(
+            select(AnswerTemplate).where(
+                AnswerTemplate.id == template_id,
+                AnswerTemplate.user_id == user_id,
+            )
+        )).scalar_one_or_none()
+        if not row:
+            raise ValueError("template_not_found")
+
+        conflict = (await db.execute(
+            select(AnswerTemplate).where(
+                AnswerTemplate.user_id == user_id,
+                AnswerTemplate.template_name == template_name,
+                AnswerTemplate.id != template_id,
+            )
+        )).scalar_one_or_none()
+        if conflict:
+            raise TemplateNameConflictError(template_name)
+
+        row.template_name = template_name
+        row.format_spec = format_spec
+        await db.commit()
+        await db.refresh(row)
+        return {
+            "id": row.id,
+            "template_name": row.template_name,
+            "format_spec": row.format_spec,
+            "created_at": row.created_at.isoformat() if row.created_at else None,
+        }
+
+
 async def delete_answer_template(user_id: str, template_id: int) -> None:
     async with AsyncSessionLocal() as db:
         row = (await db.execute(
