@@ -549,7 +549,7 @@ export default function ChatSection() {
         ...prev,
         [res.result_uuid!]: resultState,
       }));
-      // Push single-aim FOCUS results to output panel
+      // Push results to output panel
       if (aimNames.length > 0) {
         useOutputStore.getState().addResult({
           aim: aimNames[0],
@@ -560,6 +560,18 @@ export default function ChatSection() {
         useSessionStore.setState((s) => ({
           completedActions: { ...s.completedActions, [aimNames[0]]: res.result_uuid! },
         }));
+        persistTurns();
+      } else {
+        const firstAction = res.analysis_actions?.[0];
+        const aimLabel = firstAction?.name || msg.slice(0, 60);
+        const description = firstAction?.description || undefined;
+        const datasets = firstAction?.datasets ?? available;
+        useOutputStore.getState().addResult({
+          aim: aimLabel,
+          description,
+          datasets,
+          result: resultState,
+        });
         persistTurns();
       }
     } else if (res?.deep_iterations?.length) {

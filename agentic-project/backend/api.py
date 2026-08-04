@@ -2318,7 +2318,7 @@ async def send_message(req: MessageRequest):
 
         aim_proposals_raw = await extract_aims_from_text(agent_msg, dataset_names)
         aim_proposals = [AimProposal(**a) for a in aim_proposals_raw if isinstance(a, dict)]
-        analysis_actions_raw = await extract_analysis_actions(agent_msg, dataset_names) if dataset_names else []
+        analysis_actions_raw = await extract_analysis_actions(agent_msg, dataset_names, language=req.language) if dataset_names else []
         analysis_actions = [AnalysisAction(**a) for a in analysis_actions_raw if isinstance(a, dict)]
 
         # Save turn (retry on version conflict — do not re-run LLM)
@@ -2451,7 +2451,7 @@ async def send_message(req: MessageRequest):
     # FOCUS/DIRECT/DEEP routes: extract actions from agent response text via secondary LLM call
     analysis_actions_raw = []
     if dataset_names and route in ("direct", "focus", "deep"):
-        analysis_actions_raw = await extract_analysis_actions(agent_msg, dataset_names)
+        analysis_actions_raw = await extract_analysis_actions(agent_msg, dataset_names, language=req.language)
     # SUGGEST route: map parsed proposals directly to analysis_actions (no extra LLM call)
     elif route.lower() == "suggest" and handler_proposals:
         analysis_actions_raw = [

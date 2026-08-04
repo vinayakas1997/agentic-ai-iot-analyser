@@ -77,6 +77,32 @@ function reconstructTemplateCards(rawTurns: any[], existing: CollectedResult[]):
   return results;
 }
 
+function reconstructAimCards(rawTurns: any[], existing: CollectedResult[]): CollectedResult[] {
+  const results = [...existing];
+  const seen = new Set<string>(existing.map((r) => r.aim));
+  for (const t of rawTurns) {
+    const isTemplate = t?.route === "template" || Boolean(t?.template_name && String(t.template_name).trim());
+    if (isTemplate) continue;
+    if (!t?.result_uuid || !t?.query_result) continue;
+    const firstAction = Array.isArray(t.analysis_actions) ? t.analysis_actions[0] : undefined;
+    const aimLabel = firstAction?.name || (typeof t.user === "string" ? t.user.slice(0, 60) : "");
+    if (!aimLabel || seen.has(aimLabel)) continue;
+    seen.add(aimLabel);
+    const desc = firstAction?.description || undefined;
+    const ds = Array.isArray(firstAction?.datasets) ? firstAction.datasets : Array.isArray(t.datasets) ? t.datasets : undefined;
+    const resultState: QueryResultState = { loading: false, ...(t.query_result || {}) } as QueryResultState;
+    results.push({
+      id: newId(),
+      aim: aimLabel,
+      description: desc,
+      datasets: ds,
+      result: resultState,
+      created_at: Date.now(),
+    });
+  }
+  return results;
+}
+
 let _pollTimer: ReturnType<typeof setInterval> | null = null;
 
 /** If the client aborts the send (REQUEST_TIMEOUT_MS), the backend keeps processing and
@@ -284,10 +310,11 @@ export const useSessionStore = create<SessionState>((set, get) => ({
           route: t.route || undefined,
           query_results: Array.isArray(t.query_results) ? t.query_results.map((qr: any) => ({ loading: false, ...qr })) : undefined,
         }));
-        const outputResults = reconstructTemplateCards(
+        let outputResults = reconstructTemplateCards(
           apiTurns,
           Array.isArray(detail.state?.output_results) ? detail.state.output_results : []
         );
+        outputResults = reconstructAimCards(apiTurns, outputResults);
         set({
           sessionMeta,
           turns: loadedTurns,
@@ -374,10 +401,11 @@ export const useSessionStore = create<SessionState>((set, get) => ({
         route: t.route || undefined,
         query_results: Array.isArray(t.query_results) ? t.query_results.map((qr: any) => ({ loading: false, ...qr })) : undefined,
       }));
-      const outputResults = reconstructTemplateCards(
+      let outputResults = reconstructTemplateCards(
         rawTurns,
         Array.isArray(detail.state?.output_results) ? detail.state.output_results : []
       );
+      outputResults = reconstructAimCards(rawTurns, outputResults);
       set({
         sessionMeta,
         turns: loadedTurns,

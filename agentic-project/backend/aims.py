@@ -50,7 +50,7 @@ When multiple datasets are attached, identify cross-dataset analysis opportuniti
 - If the question is unrelated to the available data AND unrelated to data visualization concepts, politely redirect to what the datasets can actually answer"""
 
 
-async def call_llm(prompt: str, temperature: float | None = None) -> str:
+async def call_llm(prompt: str, language: str = "en", temperature: float | None = None) -> str:
     """Simple LLM call returning text response."""
     settings = get_settings()
     client = get_llm_client()
@@ -58,7 +58,7 @@ async def call_llm(prompt: str, temperature: float | None = None) -> str:
         response = await client.chat.completions.create(
             model=settings.llm_model,
             messages=[
-                {"role": "system", "content": "You are a helpful data analysis assistant. Answer questions clearly and concisely."},
+                {"role": "system", "content": "You are a helpful data analysis assistant. Answer questions clearly and concisely." + language_instruction(language)},
                 {"role": "user", "content": prompt},
             ],
             max_tokens=settings.max_tokens,
@@ -968,6 +968,7 @@ def _crosstab_chart_configs(
 
 
 EXTRACT_ACTIONS_PROMPT = """Extract exactly 5 interactive analysis actions from the response text below. Return ONLY a JSON array — no markdown, no code fences.
+{language_instruction}
 
 Each object in the array must have:
 - "name": short actionable label (e.g., "Compare quality scores by supplier")
@@ -977,20 +978,22 @@ Each object in the array must have:
 - "columns" (optional): list of specific column names examined in this analysis
 - "insight" (optional): what insight or finding the user can expect from this analysis
 
+IMPORTANT: The "name", "description", "goal", and "insight" fields MUST be written in the language indicated above.
+
 If no clear actions, return [].
 
 Text:
 {text}"""
 
 
-async def extract_analysis_actions(text: str, dataset_names: list[str]) -> list[dict]:
+async def extract_analysis_actions(text: str, dataset_names: list[str], language: str = "en") -> list[dict]:
     """Extract interactive analysis action proposals from a chat response text."""
     if not text.strip():
         return []
 
-    prompt = EXTRACT_ACTIONS_PROMPT.format(text=text[:8000], datasets=json.dumps(dataset_names))
+    prompt = EXTRACT_ACTIONS_PROMPT.format(text=text[:8000], datasets=json.dumps(dataset_names), language_instruction=language_instruction(language))
     try:
-        raw = (await call_llm(prompt)).strip()
+        raw = (await call_llm(prompt, language=language)).strip()
         if not raw:
             return []
         if raw.startswith("```"):
