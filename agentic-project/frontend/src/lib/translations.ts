@@ -360,6 +360,14 @@ export const translations: Record<Language, Record<string, string>> = {
     "tour.question1": "What is the defect rate by machine?",
     "tour.question2": "Show me production output trends",
     "tour.question3": "Which machine has the highest downtime?",
+    "tour.tpl1Title": "Template Mode",
+    "tour.tpl1Desc": "Click '+ Template' once to open the template editor — no typing needed.",
+    "tour.tpl2Title": "Template Editor",
+    "tour.tpl2Desc": "Each numbered analysis has its own Explanation field, so the agent explains that section specifically. Save it, then edit (pencil) or delete (trash) it anytime.",
+    "tour.tpl3Title": "One-Click Apply",
+    "tour.tpl3Desc": "Click the template row once — it attaches the dataset, shows 'Ready to run' above the composer, and enables the Send button.",
+    "tour.tpl4Title": "Template Report",
+    "tour.tpl4Desc": "The report appears in the results panel with the 'Template' badge and a 'Report' section — same as normal results.",
 
     // ProcessingPanel
     "processing.classifying": "Classifying question",
@@ -799,5 +807,13 @@ export const translations: Record<Language, Record<string, string>> = {
     "tour.question1": "マシン別の不良率は？",
     "tour.question2": "生産量の推移を表示",
     "tour.question3": "どのマシンのダウンタイムが最も長いですか？",
+    "tour.tpl1Title": "テンプレートモード",
+    "tour.tpl1Desc": "「+ テンプレート」を一度クリックするとテンプレートエディタが開きます。入力は不要です。",
+    "tour.tpl2Title": "テンプレートエディタ",
+    "tour.tpl2Desc": "各番号付き分析には専用の解説欄があり、エージェントがそのセクションを個別に説明します。保存して、あとで編集（鉛筆）や削除（ゴミ箱）ができます。",
+    "tour.tpl3Title": "ワンクリック適用",
+    "tour.tpl3Desc": "テンプレートの行を一度クリックするとデータセットが添付され、コンポーザーの上に「実行準備完了」と表示され、送信ボタンが有効になります。",
+    "tour.tpl4Title": "テンプレートレポート",
+    "tour.tpl4Desc": "通常の結果と同じように、右側の結果パネルに「テンプレート」バッジと「レポート」セクション付きで表示されます。",
   },
 };

@@ -24,6 +24,34 @@ export default function Navbar({ onBackToManage, onHelp }: { onBackToManage?: ()
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
   const [deleting, setDeleting] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
+  const noteText = `${t("brand.note")} ${t("nav.noDatasetsInfo")}`;
+  const [typed, setTyped] = useState("");
+  const [phase, setPhase] = useState<"typing" | "pausing" | "deleting">("typing");
+
+  useEffect(() => {
+    setTyped("");
+    setPhase("typing");
+  }, [noteText]);
+
+  useEffect(() => {
+    let timer: ReturnType<typeof setTimeout>;
+    if (phase === "typing") {
+      if (typed.length < noteText.length) {
+        timer = setTimeout(() => setTyped(noteText.slice(0, typed.length + 1)), 55);
+      } else {
+        timer = setTimeout(() => setPhase("pausing"), 2200);
+      }
+    } else if (phase === "pausing") {
+      timer = setTimeout(() => setPhase("deleting"), 1600);
+    } else {
+      if (typed.length > 0) {
+        timer = setTimeout(() => setTyped(noteText.slice(0, typed.length - 1)), 22);
+      } else {
+        timer = setTimeout(() => setPhase("typing"), 500);
+      }
+    }
+    return () => clearTimeout(timer);
+  }, [phase, typed, noteText]);
 
   useEffect(() => {
     const handleClick = (e: MouseEvent) => {
@@ -55,7 +83,7 @@ export default function Navbar({ onBackToManage, onHelp }: { onBackToManage?: ()
 
   return (
     <header className="flex items-center justify-between px-5 py-3 border-b border-border bg-surface-1 shrink-0 relative">
-      <div className="flex items-center gap-2">
+      <div className="flex items-center gap-2 shrink-0">
         <span className="text-lg font-semibold">{t("brand.name")}</span>
         <div className="hlp-label-wrap">
           <button
@@ -72,8 +100,13 @@ export default function Navbar({ onBackToManage, onHelp }: { onBackToManage?: ()
         </div>
       </div>
 
-      <div className="absolute left-1/2 -translate-x-1/2 text-sm font-bold text-muted max-w-[22vw] lg:max-w-[38vw] text-center leading-snug whitespace-normal">
-        {t("brand.note")} {t("nav.noDatasetsInfo")}
+      <div className="flex-1 min-w-0 text-center text-sm font-bold text-muted leading-snug whitespace-normal px-3">
+        <span className="sr-only">{noteText}</span>
+        <span aria-hidden="true">{typed}</span>
+        <span
+          aria-hidden="true"
+          className="inline-block h-[1em] w-[2px] bg-current align-middle ml-0.5 animate-pulse"
+        />
       </div>
 
       {error && (
@@ -82,7 +115,7 @@ export default function Navbar({ onBackToManage, onHelp }: { onBackToManage?: ()
         </div>
       )}
 
-      <div className="flex items-center gap-3">
+      <div className="flex items-center gap-3 shrink-0">
         <span className="text-[11px] font-semibold tabular-nums text-muted mr-1">
           {tCount(t, "nav.sessionCount", sessions.length)}
         </span>

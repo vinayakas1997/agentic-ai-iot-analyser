@@ -18,6 +18,10 @@ interface UiState {
   language: Language;
   setLanguage: (lang: Language) => void;
   toggleLanguage: () => void;
+  tourTemplateOpen: boolean;
+  setTourTemplateOpen: (v: boolean) => void;
+  tourTemplateApplied: boolean;
+  setTourTemplateApplied: (v: boolean) => void;
 }
 
 export const useUiStore = create<UiState>((set, get) => ({
@@ -33,4 +37,8 @@ export const useUiStore = create<UiState>((set, get) => ({
     set({ language: lang });
   },
   toggleLanguage: () => get().setLanguage(get().language === "en" ? "ja" : "en"),
+  tourTemplateOpen: false,
+  setTourTemplateOpen: (v) => set({ tourTemplateOpen: v }),
+  tourTemplateApplied: false,
+  setTourTemplateApplied: (v) => set({ tourTemplateApplied: v }),
 }));

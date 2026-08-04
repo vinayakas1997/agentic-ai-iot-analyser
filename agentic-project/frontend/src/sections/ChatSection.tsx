@@ -7,6 +7,7 @@ import type { UploadedFileDraft, UploadFailure } from "../types";
 import { useDatasetStore } from "../stores/datasetStore";
 import { useUploadStore } from "../stores/uploadStore";
 import { useAuthStore } from "../stores/authStore";
+import { useUiStore } from "../stores/uiStore";
 import { useT, tCount } from "../lib/i18n";
 import { newId } from "../lib/id";
 import { IconDatabase, IconCheck, IconUser, IconTarget, IconUpload, IconSend } from "../lib/icons";
@@ -21,6 +22,7 @@ import { PreviewModal } from "../components/PreviewModal";
 import { ViewingResultModal } from "../components/ViewingResultModal";
 import { datasetColor } from "../lib/datasetColors";
 import type { DatasetInfo, AnswerTemplate } from "../types";
+import { TOUR_DEMO_TEMPLATE } from "../lib/tourSampleData";
 
 interface Aim {
   aim: string;
@@ -59,6 +61,8 @@ export default function ChatSection() {
   const [input, setInput] = useState("");
   const [showTemplateModal, setShowTemplateModal] = useState(false);
   const [appliedTemplate, setAppliedTemplate] = useState<AnswerTemplate | null>(null);
+  const tourTemplateOpen = useUiStore((s) => s.tourTemplateOpen);
+  const tourTemplateApplied = useUiStore((s) => s.tourTemplateApplied);
   const [previewAim, setPreviewAim] = useState<Aim | null>(null);
   const selectedAims = useSessionStore((s) => s.selectedAims);
   const [expandedDataset, setExpandedDataset] = useState<string | null>(null);
@@ -465,6 +469,22 @@ export default function ChatSection() {
     if (!sessionId || isLocalSession) return;
     updateSessionState(sessionId, { selected_aims: selectedAims }, userId || undefined).catch((err) => console.error("Failed to persist selected aims:", err));
   }, [selectedAims, sessionId, userId, isLocalSession]);
+
+  useEffect(() => {
+    if (tourTemplateOpen) setShowTemplateModal(true);
+    else setShowTemplateModal(false);
+  }, [tourTemplateOpen]);
+
+  const tourAppliedRef = useRef(false);
+  useEffect(() => {
+    if (tourTemplateApplied) {
+      setAppliedTemplate(TOUR_DEMO_TEMPLATE);
+      tourAppliedRef.current = true;
+    } else if (tourAppliedRef.current) {
+      setAppliedTemplate(null);
+      tourAppliedRef.current = false;
+    }
+  }, [tourTemplateApplied]);
 
   const handleSend = async () => {
     const formatSpec = appliedTemplate?.format_spec;
@@ -976,7 +996,7 @@ export default function ChatSection() {
 
       <div className="shrink-0 mt-3 space-y-2">
         {appliedTemplate && (
-          <div className="flex items-center gap-2 w-fit max-w-full bg-accent/10 border-2 border-accent/30 rounded-xl px-3 py-2">
+          <div data-tour="template-banner" className="flex items-center gap-2 w-fit max-w-full bg-accent/10 border-2 border-accent/30 rounded-xl px-3 py-2">
             <span className="text-[11px] font-medium text-accent">
               {t("chat.templateReady", {
                 name: appliedTemplate.template_name,
@@ -1008,6 +1028,7 @@ export default function ChatSection() {
             />
             <button
               type="button"
+              data-tour="template-send"
               aria-label={t("common.send")}
               title={t("common.send")}
               className="absolute bottom-2 right-2 w-7 h-7 flex items-center justify-center rounded-full bg-accent text-white hover:bg-[#1d8cf0] transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
@@ -1019,6 +1040,7 @@ export default function ChatSection() {
           </div>
           <button
             type="button"
+            data-tour="template-button"
             className={`flex items-center gap-1.5 text-[11px] font-semibold text-accent rounded-lg px-2.5 py-2 shrink-0 ${btnGlass}`}
             onClick={() => setShowTemplateModal(true)}
             title={t("templateModal.title")}
@@ -1054,6 +1076,7 @@ export default function ChatSection() {
       <FormatTemplateModal
         open={showTemplateModal}
         onClose={() => setShowTemplateModal(false)}
+        demoTemplate={tourTemplateOpen ? TOUR_DEMO_TEMPLATE : null}
         onApply={(tmpl) => {
           setAppliedTemplate(tmpl);
           setShowTemplateModal(false);

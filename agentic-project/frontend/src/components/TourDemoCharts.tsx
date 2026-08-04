@@ -119,6 +119,9 @@ export default function TourDemoCharts({ onNext }: { onNext: () => void }) {
     },
   ];
 
+  const progress = aiExplanation.length ? explanation.length / aiExplanation.length : 0;
+  const revealed = Math.min(charts.length, Math.floor((charts.length + 1) * progress));
+
   return (
     <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/60 backdrop-blur-sm overflow-y-auto py-8">
       <div className="rounded-2xl border border-border bg-surface-1 p-6 shadow-2xl max-w-3xl w-full mx-4">
@@ -140,7 +143,7 @@ export default function TourDemoCharts({ onNext }: { onNext: () => void }) {
         </p>
 
         <div className="space-y-5">
-          {charts.map((chart) => (
+          {charts.map((chart, ci) => (
             <div
               key={chart.title}
               className="rounded-xl border border-border bg-surface-2 overflow-hidden"
@@ -150,9 +153,23 @@ export default function TourDemoCharts({ onNext }: { onNext: () => void }) {
                 <p className="text-xs text-muted leading-relaxed mb-3">{chart.description}</p>
               </div>
               <div className="h-[200px] w-full">
-                <ResponsiveContainer width="100%" height="100%">
-                  <chart.ChartComp data={chart.data as any[]}>{chart.children}</chart.ChartComp>
-                </ResponsiveContainer>
+                {ci < revealed ? (
+                  <div className="chart-reveal h-full w-full">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <chart.ChartComp data={chart.data as any[]}>{chart.children}</chart.ChartComp>
+                    </ResponsiveContainer>
+                  </div>
+                ) : (
+                  <div className="h-full w-full animate-pulse bg-white/[0.03] p-6 flex items-end justify-center gap-4">
+                    {[40, 70, 55, 85, 60, 75].map((h, bi) => (
+                      <div
+                        key={bi}
+                        className="w-8 max-w-[8%] rounded-t bg-white/[0.08]"
+                        style={{ height: `${h}%` }}
+                      />
+                    ))}
+                  </div>
+                )}
               </div>
             </div>
           ))}

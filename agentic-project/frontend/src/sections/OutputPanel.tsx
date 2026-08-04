@@ -195,7 +195,7 @@ export default function OutputPanel() {
           const isExpanded = expandedId === r.id;
           const rowCount = r.result.row_count ?? 0;
           return (
-            <div key={r.id} className={resultCardClass}>
+            <div key={r.id} className={resultCardClass} {...(r.kind === "template" ? { "data-tour": "template-result" } : {})}>
                 <div className="flex items-start justify-between gap-2 mb-1">
                   <div className="flex items-center gap-1.5 min-w-0">
                     <span className={resultBadgeClass}>

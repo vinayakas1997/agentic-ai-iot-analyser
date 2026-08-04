@@ -4,10 +4,12 @@ import { useDatasetStore } from "../stores/datasetStore";
 import { useSessionStore } from "../stores/sessionStore";
 import { useOutputStore } from "../stores/outputStore";
 import { useUploadStore } from "../stores/uploadStore";
+import { useUiStore } from "../stores/uiStore";
 import {
   TOUR_DATASET_NAME,
   TOUR_AIM_NAME,
   TOUR_SAMPLE_RESULT,
+  TOUR_DEMO_TEMPLATE,
   TOUR_QUESTIONS,
   CSV_PREVIEW_LINES,
   DEFS_PREVIEW_LINES,
@@ -37,6 +39,10 @@ const STEPS: Step[] = [
   { target: "[data-tour='composer']", titleKey: "tour.step5Title", descKey: "tour.step5Desc", side: "top" },
   { target: "[data-tour='output-panel']", titleKey: "tour.step6Title", descKey: "tour.step6Desc", side: "left" },
   { titleKey: "tour.step6Title", descKey: "tour.step6Desc" },
+  { target: "[data-tour='template-button']", titleKey: "tour.tpl1Title", descKey: "tour.tpl1Desc", side: "top" },
+  { target: "[data-tour='template-modal']", titleKey: "tour.tpl2Title", descKey: "tour.tpl2Desc", side: "right" },
+  { target: "[data-tour='template-banner']", titleKey: "tour.tpl3Title", descKey: "tour.tpl3Desc", side: "top" },
+  { target: "[data-tour='template-result']", titleKey: "tour.tpl4Title", descKey: "tour.tpl4Desc", side: "left" },
   { titleKey: "tour.step7Title", descKey: "tour.step7Desc" },
 ];
 
@@ -72,6 +78,7 @@ export default function AppTour({ active, onClose }: { active: boolean; onClose:
     setShowSearchResults(false);
     setShowSuggestedAims(false);
     setAimSelected(false);
+    useUiStore.setState({ tourTemplateOpen: false, tourTemplateApplied: false });
     typewriterRef.current = false;
     const center = { x: window.innerWidth / 2, y: window.innerHeight / 2 };
     setCursorPos(center);
@@ -271,11 +278,34 @@ export default function AppTour({ active, onClose }: { active: boolean; onClose:
         result: TOUR_SAMPLE_RESULT,
       });
     }
-  }, [openClarifyModal, closeClarifyModal]);
+    if (s === 10) {
+      useUiStore.setState({ tourTemplateOpen: false, tourTemplateApplied: false });
+    }
+    if (s === 11) {
+      useUiStore.setState({ tourTemplateOpen: true });
+    }
+    if (s === 12) {
+      useUiStore.setState({ tourTemplateOpen: false, tourTemplateApplied: true });
+    }
+    if (s === 13) {
+      useUiStore.setState({ tourTemplateOpen: false, tourTemplateApplied: true });
+      useOutputStore.getState().addResult({
+        aim: "01 · " + TOUR_DEMO_TEMPLATE.template_name,
+        description: TOUR_DEMO_TEMPLATE.template_name,
+        datasets: [TOUR_DATASET_NAME],
+        result: TOUR_SAMPLE_RESULT,
+        kind: "template",
+        template_name: TOUR_DEMO_TEMPLATE.template_name,
+        report:
+          "### Daily Output Report\n\n1. **CNC-001** leads total output at 4,500 units — but also tops the defect count.\n2. Defect rates stay below 4% across all five machines.\n3. Weekly output grows steadily through week 5, with a small dip in week 6.\n\n**Recommendation:** investigate CNC-001's defect spike, then check what changed in week 6.",
+      });
+    }
+  }, [openClarifyModal, closeClarifyModal, t]);
 
   const cleanup = useCallback(() => {
     typewriterRef.current = false;
     closeClarifyModal();
+    useUiStore.setState({ tourTemplateOpen: false, tourTemplateApplied: false });
     const el = document.querySelector(COMPOSER_SELECTOR) as HTMLTextAreaElement | null;
     if (el) {
       el.value = "";
@@ -319,18 +349,28 @@ export default function AppTour({ active, onClose }: { active: boolean; onClose:
 
   let bubbleStyle: React.CSSProperties = {};
   if (targetRect && !isOverlay) {
+    const vw = window.innerWidth;
+    const vh = window.innerHeight;
+    const BUBBLE_W = 340;
+    const BUBBLE_H = 240;
+    const GAP = 16;
+    const EDGE = 12;
+    const clampX = (x: number) => Math.max(EDGE, Math.min(x, vw - BUBBLE_W - EDGE));
+    const clampY = (y: number) => Math.max(EDGE, Math.min(y, vh - BUBBLE_H - EDGE));
+    const centerX = targetRect.left + targetRect.width / 2 - BUBBLE_W / 2;
+    const midY = targetRect.top + targetRect.height / 2 - 60;
     switch (bubbleSide) {
       case "bottom":
-        bubbleStyle = { left: Math.max(20, targetRect.left + targetRect.width / 2 - 160), top: targetRect.bottom + 16 };
+        bubbleStyle = { left: clampX(centerX), top: Math.min(targetRect.bottom + GAP, vh - BUBBLE_H - EDGE) };
         break;
       case "top":
-        bubbleStyle = { left: Math.max(20, targetRect.left + targetRect.width / 2 - 160), top: targetRect.top - 140 };
+        bubbleStyle = { left: clampX(centerX), top: Math.max(EDGE, targetRect.top - BUBBLE_H - GAP) };
         break;
       case "right":
-        bubbleStyle = { left: targetRect.right + 16, top: targetRect.top + targetRect.height / 2 - 60 };
+        bubbleStyle = { left: Math.min(targetRect.right + GAP, vw - BUBBLE_W - EDGE), top: clampY(midY) };
         break;
       case "left":
-        bubbleStyle = { left: targetRect.left - 16 - 340, top: targetRect.top + targetRect.height / 2 - 60 };
+        bubbleStyle = { left: targetRect.left - GAP - BUBBLE_W, top: clampY(midY) };
         break;
     }
   }

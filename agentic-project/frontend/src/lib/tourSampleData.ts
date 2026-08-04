@@ -1,9 +1,15 @@
 import type { QueryResultState } from "../sections/QueryActions";
-import type { UploadedFileDraft } from "../types";
+import type { UploadedFileDraft, AnswerTemplate } from "../types";
 
 export const TOUR_DATASET_NAME = "production_data";
 
 export const TOUR_AIM_NAME = "defect rate by machine";
+
+export const TOUR_DEMO_TEMPLATE: AnswerTemplate = {
+  id: 9001,
+  template_name: "Daily Production Report",
+  format_spec: "1) Daily output summary\n   Explanation: Explain total output, defects, and trends\n\nNotes:\nCompare across machines",
+};
 
 export const FAKE_SEARCH_RESULTS = [
   { name: "production_data", nameKey: "tour.datasetProduction", cols: 6, checked: true, line: "PROD_LINE_01", lineKey: "tour.lineProd01" },

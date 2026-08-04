@@ -70,10 +70,12 @@ export function FormatTemplateModal({
   open,
   onClose,
   onApply,
+  demoTemplate,
 }: {
   open: boolean;
   onClose: () => void;
   onApply: (template: AnswerTemplate) => void;
+  demoTemplate?: AnswerTemplate | null;
 }) {
   const t = useT();
   const userId = useAuthStore((s) => s.userId);
@@ -189,6 +191,7 @@ export function FormatTemplateModal({
     >
       <div
         className="bg-surface-1 rounded-2xl border-2 border-border shadow-2xl w-full max-w-2xl mx-4 max-h-[85vh] overflow-y-auto"
+        data-tour="template-modal"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-center justify-between px-5 pt-5 pb-3 border-b border-border/50">
@@ -302,12 +305,29 @@ export function FormatTemplateModal({
 
           <div>
             <div className="text-[10.5px] font-semibold tracking-wider uppercase text-tertiary mb-1.5">{t("templateModal.savedTemplates")}</div>
-            {templates.length === 0 ? (
+            {templates.length === 0 && !demoTemplate ? (
               <div className="text-sm text-muted text-center py-4 rounded-xl border border-border/40">
                 {t("templateModal.noTemplates")}
               </div>
             ) : (
               <div className="space-y-1.5">
+                {demoTemplate && (
+                  <div
+                    key="demo"
+                    data-tour="template-row"
+                    className="flex items-center gap-2 rounded-xl border-2 border-accent/50 bg-accent/5 px-3 py-2"
+                  >
+                    <button
+                      type="button"
+                      className="flex-1 min-w-0 text-left"
+                      onClick={() => onApply(demoTemplate)}
+                    >
+                      <div className="text-sm font-medium text-text truncate">{demoTemplate.template_name}</div>
+                      <div className="text-[11px] text-muted truncate whitespace-pre-line line-clamp-1">{demoTemplate.format_spec}</div>
+                    </button>
+                    <span className="shrink-0 text-[10px] font-semibold text-accent">DEMO</span>
+                  </div>
+                )}
                 {templates.map((tmpl) => (
                   <div
                     key={tmpl.id}
