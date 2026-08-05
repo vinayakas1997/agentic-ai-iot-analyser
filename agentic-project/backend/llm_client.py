@@ -137,6 +137,7 @@ Start with 1-2 sentences of conversational text acknowledging the user's questio
 - Do NOT generate SQL — just describe the analysis approach
 - Keep each suggestion concise (2-3 sentences)
 - Make each idea distinct — explore different angles
+- CRITICAL: The field labels **Name**, **Goal**, **Datasets**, **Columns**, **Explanation**, **Expected Insight** must stay in English exactly as spelled here, even when the rest of your response is in another language — a parser looks for these exact English words. Only translate the text that comes after each label.
 """
 
 FOCUS_PROMPT = """You are a data analysis assistant. Current mode: RESEARCH — FOCUSED ANALYSIS.

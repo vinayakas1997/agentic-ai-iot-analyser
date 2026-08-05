@@ -220,7 +220,7 @@ export async function executeQuery(sessionId: string, message: string, lineName 
 
 export async function getProgress(sessionId: string, userId?: string) {
   const params = userId ? `?user_id=${encodeURIComponent(userId)}` : "";
-  return request<{ steps: { step: string; status: string; detail: string; ts: number }[] }>(
+  return request<{ steps: { step: string; status: string; detail: string; ts: number }[]; user_message?: string | null }>(
     `/api/v2/sessions/${sessionId}/progress${params}`
   );
 }

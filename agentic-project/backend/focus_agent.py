@@ -15,6 +15,7 @@ from difflib import get_close_matches
 
 from config import get_settings, get_llm_client
 from sql_executor import validate_sql
+from query_router import _table_refs
 from llm_client import language_instruction
 from logger import log_sql
 
@@ -221,8 +222,12 @@ def _build_column_map(datasets_data: list[dict]) -> dict[str, set[str]]:
     return col_map
 
 
-def _suggest_column_fix(error_msg: str, column_map: dict[str, set[str]]) -> str:
-    """If the error mentions a missing column, find the closest match and append did-you-mean."""
+def _suggest_column_fix(error_msg: str, column_map: dict[str, set[str]], sql: str = "") -> str:
+    """If the error mentions a missing column, find the closest match and append did-you-mean.
+    The candidate pool is scoped to the table(s) this query actually references — a column
+    that exists in a *different* attached dataset is still wrong here, and treating it as
+    "known" would silently suppress the hint (e.g. two datasets both track "machine ID" but
+    call the column something different each time)."""
     m = re.search(r"no such column:\s*(\S+)", error_msg, re.IGNORECASE)
     if not m:
         m = re.search(r"column\s+\"?(\w+)\"?\s+does not exist", error_msg, re.IGNORECASE)
@@ -239,12 +244,16 @@ def _suggest_column_fix(error_msg: str, column_map: dict[str, set[str]]) -> str:
     bad_col = m.group(1)
     # Strip table alias prefix if any (e.g. "a.異常№" -> "異常№")
     bad_col_short = bad_col.split(".")[-1] if "." in bad_col else bad_col
-    all_known: set[str] = set()
-    for cols in column_map.values():
-        all_known.update(cols)
-    if bad_col_short in all_known:
+
+    referenced_tables = _table_refs(sql) if sql else set()
+    scoped_known: set[str] = {
+        c for table, cols in column_map.items() if table in referenced_tables for c in cols
+    }
+    known = scoped_known or {c for cols in column_map.values() for c in cols}
+
+    if bad_col_short in known:
         return error_msg
-    suggestions = get_close_matches(bad_col_short, list(all_known), n=3, cutoff=0.3)
+    suggestions = get_close_matches(bad_col_short, list(known), n=3, cutoff=0.3)
     if suggestions:
         return f"{error_msg} Did you mean: {', '.join(suggestions)}?"
     return error_msg
@@ -267,7 +276,7 @@ async def _run_query_data(sql: str, datasets_data: list[dict] | None = None) -> 
         result = await route_execute(datasets_data, validated)
     except Exception as e:
         msg = str(e)[:300]
-        msg = _suggest_column_fix(msg, column_map)
+        msg = _suggest_column_fix(msg, column_map, validated)
         return {"ok": False, "error": f"SQL execution failed: {msg}"}
 
     try:
@@ -284,7 +293,7 @@ async def _run_query_data(sql: str, datasets_data: list[dict] | None = None) -> 
         return {"ok": True, "result": result}
     except Exception as e:
         msg = str(e)[:300]
-        msg = _suggest_column_fix(msg, column_map)
+        msg = _suggest_column_fix(msg, column_map, validated)
         return {"ok": False, "error": f"SQL execution failed: {msg}"}
 
 
@@ -382,9 +391,14 @@ async def run_focus_agent(
 
     last_query_result: dict | None = None
     executed_sql: set[str] = set()
+    # A model that repeats an already-executed query isn't going to stop on its own no
+    # matter how firmly it's told to — telling it not to do that is unreliable since it's
+    # only ever a suggestion, not an enforced rule. Enforce it instead: the round right
+    # after the first repeat strips tool access entirely and forces a plain-text answer.
+    force_final_round = False
 
     for round_num in range(max_rounds):
-        is_last_round = round_num == max_rounds - 1
+        is_last_round = round_num == max_rounds - 1 or force_final_round
         if on_progress:
             on_progress(f"round_{round_num}", "running", f"Round {round_num+1}/{max_rounds}")
         if is_last_round:
@@ -441,7 +455,7 @@ async def run_focus_agent(
             if on_progress:
                 on_progress(f"round_{round_num}", "done", "Answer ready")
             return {
-                "agent_message": msg.content or "",
+                "agent_message": msg.content or msg.refusal or "",
                 "chart_needed": True,
                 "query_result": last_query_result,
                 "truncated": False,
@@ -450,7 +464,7 @@ async def run_focus_agent(
 
         messages.append({
             "role": "assistant",
-            "content": msg.content or "",
+            "content": msg.content or msg.refusal or "",
             "tool_calls": [
                 {
                     "id": tc.id,
@@ -488,8 +502,16 @@ async def run_focus_agent(
                     if norm_sql and norm_sql in executed_sql:
                         tool_result = {
                             "ok": False,
-                            "error": "This exact query already ran successfully above. Use the data already provided and proceed — do not re-run identical SQL.",
+                            "error": (
+                                "You already ran this exact query and already have its result above. "
+                                "Tool access is being withdrawn next round — you will need to answer from "
+                                "the data already retrieved."
+                            ),
                         }
+                        # Don't just ask nicely — force the very next round to strip tools
+                        # and require a plain-text answer, since a model that repeats a
+                        # query once tends to keep repeating it if just told not to.
+                        force_final_round = True
                     else:
                         tool_result = await _run_query_data(sql, datasets_data)
                         if tool_result.get("ok"):

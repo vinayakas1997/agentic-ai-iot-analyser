@@ -79,6 +79,10 @@ settings = get_settings()
 
 # ── Progress tracking (in-memory, per-session) ──
 _progress_store: dict[str, list[dict]] = {}
+# The user message currently being processed for a session — lets a client that
+# reloaded mid-request (e.g. a page refresh) show what's actually running instead of
+# just a bare progress list with no question attached to it.
+_progress_message: dict[str, str] = {}
 def set_progress(session_id: str, step: str, status: str, detail: str = ""):
     key = f"progress_{session_id}"
     now = time.time()
@@ -97,6 +101,7 @@ def set_progress(session_id: str, step: str, status: str, detail: str = ""):
     _progress_store[key] = steps[-30:]
 
 def clear_progress(session_id: str):
+    _progress_message.pop(session_id, None)
     key = f"progress_{session_id}"
     _progress_store.pop(key, None)
 
@@ -933,7 +938,7 @@ async def get_session_progress(session_id: str, user_id: str = ""):
     uid = _require_user_id(user_id)
     await _get_session_owned(session_id, uid)
     key = f"progress_{session_id}"
-    return {"steps": _progress_store.get(key, [])}
+    return {"steps": _progress_store.get(key, []), "user_message": _progress_message.get(session_id)}
 
 @router.get("/datasets")
 async def list_datasets():
@@ -2088,6 +2093,8 @@ async def send_message(req: MessageRequest):
     uid = _require_user_id(req.user_id)
     if session.user_id != uid:
         raise HTTPException(status_code=403, detail="You do not own this session")
+
+    _progress_message[req.session_id] = req.message
 
     dataset_names = [d.strip() for d in req.line_name.split(",") if d.strip()]
 

@@ -85,10 +85,15 @@ function reconstructAimCards(rawTurns: any[], existing: CollectedResult[]): Coll
     if (isTemplate) continue;
     if (!t?.result_uuid || !t?.query_result) continue;
     const firstAction = Array.isArray(t.analysis_actions) ? t.analysis_actions[0] : undefined;
-    const aimLabel = firstAction?.name || (typeof t.user === "string" ? t.user.slice(0, 60) : "");
+    // Title from the attached aim if one was run, otherwise the user's own question
+    // (truncated) — never the LLM-extracted action name, which can echo its own
+    // prompt example instead of real content and produce a bogus, unrelated title.
+    const attachedAim = Array.isArray(t.aims) && t.aims.length > 0 ? t.aims[0] : undefined;
+    const userText = typeof t.user === "string" ? t.user : "";
+    const aimLabel = attachedAim || (userText.length > 60 ? `${userText.slice(0, 60)}…` : userText);
     if (!aimLabel || seen.has(aimLabel)) continue;
     seen.add(aimLabel);
-    const desc = firstAction?.description || undefined;
+    const desc = attachedAim ? firstAction?.description || undefined : userText || undefined;
     const ds = Array.isArray(firstAction?.datasets) ? firstAction.datasets : Array.isArray(t.datasets) ? t.datasets : undefined;
     const resultState: QueryResultState = { loading: false, ...(t.query_result || {}) } as QueryResultState;
     results.push({
@@ -158,6 +163,53 @@ async function pollForCompletedTurn(
   throw new api.ApiError("The report is still being generated on the server. Please refresh in a moment.", 0);
 }
 
+/** Re-fetch a session's turns/results and apply them to the store — used after resuming
+ * a background job that finished while this session was (re)loading, so the newly
+ * completed turn appears without requiring another manual reload. */
+async function reloadTurnsAndResults(sessionId: string, uid: string | undefined): Promise<void> {
+  const detail = await api.getSession(sessionId, uid);
+  const sessionMeta = { session_id: detail.session_id, title: detail.title, phase: detail.phase || "lines", status: detail.status || "active", mode: (detail as any).mode || "ask" };
+  const rawTurns = detail.turns || [];
+  const loadedTurns = rawTurns.map((t: any) => ({
+    turn_index: 0,
+    user: t.user,
+    agent: t.agent || "",
+    ui: null as any,
+    schema: null as any,
+    created_at: t.created_at || t.timestamp || new Date().toISOString(),
+    result_uuid: t.result_uuid,
+    aims: t.aims || [],
+    datasets: t.datasets || [],
+    description: null,
+    benefits: null,
+    columns: null,
+    analysis_actions: t.analysis_actions || undefined,
+    truncated: Boolean(t.truncated),
+    stopped_reason: t.stopped_reason || "",
+    template_name: t.template_name || undefined,
+    route: t.route || undefined,
+    query_results: Array.isArray(t.query_results) ? t.query_results.map((qr: any) => ({ loading: false, ...qr })) : undefined,
+  }));
+  let outputResults = reconstructTemplateCards(
+    rawTurns,
+    Array.isArray(detail.state?.output_results) ? detail.state.output_results : []
+  );
+  outputResults = reconstructAimCards(rawTurns, outputResults);
+  useSessionStore.setState({
+    sessionMeta,
+    turns: loadedTurns,
+    aimProposals: detail.state?.aim_proposals || [],
+    selectedAims: Array.isArray(detail.state?.selected_aims) ? detail.state.selected_aims : [],
+    outputResults,
+    chatQueryResults: detail.state?.chat_query_results || {},
+    completedActions: detail.state?.completed_actions || {},
+    contextSummaries: detail.state?.context_summaries || {},
+    enrichmentMode: detail.state?.enrichment_mode || "research",
+  });
+  useUiStore.getState().selectTurn(loadedTurns.length - 1);
+  useOutputStore.getState().setResults(outputResults);
+}
+
 function getErrorMessage(e: unknown): string {
   if (e instanceof Error) return e.message;
   if (typeof e === "object" && e !== null) {
@@ -205,6 +257,7 @@ interface SessionState {
   bootstrap: () => Promise<void>;
   refreshSessions: (userId?: string) => Promise<SessionListItem[]>;
   switchSession: (id: string) => Promise<void>;
+  resumeIfProcessing: (id: string) => Promise<void>;
   newSession: () => void;
   deleteSession: (id: string) => Promise<void>;
   sendUserMessage: (text: string, lineName?: string, attachedAims?: string[], enrichmentMode?: string, routeOverride?: string, aimDescriptions?: Record<string, string>, formatSpec?: string, templateName?: string) => Promise<MessageResponse | undefined>;
@@ -363,6 +416,10 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     } finally {
       set({ loading: false });
     }
+    // Not awaited: a local (never-persisted) session has nothing to resume, only
+    // check for sessions actually loaded from the backend above.
+    const loaded = get();
+    if (loaded.sessionId && !loaded.isLocalSession) loaded.resumeIfProcessing(loaded.sessionId);
   },
 
   switchSession: async (id) => {
@@ -444,6 +501,59 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     } finally {
       if (epoch === _switchEpoch) set({ loading: false });
     }
+    // Not awaited: runs after the finally above, so its own loading/progressSteps
+    // updates aren't immediately overwritten by this function's own cleanup.
+    get().resumeIfProcessing(id);
+  },
+
+  /** Checks whether the backend is still working on a message for this session (e.g. the
+   * page was refreshed mid-analysis) and, if so, shows the same live progress UI and keeps
+   * polling until the backend finishes and persists the turn — instead of leaving the
+   * screen looking idle while the analysis silently continues server-side. The backend
+   * doesn't cancel a run just because the client disconnected, so the job really is still
+   * going; only the UI's awareness of it was lost on reload. */
+  resumeIfProcessing: async (id: string) => {
+    const uid = useAuthStore.getState().userId || undefined;
+    let initial;
+    try {
+      initial = await api.getProgress(id, uid);
+    } catch {
+      return;
+    }
+    if (!initial.steps || initial.steps.length === 0) return;
+    if (get().sessionId !== id || get().loading) return;
+
+    set({ loading: true, progressSteps: initial.steps, statusMessage: t("processing.processingLabel") });
+    // The question itself isn't in `turns` yet (the backend hasn't persisted it), so
+    // without this the progress UI shows steps with no visible question attached to
+    // them. The backend records the in-flight message precisely for this case.
+    if (initial.user_message) get().setPendingTurn(initial.user_message);
+
+    const deadline = Date.now() + 10 * 60 * 1000;
+    while (Date.now() < deadline) {
+      if (get().sessionId !== id) return; // user navigated away — stop tracking this session
+      await new Promise((r) => setTimeout(r, 2000));
+      let poll;
+      try {
+        poll = await api.getProgress(id, uid);
+      } catch {
+        continue;
+      }
+      if (get().sessionId !== id) return;
+      if (!poll.steps || poll.steps.length === 0) {
+        try {
+          await reloadTurnsAndResults(id, uid);
+        } catch (e) {
+          set({ error: getErrorMessage(e) });
+        }
+        set({ loading: false, progressSteps: [], statusMessage: null, pendingTurn: null });
+        return;
+      }
+      set({ progressSteps: poll.steps });
+    }
+    // Gave up waiting for the backend to finish — clear the loading state so the UI
+    // isn't stuck forever. The turn will still show up next time the session reloads.
+    set({ loading: false, pendingTurn: null });
   },
 
   newSession: () => {

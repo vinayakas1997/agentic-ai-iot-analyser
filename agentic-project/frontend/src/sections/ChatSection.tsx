@@ -562,13 +562,17 @@ export default function ChatSection() {
         }));
         persistTurns();
       } else {
+        // Direct chat + SQL run (no aim clicked): title the card with the user's own
+        // question rather than the LLM-extracted action name — that extraction can
+        // echo its own prompt example instead of real content, giving a bogus title
+        // unrelated to what was actually asked. The full question is kept as the
+        // description so it's still visible in the expanded card.
         const firstAction = res.analysis_actions?.[0];
-        const aimLabel = firstAction?.name || msg.slice(0, 60);
-        const description = firstAction?.description || undefined;
+        const aimLabel = msg.length > 60 ? `${msg.slice(0, 60)}…` : msg;
         const datasets = firstAction?.datasets ?? available;
         useOutputStore.getState().addResult({
           aim: aimLabel,
-          description,
+          description: msg,
           datasets,
           result: resultState,
         });
